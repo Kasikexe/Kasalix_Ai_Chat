@@ -9,17 +9,37 @@ import type { Message as MessageType } from '../types';
 interface Props {
   message: MessageType;
   isStreaming?: boolean;
+  stage?: string;
 }
 
-export function Message({ message, isStreaming }: Props) {
+const stageLabels: Record<string, string> = {
+  'vision': '🔍 Analyzing image',
+  'code': '💻 Writing code',
+  'summary': '✨ Polishing response',
+  'chat': '💬 Thinking',
+};
+
+function getStageLabel(stage?: string): string | null {
+  if (!stage) return null;
+  for (const [key, label] of Object.entries(stageLabels)) {
+    if (stage.startsWith(key)) return label;
+  }
+  return '⚙️ Processing';
+}
+
+export function Message({ message, isStreaming, stage }: Props) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === 'user';
+  const stageLabel = getStageLabel(stage);
 
   const copy = async () => {
     await navigator.clipboard.writeText(message.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  // Strip the [image:...] tag from display
+  const displayContent = message.content.replace(/\[image:[^\]]+\]/g, '').trim();
 
   return (
     <div className={`flex gap-3 px-4 py-6 animate-fade-in ${isUser ? '' : 'bg-gray-900/40'}`}>
@@ -39,13 +59,28 @@ export function Message({ message, isStreaming }: Props) {
         <div className="font-semibold text-sm mb-1 text-gray-200">
           {isUser ? 'You' : 'Assistant'}
         </div>
+
+        {isStreaming && stageLabel && (
+          <div className="mb-2 inline-flex items-center gap-1.5 text-xs text-gray-400">
+            <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
+            <span>{stageLabel}</span>
+          </div>
+        )}
+
+        {/* Show image attachment for user messages */}
+        {isUser && (message.content.includes('[image:data:image') || message.content.includes('[image]')) && (
+          <div className="mb-2 text-xs text-gray-500 italic">
+            📷 Image attached
+          </div>
+        )}
+
         <div className="prose prose-invert prose-sm max-w-none break-words">
-          {message.content ? (
+          {displayContent ? (
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeHighlight]}
             >
-              {message.content}
+              {displayContent}
             </ReactMarkdown>
           ) : isStreaming ? (
             <span className="inline-flex gap-1 items-center text-gray-400">
@@ -55,7 +90,7 @@ export function Message({ message, isStreaming }: Props) {
             </span>
           ) : null}
         </div>
-        {!isUser && message.content && !isStreaming && (
+        {!isUser && displayContent && !isStreaming && (
           <button
             onClick={copy}
             className="mt-2 flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"

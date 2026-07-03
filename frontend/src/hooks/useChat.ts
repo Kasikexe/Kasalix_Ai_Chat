@@ -2,15 +2,23 @@ import { useCallback, useRef, useState } from 'react';
 import type { Message } from '../types';
 import { api } from '../services/api';
 
-export function useChat(model: string, initialMessages: Message[]) {
+export function useChat(
+  model: string,
+  initialMessages: Message[],
+  initialConversationId?: string,
+  thinkingEnabled = false
+) {
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentStage, setCurrentStage] = useState<string>('');
+  const [conversationId, setConversationId] = useState<string | undefined>(initialConversationId);
   const abortRef = useRef<AbortController | null>(null);
   const messagesRef = useRef<Message[]>(initialMessages);
+  const convIdRef = useRef<string | undefined>(initialConversationId);
 
-  // Keep ref in sync
   messagesRef.current = messages;
+  convIdRef.current = conversationId;
 
   const sendMessage = useCallback(
     async (content: string): Promise<string | undefined> => {
@@ -23,16 +31,17 @@ export function useChat(model: string, initialMessages: Message[]) {
       setMessages(messagesRef.current);
       setIsStreaming(true);
       setError(null);
+      setCurrentStage('');
 
       const controller = new AbortController();
       abortRef.current = controller;
-      let convId: string | undefined;
+      const currentConvId = convIdRef.current;
 
       try {
         await api.streamChat(
           model,
-          messagesRef.current.slice(0, -1), // exclude empty assistant placeholder
-          undefined,
+          messagesRef.current.slice(0, -1),
+          currentConvId,
           {
             onChunk: (chunk) => {
               messagesRef.current = messagesRef.current.map((m, i) =>
@@ -42,14 +51,22 @@ export function useChat(model: string, initialMessages: Message[]) {
               );
               setMessages(messagesRef.current);
             },
-            onConversationId: (id) => { convId = id; },
+            onConversationId: (id) => {
+              setConversationId(id);
+              convIdRef.current = id;
+            },
+            onStage: (stage) => {
+              setCurrentStage(stage);
+            },
             onDone: () => {
               setIsStreaming(false);
+              setCurrentStage('');
               abortRef.current = null;
             },
             onError: (err) => {
               setError(err);
               setIsStreaming(false);
+              setCurrentStage('');
               abortRef.current = null;
               messagesRef.current = messagesRef.current.filter(
                 (m) => !(m.role === 'assistant' && m.content === '')
@@ -59,11 +76,12 @@ export function useChat(model: string, initialMessages: Message[]) {
           },
           controller.signal
         );
-        return convId;
+        return convIdRef.current;
       } catch (e) {
-        if (e instanceof Error && e.name === 'AbortError') return convId;
+        if (e instanceof Error && e.name === 'AbortError') return convIdRef.current;
         setError(e instanceof Error ? e.message : 'Unknown error');
         setIsStreaming(false);
+        setCurrentStage('');
         abortRef.current = null;
       }
     },
@@ -73,8 +91,9 @@ export function useChat(model: string, initialMessages: Message[]) {
   const stopGeneration = useCallback(() => {
     abortRef.current?.abort();
     setIsStreaming(false);
+    setCurrentStage('');
     abortRef.current = null;
   }, []);
 
-  return { messages, isStreaming, error, sendMessage, stopGeneration };
+  return { messages, isStreaming, error, sendMessage, stopGeneration, conversationId, currentStage };
 }

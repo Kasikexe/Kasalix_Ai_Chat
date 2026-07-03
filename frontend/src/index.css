@@ -19,6 +19,23 @@ body,
 ::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
 
+/* iOS safe area support */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.h-screen-dynamic {
+  height: 100vh;
+  height: 100dvh; /* dynamic viewport height — excludes browser chrome */
+}
+
+/* When mobile keyboard is open, use visualViewport */
+@supports (height: 100dvh) {
+  .h-screen-dynamic {
+    height: 100dvh;
+  }
+}
+
 /* Markdown prose */
 .prose pre {
   background: #0d1117 !important;

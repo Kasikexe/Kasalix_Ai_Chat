@@ -1,20 +1,15 @@
-import { Menu, Settings, Lock } from 'lucide-react';
-import { ModelSelector } from './ModelSelector';
-import type { OllamaModel } from '../types';
+import { Menu, Settings, Lock, Brain } from 'lucide-react';
 
 interface HeaderProps {
-  models: OllamaModel[];
-  selectedModel: string;
-  onModelChange: (model: string) => void;
   onMenuClick: () => void;
   onSettingsClick: () => void;
   isAdmin: boolean;
-  getModelStatus: (name: string) => 'available' | 'hidden' | 'unavailable';
+  thinkingEnabled: boolean;
+  onToggleThinking: () => void;
 }
 
 export function Header({
-  models, selectedModel, onModelChange, onMenuClick,
-  onSettingsClick, isAdmin, getModelStatus,
+  onMenuClick, onSettingsClick, isAdmin, thinkingEnabled, onToggleThinking
 }: HeaderProps) {
   return (
     <header className="border-b border-gray-800 bg-gray-900/80 backdrop-blur-sm sticky top-0 z-20">
@@ -27,7 +22,23 @@ export function Header({
           <Menu size={20} />
         </button>
         <h1 className="md:hidden text-sm font-medium text-gray-300">AI Chat</h1>
-        <div className="flex-1 md:flex-none" />
+        <div className="flex-1" />
+
+        {/* Thinking mode toggle */}
+        <button
+          onClick={onToggleThinking}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            thinkingEnabled
+              ? 'bg-purple-900/40 text-purple-300 border border-purple-700'
+              : 'bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700'
+          }`}
+          title={thinkingEnabled ? 'Thinking mode ON (slower, smarter)' : 'Thinking mode OFF (faster, direct)'}
+        >
+          <Brain size={14} />
+          <span className="hidden sm:inline">
+            {thinkingEnabled ? 'Thinking' : 'Fast'}
+          </span>
+        </button>
 
         <button
           onClick={onSettingsClick}
@@ -37,13 +48,6 @@ export function Header({
         >
           {isAdmin ? <Settings size={18} /> : <Lock size={18} />}
         </button>
-
-        <ModelSelector
-          models={models}
-          selected={selectedModel}
-          onChange={onModelChange}
-          getModelStatus={getModelStatus}
-        />
       </div>
     </header>
   );

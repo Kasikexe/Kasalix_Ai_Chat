@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
-import { streamChat } from '../services/ollama';
+import { runPipeline } from '../services/pipeline';
 import { addMessage, createConversation, getConversation } from '../services/storage';
-import type { Message, Variables } from '../types';
+import type { Message } from '../types';
 
-const chat = new Hono<{ Variables: Variables }>();
+const chat = new Hono();
 
 chat.post('/', async (c) => {
   let convId: string | undefined;
@@ -14,11 +14,13 @@ chat.post('/', async (c) => {
     const model: string = body.model;
     const messages: Message[] = body.messages;
     const providedConvId: string | undefined = body.conversationId;
+    const thinkingEnabled: boolean = body.thinkingEnabled === true;
 
     if (!model || !Array.isArray(messages) || messages.length === 0) {
       return c.json({ error: 'model and messages are required' }, 400);
     }
 
+    // Create or fetch conversation
     if (providedConvId) {
       const existing = await getConversation(providedConvId, ownerId);
       if (!existing) return c.json({ error: 'Conversation not found' }, 404);
@@ -28,15 +30,22 @@ chat.post('/', async (c) => {
       convId = newConv.id;
     }
 
+    // Save user message (strip image data to save space)
     const lastMessage = messages[messages.length - 1];
     if (lastMessage.role === 'user' && convId) {
-      await addMessage(convId, ownerId, lastMessage);
+      const savedContent = lastMessage.content
+        .replace(/\[image:data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+\]/g, '[image]');
+      await addMessage(convId, ownerId, { ...lastMessage, content: savedContent });
     }
 
     const encoder = new TextEncoder();
-    let fullResponse = '';
     let aborted = false;
     const activeConvId = convId;
+    let fullResponse = '';
+    let currentStage = '';
+
+    // Abort controller to stop pipeline if client disconnects
+    const ac = new AbortController();
 
     const stream = new ReadableStream({
       async start(controller) {
@@ -52,30 +61,52 @@ chat.post('/', async (c) => {
         send({ type: 'conversationId', conversationId: activeConvId });
 
         try {
-          await streamChat(
+          await runPipeline({
             model,
             messages,
-            (chunk) => {
+            thinkingEnabled,
+            signal: ac.signal,
+            onStage: (stage) => {
+              currentStage = stage;
+              send({ type: 'stage', stage });
+            },
+            onChunk: (chunk) => {
               fullResponse += chunk;
               send({ type: 'chunk', content: chunk });
-            }
-          );
+            },
+          });
 
-          if (fullResponse && activeConvId) {
-            await addMessage(activeConvId, ownerId, { role: 'assistant', content: fullResponse });
+          if (fullResponse && activeConvId && !aborted) {
+            await addMessage(activeConvId, ownerId, {
+              role: 'assistant',
+              content: fullResponse,
+            });
           }
-          send({ type: 'done' });
+          send({ type: 'done', stage: currentStage });
         } catch (e) {
           const message = e instanceof Error ? e.message : 'Unknown error';
+          console.error('[chat] Pipeline error:', message);
           send({ type: 'error', error: message });
         } finally {
-          try { controller.close(); } catch { /* noop */ }
+          try {
+            controller.close();
+          } catch {
+            // already closed
+          }
         }
       },
       cancel() {
+        // Client disconnected — abort the pipeline
         aborted = true;
+        ac.abort();
+        console.log('[chat] Client disconnected, aborting pipeline');
+
+        // Save whatever response we got
         if (fullResponse && activeConvId) {
-          addMessage(activeConvId, ownerId, { role: 'assistant', content: fullResponse }).catch(() => {});
+          addMessage(activeConvId, ownerId, {
+            role: 'assistant',
+            content: fullResponse + ' [stopped]',
+          }).catch((e) => console.error('[chat] Failed to save partial response:', e));
         }
       },
     });
@@ -89,7 +120,11 @@ chat.post('/', async (c) => {
       },
     });
   } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : 'Chat request failed' }, 500);
+    console.error('[chat] Route error:', e);
+    return c.json(
+      { error: e instanceof Error ? e.message : 'Chat request failed' },
+      500
+    );
   }
 });
 

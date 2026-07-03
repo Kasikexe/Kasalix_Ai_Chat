@@ -5,9 +5,10 @@ import type { Message as MessageType } from '../types';
 interface Props {
   messages: MessageType[];
   isStreaming: boolean;
+  currentStage?: string;
 }
 
-export function ChatWindow({ messages, isStreaming }: Props) {
+export function ChatWindow({ messages, isStreaming, currentStage }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
@@ -52,13 +53,18 @@ export function ChatWindow({ messages, isStreaming }: Props) {
         </div>
       ) : (
         <div className="max-w-3xl mx-auto pb-4">
-          {messages.map((msg, i) => (
-            <Message
-              key={i}
-              message={msg}
-              isStreaming={isStreaming && i === messages.length - 1 && msg.role === 'assistant'}
-            />
-          ))}
+          {messages.map((msg, i) => {
+            const isLast = i === messages.length - 1;
+            const streaming = isStreaming && isLast && msg.role === 'assistant';
+            return (
+              <Message
+                key={i}
+                message={msg}
+                isStreaming={streaming}
+                stage={streaming ? currentStage : undefined}
+              />
+            );
+          })}
           <div ref={bottomRef} />
         </div>
       )}

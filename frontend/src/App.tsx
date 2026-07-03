@@ -4,10 +4,8 @@ import { Header } from './components/Header';
 import { ChatView } from './components/ChatView';
 import { SettingsModal } from './components/SettingsModal';
 import { PasswordPrompt } from './components/PasswordPrompt';
-import { StatusBanner } from './components/StatusBanner';
 import { UserSetup } from './components/UserSetup';
 import { useConversations } from './hooks/useConversations';
-import { useModel } from './hooks/useModel';
 import { useModelVisibility } from './hooks/useModelVisibility';
 import {
   getUserProfile,
@@ -16,27 +14,27 @@ import {
 } from './services/api';
 import type { UserProfile } from './types';
 
+const TEXT_MODEL = 'qwen3:4b';
+const THINKING_KEY = 'ai-chat:thinkingEnabled';
+
 function App() {
-  const [user, setUser] = useState<UserProfile | null>(() => {
-    const stored = getUserProfile();
-    console.log('App: Initial user from localStorage:', stored);
-    return stored;
+  const [user, setUser] = useState<UserProfile | null>(() => getUserProfile());
+  const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(() => {
+    const stored = localStorage.getItem(THINKING_KEY);
+    return stored === 'true'; // default OFF for speed
   });
+
+  // Persist thinking preference
+  useEffect(() => {
+    localStorage.setItem(THINKING_KEY, String(thinkingEnabled));
+  }, [thinkingEnabled]);
 
   if (!user) {
     return (
       <UserSetup
         onSubmit={(name) => {
-          console.log('App: onSubmit called with name:', name);
-          try {
-            const profile = createUserProfile(name);
-            console.log('App: profile created:', profile);
-            setUser(profile);
-            console.log('App: setUser called');
-          } catch (e) {
-            console.error('App: Error in onSubmit:', e);
-            alert('Error: ' + (e instanceof Error ? e.message : String(e)));
-          }
+          const profile = createUserProfile(name);
+          setUser(profile);
         }}
       />
     );
@@ -46,25 +44,23 @@ function App() {
     <ChatApp
       user={user}
       onSwitchUser={() => {
-        console.log('App: Switching user');
         clearUserProfile();
         setUser(null);
       }}
+      thinkingEnabled={thinkingEnabled}
+      onToggleThinking={() => setThinkingEnabled(t => !t)}
     />
   );
 }
 
-
 interface ChatAppProps {
   user: UserProfile;
   onSwitchUser: () => void;
+  thinkingEnabled: boolean;
+  onToggleThinking: () => void;
 }
 
-function ChatApp({ user, onSwitchUser }: ChatAppProps) {
-  const {
-    models, selectedModel, setSelectedModel,
-    loading: modelsLoading, error: modelError, online, getModelStatus,
-  } = useModel();
+function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: ChatAppProps) {
   const {
     isHidden, toggle, showAll, hideAll, reset, isAuthed, authenticate,
   } = useModelVisibility();
@@ -85,8 +81,7 @@ function ChatApp({ user, onSwitchUser }: ChatAppProps) {
   };
 
   const handleNewChat = async () => {
-    if (!selectedModel) return;
-    const conv = await create(selectedModel);
+    const conv = await create(TEXT_MODEL);
     setActiveId(conv.id);
     setSidebarOpen(false);
   };
@@ -101,42 +96,8 @@ function ChatApp({ user, onSwitchUser }: ChatAppProps) {
     if (activeId === id) setActiveId(null);
   };
 
-  const renderMain = () => {
-    if (modelsLoading) {
-      return (
-        <div className="flex-1 flex items-center justify-center text-gray-400">
-          Loading models...
-        </div>
-      );
-    }
-
-    if (modelError && models.length === 0) {
-      return (
-        <div className="flex-1 flex items-center justify-center px-4">
-          <div className="text-center max-w-md">
-            <h2 className="text-xl font-semibold mb-2 text-white">Connection Error</h2>
-            <p className="text-gray-400 mb-4">{modelError}</p>
-            <p className="text-gray-500 text-sm">
-              Make sure Ollama is running: <code className="text-emerald-400">ollama serve</code>
-            </p>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <ChatView
-        key={activeConv?.id || 'new'}
-        initialMessages={activeConv?.messages || []}
-        model={selectedModel}
-        onMessageSent={refresh}
-        onConversationCreated={setActiveId}
-      />
-    );
-  };
-
   return (
-    <div className="h-screen flex bg-gray-950 text-white overflow-hidden">
+    <div className="h-screen-dynamic flex bg-gray-950 text-white overflow-hidden">
       <Sidebar
         conversations={conversations}
         activeId={activeId}
@@ -151,22 +112,27 @@ function ChatApp({ user, onSwitchUser }: ChatAppProps) {
       />
       <div className="flex-1 flex flex-col min-w-0">
         <Header
-          models={models}
-          selectedModel={selectedModel}
-          onModelChange={setSelectedModel}
           onMenuClick={() => setSidebarOpen(true)}
           onSettingsClick={handleSettingsClick}
           isAdmin={isAuthed}
-          getModelStatus={getModelStatus}
+          thinkingEnabled={thinkingEnabled}
+          onToggleThinking={onToggleThinking}
         />
-        <StatusBanner online={online} models={models} />
-        {renderMain()}
+        <ChatView
+          key={activeConv?.id || 'new'}
+          initialMessages={activeConv?.messages || []}
+          conversationId={activeConv?.id}
+          model={TEXT_MODEL}
+          thinkingEnabled={thinkingEnabled}
+          onMessageSent={refresh}
+          onConversationCreated={setActiveId}
+        />
       </div>
 
       <SettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        models={models}
+        models={[]}
         isHidden={isHidden}
         onToggle={toggle}
         onShowAll={showAll}

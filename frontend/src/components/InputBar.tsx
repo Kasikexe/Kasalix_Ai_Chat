@@ -1,8 +1,8 @@
-import { useRef, useState, KeyboardEvent } from 'react';
-import { Send, Square } from 'lucide-react';
+import { useRef, useState, KeyboardEvent, useEffect } from 'react';
+import { Send, Square, Paperclip, X } from 'lucide-react';
 
 interface Props {
-  onSend: (content: string) => void;
+  onSend: (content: string, imageDataUrl?: string) => void;
   onStop: () => void;
   isStreaming: boolean;
   disabled?: boolean;
@@ -10,7 +10,9 @@ interface Props {
 
 export function InputBar({ onSend, onStop, isStreaming, disabled }: Props) {
   const [value, setValue] = useState('');
+  const [image, setImage] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const adjust = () => {
     const el = ref.current;
@@ -19,12 +21,59 @@ export function InputBar({ onSend, onStop, isStreaming, disabled }: Props) {
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
   };
 
+  // Scroll the input into view when the keyboard opens
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.visualViewport) {
+        // Use visualViewport when available (better for mobile keyboards)
+        const vv = window.visualViewport;
+        document.documentElement.style.setProperty(
+          '--viewport-height',
+          `${vv.height}px`
+        );
+      }
+    };
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleResize);
+      window.visualViewport.addEventListener('scroll', handleResize);
+      handleResize();
+    }
+
+    return () => {
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', handleResize);
+        window.visualViewport.removeEventListener('scroll', handleResize);
+      }
+    };
+  }, []);
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      alert('Image must be under 10MB');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setImage(reader.result as string);
+    reader.readAsDataURL(file);
+  };
+
   const submit = () => {
     const trimmed = value.trim();
-    if (!trimmed || isStreaming || disabled) return;
-    onSend(trimmed);
+    if ((!trimmed && !image) || isStreaming || disabled) return;
+
+    let content = trimmed;
+    if (image) {
+      content = `${trimmed} [image:${image}]`;
+    }
+
+    onSend(content);
     setValue('');
+    setImage(null);
     if (ref.current) ref.current.style.height = 'auto';
+    if (fileRef.current) fileRef.current.value = '';
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -35,43 +84,71 @@ export function InputBar({ onSend, onStop, isStreaming, disabled }: Props) {
   };
 
   return (
-    <div className="border-t border-gray-800 bg-gray-900 p-3 md:p-4">
-      <div className="max-w-3xl mx-auto">
+    <div className="border-t border-gray-800 bg-gray-900 safe-bottom">
+      <div className="max-w-3xl mx-auto p-3 md:p-4">
+        {image && (
+          <div className="mb-2 relative inline-block">
+            <img src={image} alt="Upload preview" className="max-h-32 rounded-lg border border-gray-700" />
+            <button
+              onClick={() => setImage(null)}
+              className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 rounded-full flex items-center justify-center text-white"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
         <div className="relative flex items-end gap-2 bg-gray-800 border border-gray-700 rounded-2xl p-2 focus-within:border-gray-600 transition-colors">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFile}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileRef.current?.click()}
+            disabled={disabled}
+            className="flex-shrink-0 p-2 hover:bg-gray-700 disabled:opacity-50 rounded-lg text-gray-400"
+            title="Attach image"
+          >
+            <Paperclip size={18} />
+          </button>
+
           <textarea
             ref={ref}
             value={value}
             onChange={(e) => { setValue(e.target.value); adjust(); }}
             onKeyDown={onKey}
-            placeholder={disabled ? 'Select a model first...' : 'Send a message...'}
+            onFocus={() => {
+              // Scroll the input into view when focused (mobile keyboard)
+              setTimeout(() => {
+                ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }, 300); // delay to let keyboard open
+            }}
+            placeholder={disabled ? 'Select a model first...' : 'Send a message or attach an image...'}
             rows={1}
             disabled={disabled}
-            className="flex-1 bg-transparent text-white placeholder-gray-500 resize-none outline-none px-3 py-2 max-h-[200px] overflow-y-auto text-sm md:text-base"
-          />    
+            className="flex-1 bg-transparent text-white placeholder-gray-500 resize-none outline-none px-2 py-2 max-h-[200px] overflow-y-auto text-sm md:text-base"
+          />
+
           {isStreaming ? (
             <button
               onClick={onStop}
-              className="flex-shrink-0 p-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
-              aria-label="Stop generation"
-              title="Stop"
+              className="flex-shrink-0 p-2 bg-red-600 hover:bg-red-700 text-white rounded-lg"
             >
               <Square size={18} fill="currentColor" />
             </button>
           ) : (
             <button
               onClick={submit}
-              disabled={!value.trim() || disabled}
-              className="flex-shrink-0 p-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-              aria-label="Send message"
-              title="Send"
+              disabled={(!value.trim() && !image) || disabled}
+              className="flex-shrink-0 p-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white rounded-lg"
             >
               <Send size={18} />
             </button>
           )}
         </div>
-        <p className="text-xs text-gray-500 text-center mt-2 hidden sm:block">
-          Press <kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-xs">Enter</kbd> to send, <kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-xs">Shift+Enter</kbd> for new line
-        </p>
       </div>
     </div>
   );
