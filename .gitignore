@@ -5,6 +5,7 @@ data/
 .env.local
 .DS_Store
 *.log
+certs/
 .vscode/
 .idea/
 bun.lockb

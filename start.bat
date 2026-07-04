@@ -71,24 +71,25 @@ echo [OK] Dependencies ready
 echo.
 
 REM Start backend in a new window
-echo [INFO] Starting backend on http://localhost:3001 ...
+echo [INFO] Starting backend on https://localhost:3001 ...
 start "AI Chat - Backend" cmd /k "cd /d %~dp0backend && bun run dev"
 
 REM Wait a moment for backend to initialize
 timeout /t 2 /nobreak >nul
 
 REM Start frontend in a new window
-echo [INFO] Starting frontend on http://localhost:5173 ...
+echo [INFO] Starting frontend on https://localhost:5173 ...
 start "AI Chat - Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"
 
 echo.
 echo =============================================
 echo   Both servers are starting up!
 echo.
-echo   Frontend:  http://localhost:5173
-echo   Backend:   http://localhost:3001
+echo   Frontend:  https://localhost:5173
+echo   Backend:   https://localhost:3001
 echo   Ollama:    http://localhost:11434
 echo.
+echo   Note: Self-signed certs — accept the security warning in your browser.
 echo   Close the terminal windows to stop.
 echo =============================================
 echo.

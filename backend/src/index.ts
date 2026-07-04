@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { serve } from '@hono/node-server';
+import { createServer } from 'node:https';
+import { readFileSync } from 'fs';
 import modelsRoutes from './routes/models';
 import chatRoutes from './routes/chat';
 import conversationsRoutes from './routes/conversations';
@@ -12,7 +14,7 @@ const app = new Hono();
 
 app.use('*', logger());
 app.use('*', cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000'],
+  origin: ['https://localhost:5173', 'http://localhost:3000'],
   allowHeaders: ['Content-Type', 'Authorization', 'X-User-Id'],
   exposeHeaders: ['X-User-Id'],
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -46,7 +48,25 @@ app.get('/', (c) => c.json({ message: 'AI Chat API', version: '1.0.0' }));
 app.get('/api/health', (c) => c.json({ status: 'ok' }));
 
 const port = Number(process.env.PORT) || 3001;
+const useHttps = process.env.HTTPS !== 'false';
 
-serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`🚀 Backend running on http://localhost:${info.port}`);
-});
+if (useHttps) {
+  const certPath = process.env.SSL_CERT || '../certs/localhost.crt';
+  const keyPath = process.env.SSL_KEY || '../certs/localhost.key';
+
+  serve({
+    fetch: app.fetch,
+    port,
+    createServer, // use https.createServer instead of http.createServer
+    serverOptions: {
+      cert: readFileSync(certPath).toString(),
+      key: readFileSync(keyPath).toString(),
+    },
+  }, (info) => {
+    console.log(`🔒 Backend running on https://localhost:${info.port}`);
+  });
+} else {
+  serve({ fetch: app.fetch, port }, (info) => {
+    console.log(`🚀 Backend running on http://localhost:${info.port}`);
+  });
+}

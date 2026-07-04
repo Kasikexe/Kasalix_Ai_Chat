@@ -14,8 +14,11 @@ import {
 } from './services/api';
 import type { UserProfile } from './types';
 
-const TEXT_MODEL = 'qwen3:4b';
 const THINKING_KEY = 'ai-chat:thinkingEnabled';
+
+function getModel(thinkingEnabled: boolean): string {
+  return thinkingEnabled ? 'qwen3:4b' : 'qwen2.5:3b';
+}
 
 function App() {
   const [user, setUser] = useState<UserProfile | null>(() => getUserProfile());
@@ -49,6 +52,7 @@ function App() {
       }}
       thinkingEnabled={thinkingEnabled}
       onToggleThinking={() => setThinkingEnabled(t => !t)}
+      model={getModel(thinkingEnabled)}
     />
   );
 }
@@ -58,9 +62,10 @@ interface ChatAppProps {
   onSwitchUser: () => void;
   thinkingEnabled: boolean;
   onToggleThinking: () => void;
+  model: string;
 }
 
-function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: ChatAppProps) {
+function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model }: ChatAppProps) {
   const {
     isHidden, toggle, showAll, hideAll, reset, isAuthed, authenticate,
   } = useModelVisibility();
@@ -81,7 +86,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
   };
 
   const handleNewChat = async () => {
-    const conv = await create(TEXT_MODEL);
+    const conv = await create(model);
     setActiveId(conv.id);
     setSidebarOpen(false);
   };
@@ -122,7 +127,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
           key={activeConv?.id || 'new'}
           initialMessages={activeConv?.messages || []}
           conversationId={activeConv?.id}
-          model={TEXT_MODEL}
+          model={model}
           thinkingEnabled={thinkingEnabled}
           onMessageSent={refresh}
           onConversationCreated={setActiveId}
