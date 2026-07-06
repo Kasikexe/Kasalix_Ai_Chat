@@ -1,3 +1,22 @@
+import hljs from 'highlight.js';
+
+export function getHighlightedHtml(code: string, language: string | null): string {
+  if (language && hljs.getLanguage(language)) {
+    try {
+      return hljs.highlight(code, { language }).value;
+    } catch { /* fall through */ }
+  }
+  try {
+    const result = hljs.highlightAuto(code);
+    return result.value;
+  } catch {
+    return code
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+}
+
 export function formatBytes(bytes?: number): string {
   if (!bytes) return '';
   const gb = bytes / 1e9;

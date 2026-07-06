@@ -1,4 +1,4 @@
-import type { Conversation, Message, OllamaModel } from '../types';
+import type { Conversation, ConversationMode, Message, OllamaModel, FileEntry } from '../types';
 
 const API_BASE = '/api';
 
@@ -121,12 +121,12 @@ export const api = {
     return data.conversation;
   },
 
-  async createConversation(model: string, title?: string): Promise<Conversation> {
+  async createConversation(model: string, title?: string, mode?: ConversationMode, workspacePath?: string): Promise<Conversation> {
     const data = await handleResponse<{ conversation: Conversation }>(
       await fetch(`${API_BASE}/conversations`, authedFetch(`${API_BASE}/conversations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, title }),
+        body: JSON.stringify({ model, title, mode, workspacePath }),
       }))
     );
     return data.conversation;
@@ -134,7 +134,7 @@ export const api = {
 
   async updateConversation(
     id: string,
-    updates: { title?: string; model?: string }
+    updates: { title?: string; model?: string; mode?: ConversationMode; workspacePath?: string }
   ): Promise<Conversation> {
     const data = await handleResponse<{ conversation: Conversation }>(
       await fetch(`${API_BASE}/conversations/${id}`, authedFetch(`${API_BASE}/conversations/${id}`, {
@@ -200,6 +200,35 @@ export const api = {
     } catch {
       return false;
     }
+  },
+
+  async getFiles(dirPath: string): Promise<{ entries: FileEntry[] }> {
+    const data = await handleResponse<{ entries: FileEntry[] }>(
+      await fetch(`${API_BASE}/files?path=${encodeURIComponent(dirPath)}`, authedFetch(`${API_BASE}/files`))
+    );
+    return data;
+  },
+
+  async getFileContent(filePath: string): Promise<{
+    content: string | null;
+    language: string | null;
+    size: number;
+    truncated: boolean;
+    binary: boolean;
+  }> {
+    return handleResponse(
+      await fetch(`${API_BASE}/files/content?path=${encodeURIComponent(filePath)}`, authedFetch(`${API_BASE}/files`))
+    );
+  },
+
+  async writeFile(filePath: string, content: string): Promise<{ success: boolean; path: string; isNew: boolean; size: number }> {
+    return handleResponse(
+      await fetch(`${API_BASE}/files/write`, authedFetch(`${API_BASE}/files/write`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath, content }),
+      }))
+    );
   },
 
 streamChat(

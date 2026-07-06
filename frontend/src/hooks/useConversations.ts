@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Conversation } from '../types';
+import type { Conversation, ConversationMode } from '../types';
 import { api } from '../services/api';
 
 export function useConversations() {
@@ -19,8 +19,8 @@ export function useConversations() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const create = useCallback(async (model: string, title?: string) => {
-    const conv = await api.createConversation(model, title);
+  const create = useCallback(async (model: string, title?: string, mode?: ConversationMode, workspacePath?: string) => {
+    const conv = await api.createConversation(model, title, mode, workspacePath);
     setConversations((prev) => [conv, ...prev]);
     return conv;
   }, []);

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { MessageSquare, Plus, Trash2, Edit2, X, Check, Menu } from 'lucide-react';
-import type { Conversation } from '../types';
+import { MessageSquare, Plus, Trash2, Edit2, X, Check, Menu, Wrench, Search } from 'lucide-react';
+import type { Conversation, ConversationMode } from '../types';
 import type { UserProfile } from '../types';
 import { UserBadge } from './UserBadge';
 
@@ -15,14 +15,17 @@ interface SidebarProps {
   onClose: () => void;
   user: UserProfile;
   onSwitchUser: () => void;
+  mode: ConversationMode;
+  onModeChange: (mode: ConversationMode) => void;
 }
 
 export function Sidebar({
   conversations, activeId, onSelect, onCreate, onDelete, onRename,
-  isOpen, onClose, user, onSwitchUser,
+  isOpen, onClose, user, onSwitchUser, mode, onModeChange,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -69,22 +72,69 @@ export function Sidebar({
           </button>
         </div>
 
+        {/* Mode toggle */}
+        <div className="mx-3 mt-3 flex bg-gray-800 rounded-lg p-0.5 border border-gray-700">
+          <button
+            onClick={() => onModeChange('chat')}
+            className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+              mode === 'chat'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            <MessageSquare size={14} />
+            Chat
+          </button>
+          <button
+            onClick={() => onModeChange('agent')}
+            className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+              mode === 'agent'
+                ? 'bg-purple-600 text-white shadow-sm'
+                : 'text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            <Wrench size={14} />
+            Agent
+          </button>
+        </div>
+
         <button
           onClick={onCreate}
           className="m-3 flex items-center gap-2 px-3 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors border border-gray-700 text-sm"
         >
           <Plus size={16} />
-          <span>New chat</span>
+          <span>{mode === 'agent' ? 'New agent session' : 'New chat'}</span>
         </button>
 
+        {/* Search */}
+        <div className="mx-3 mb-2 relative">
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+          <input
+            type="text"
+            placeholder="Search conversations..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full bg-gray-800 text-sm text-gray-300 placeholder-gray-500 rounded-lg pl-8 pr-3 py-2 border border-gray-700 outline-none focus:border-gray-600 transition-colors"
+          />
+        </div>
+
         <div className="flex-1 overflow-y-auto px-2 pb-2">
-          {conversations.length === 0 ? (
-            <p className="text-gray-500 text-sm text-center mt-8 px-4">
-              No conversations yet.
-            </p>
-          ) : (
-            <ul className="space-y-0.5">
-              {conversations.map((conv) => (
+          {(() => {
+            const filtered = conversations.filter((c) => {
+              const modeMatch = (c.mode || 'chat') === mode;
+              const searchMatch = !searchQuery || c.title.toLowerCase().includes(searchQuery.toLowerCase());
+              return modeMatch && searchMatch;
+            });
+            if (filtered.length === 0) {
+              return (
+                <p className="text-gray-500 text-sm text-center mt-8 px-4">
+                  {mode === 'agent' ? 'No agent sessions yet.' : 'No conversations yet.'}
+                </p>
+              );
+            }
+            return (
+              <ul className="space-y-0.5">
+                {filtered.map((conv) => (
                 <li key={conv.id}>
                   {editingId === conv.id ? (
                     <div className="flex items-center gap-1 px-2 py-1.5 bg-gray-800 rounded-lg">
@@ -111,7 +161,16 @@ export function Sidebar({
                       }`}
                       onClick={() => onSelect(conv.id)}
                     >
-                      <MessageSquare size={14} className="flex-shrink-0 text-gray-400" />
+                      <span
+                        className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                          conv.mode === 'agent' ? 'bg-purple-500' : 'bg-blue-500'
+                        }`}
+                      />
+                      {conv.mode === 'agent' ? (
+                        <Wrench size={14} className="flex-shrink-0 text-purple-400" />
+                      ) : (
+                        <MessageSquare size={14} className="flex-shrink-0 text-gray-400" />
+                      )}
                       <span className="flex-1 text-sm truncate">{conv.title}</span>
                       <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5">
                         <button
@@ -137,7 +196,8 @@ export function Sidebar({
                 </li>
               ))}
             </ul>
-          )}
+            );
+          })()}
         </div>
 
         <UserBadge profile={user} onSwitch={onSwitchUser} />

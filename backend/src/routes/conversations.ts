@@ -26,9 +26,9 @@ conversations.get('/:id', async (c) => {
 conversations.post('/', async (c) => {
   try {
     const ownerId = c.get('user').id;
-    const { title, model } = await c.req.json();
+    const { title, model, mode, workspacePath } = await c.req.json();
     if (!model) return c.json({ error: 'model is required' }, 400);
-    const conv = await createConversation(model, ownerId, title);
+    const conv = await createConversation(model, ownerId, title, mode, workspacePath);
     return c.json({ conversation: conv });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Failed to create' }, 500);

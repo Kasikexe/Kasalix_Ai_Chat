@@ -3,8 +3,9 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
-import { Check, Copy, Download, User, Bot, FileCode } from 'lucide-react';
+import { Check, Copy, Download, User, Bot, FileCode, RefreshCw, Pencil, X, Save, FilePlus2 } from 'lucide-react';
 import type { Message as MessageType } from '../types';
+
 const languageExtensions: Record<string, string> = {
   javascript: '.js',
   js: '.js',
@@ -49,20 +50,38 @@ const languageExtensions: Record<string, string> = {
   swift: '.swift',
 };
 
-const CodeBlock = memo(function CodeBlock({ children, className }: { children: string; className?: string }) {
+const FILE_PATH_RE = /^(?:\/\/|#|;|%|--|\/\*|<!--)\s*([^\s]+?\.[a-zA-Z]\w*)\s*(?:\*\/|-->)?$/;
+
+const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode }: { children: string; className?: string; onApplyCode?: (filePath: string, content: string) => void }) {
   const [copied, setCopied] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
   const language = className?.replace('language-', '') || '';
   const extension = language ? languageExtensions[language] || `.${language}` : '.txt';
 
-  const handleCopy = useCallback(async () => {
-    await navigator.clipboard.writeText(children);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  // Detect file path in first line
+  const { detectedPath, codeContent } = useMemo(() => {
+    const lines = children.split('\n');
+    const firstLine = lines[0]?.trim() || '';
+    const match = firstLine.match(FILE_PATH_RE);
+    if (match) {
+      return {
+        detectedPath: match[1],
+        codeContent: lines.slice(1).join('\n').trimStart(),
+      };
+    }
+    return { detectedPath: null, codeContent: children };
   }, [children]);
 
+  const displayContent = detectedPath ? codeContent : children;
+
+  const handleCopy = useCallback(async () => {
+    await navigator.clipboard.writeText(displayContent);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [displayContent]);
+
   const handleDownload = useCallback(() => {
-    const blob = new Blob([children], { type: 'text/plain' });
+    const blob = new Blob([displayContent], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -73,16 +92,26 @@ const CodeBlock = memo(function CodeBlock({ children, className }: { children: s
     URL.revokeObjectURL(url);
     setDownloaded(true);
     setTimeout(() => setDownloaded(false), 1500);
-  }, [children, extension]);
+  }, [displayContent, extension]);
 
   return (
     <div className="group relative not-prose">
       <div className="flex items-center justify-between px-4 py-1.5 bg-gray-800/80 text-xs text-gray-400 rounded-t-lg border-b border-gray-700/50">
         <div className="flex items-center gap-1.5">
           <FileCode size={12} />
-          <span>{language || 'code'}</span>
+          <span>{detectedPath || language || 'code'}</span>
         </div>
         <div className="flex items-center gap-1">
+          {detectedPath && onApplyCode && (
+            <button
+              onClick={() => onApplyCode(detectedPath!, displayContent)}
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-all duration-150 hover:bg-purple-900/40 hover:text-purple-300 text-purple-400 active:scale-95"
+              title={`Apply to ${detectedPath}`}
+            >
+              <FilePlus2 size={12} />
+              Apply
+            </button>
+          )}
           <button
             onClick={handleDownload}
             className="flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-all duration-150 opacity-0 group-hover:opacity-100 hover:bg-gray-700/50 active:scale-95"
@@ -109,7 +138,7 @@ const CodeBlock = memo(function CodeBlock({ children, className }: { children: s
         </div>
       </div>
       <pre className="!mt-0 !rounded-t-none">
-        <code className={className}>{children}</code>
+        <code className={className}>{displayContent}</code>
       </pre>
     </div>
   );
@@ -119,6 +148,11 @@ interface Props {
   message: MessageType;
   isStreaming?: boolean;
   stage?: string;
+  index?: number;
+  onEdit?: (index: number, newContent: string) => void;
+  onRegenerate?: () => void;
+  isLastAssistant?: boolean;
+  onApplyCode?: (filePath: string, codeContent: string) => void;
 }
 
 const stageLabels: Record<string, string> = {
@@ -136,8 +170,10 @@ function getStageLabel(stage?: string): string | null {
   return '⚙️ Processing';
 }
 
-export const Message = memo(function Message({ message, isStreaming, stage }: Props) {
+export const Message = memo(function Message({ message, isStreaming, stage, index, onEdit, onRegenerate, isLastAssistant, onApplyCode }: Props) {
   const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState('');
   const isUser = message.role === 'user';
   const stageLabel = getStageLabel(stage);
 
@@ -145,6 +181,23 @@ export const Message = memo(function Message({ message, isStreaming, stage }: Pr
     await navigator.clipboard.writeText(message.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const startEdit = () => {
+    setEditValue(message.content.replace(/\[image:[^\]]+\]/g, '').trim());
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setEditValue('');
+  };
+
+  const saveEdit = () => {
+    if (editValue.trim() && index !== undefined && onEdit) {
+      onEdit(index, editValue.trim());
+    }
+    setEditing(false);
   };
 
   // Strip the [image:...] tag from display
@@ -159,14 +212,13 @@ export const Message = memo(function Message({ message, isStreaming, stage }: Pr
   // Memoize the components object so inline functions don't break memoization
   const markdownComponents = useMemo(() => ({
     pre: ({ children }: { children?: ReactNode }) => {
-      // Only enhance fenced code blocks (when children is a <code> element)
       if (children && typeof children === 'object' && 'type' in children && (children as any).type === 'code') {
         const codeChild = children as any;
-        return <CodeBlock className={codeChild.props?.className}>{codeChild.props?.children}</CodeBlock>;
+        return <CodeBlock className={codeChild.props?.className} onApplyCode={onApplyCode}>{codeChild.props?.children}</CodeBlock>;
       }
       return <pre>{children}</pre>;
     },
-  }), []);
+  }), [onApplyCode]);
 
   return (
     <div className={`flex gap-3 px-4 py-6 animate-fade-in ${isUser ? '' : 'bg-gray-900/40'}`}>
@@ -183,8 +235,17 @@ export const Message = memo(function Message({ message, isStreaming, stage }: Pr
       </div>
 
       <div className="flex-1 min-w-0 overflow-hidden">
-        <div className="font-semibold text-sm mb-1 text-gray-200">
-          {isUser ? 'You' : 'Assistant'}
+        <div className="font-semibold text-sm mb-1 text-gray-200 flex items-center gap-2">
+          <span>{isUser ? 'You' : 'Assistant'}</span>
+          {isUser && !editing && index !== undefined && onEdit && !isStreaming && (
+            <button
+              onClick={startEdit}
+              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-700 rounded text-gray-500 hover:text-gray-300 transition-all"
+              title="Edit message"
+            >
+              <Pencil size={12} />
+            </button>
+          )}
         </div>
 
         {isStreaming && stageLabel && (
@@ -201,31 +262,80 @@ export const Message = memo(function Message({ message, isStreaming, stage }: Pr
           </div>
         )}
 
-        <div className="prose prose-invert prose-sm max-w-none break-words">
-          {displayContent ? (
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={rehypePlugins}
-              components={markdownComponents}
-            >
-              {displayContent}
-            </ReactMarkdown>
-          ) : isStreaming ? (
-            <span className="inline-flex gap-1 items-center text-gray-400">
-              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-pulse-soft" />
-              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-pulse-soft" style={{ animationDelay: '0.2s' }} />
-              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-pulse-soft" style={{ animationDelay: '0.4s' }} />
-            </span>
-          ) : null}
-        </div>
-        {!isUser && displayContent && !isStreaming && (
-          <button
-            onClick={copy}
-            className="mt-2 flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
-          >
-            {copied ? <Check size={12} /> : <Copy size={12} />}
-            {copied ? 'Copied' : 'Copy'}
-          </button>
+        {editing ? (
+          <div className="space-y-2">
+            <textarea
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  saveEdit();
+                }
+                if (e.key === 'Escape') cancelEdit();
+              }}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 p-3 outline-none focus:border-gray-600 resize-none min-h-[80px]"
+              autoFocus
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={saveEdit}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors"
+              >
+                <Save size={14} />
+                Save & re-send
+              </button>
+              <button
+                onClick={cancelEdit}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-medium rounded-lg transition-colors border border-gray-700"
+              >
+                <X size={14} />
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="prose prose-invert prose-sm max-w-none break-words">
+            {displayContent ? (
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={rehypePlugins}
+                components={markdownComponents}
+              >
+                {displayContent}
+              </ReactMarkdown>
+            ) : isStreaming ? (
+              <span className="inline-flex gap-1 items-center text-gray-400">
+                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-pulse-soft" />
+                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-pulse-soft" style={{ animationDelay: '0.2s' }} />
+                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-pulse-soft" style={{ animationDelay: '0.4s' }} />
+              </span>
+            ) : null}
+          </div>
+        )}
+
+        {!editing && (
+          <div className="flex items-center gap-1 mt-2">
+            {!isUser && displayContent && !isStreaming && (
+              <button
+                onClick={copy}
+                className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors px-1 py-0.5 rounded hover:bg-gray-800"
+              >
+                {copied ? <Check size={12} /> : <Copy size={12} />}
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            )}
+            {!isUser && isLastAssistant && !isStreaming && displayContent && onRegenerate && (
+              <button
+                onClick={onRegenerate}
+                className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors px-1 py-0.5 rounded hover:bg-gray-800"
+                title="Regenerate response"
+              >
+                <RefreshCw size={12} />
+                Regenerate
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>

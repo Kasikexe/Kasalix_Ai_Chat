@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { ChatView } from './components/ChatView';
+import { AgentWorkspace } from './components/AgentWorkspace';
 import { SettingsModal } from './components/SettingsModal';
 import { PasswordPrompt } from './components/PasswordPrompt';
 import { UserSetup } from './components/UserSetup';
@@ -12,7 +13,7 @@ import {
   createUserProfile,
   clearUserProfile,
 } from './services/api';
-import type { UserProfile } from './types';
+import type { ConversationMode, UserProfile } from './types';
 
 const THINKING_KEY = 'ai-chat:thinkingEnabled';
 
@@ -74,9 +75,10 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [mode, setMode] = useState<ConversationMode>('chat');
 
   const activeConv = useMemo(
-    () => (activeId ? conversations.find((c) => c.id === activeId) : null),
+    () => (activeId ? conversations.find((c) => c.id === activeId) ?? null : null),
     [activeId, conversations]
   );
 
@@ -86,7 +88,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
   };
 
   const handleNewChat = async () => {
-    const conv = await create(model);
+    const conv = await create(model, undefined, mode);
     setActiveId(conv.id);
     setSidebarOpen(false);
   };
@@ -101,6 +103,13 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
     if (activeId === id) setActiveId(null);
   };
 
+  const handleModeChange = (newMode: ConversationMode) => {
+    setMode(newMode);
+    setActiveId(null);
+  };
+
+  const isAgent = mode === 'agent';
+
   return (
     <div className="h-screen-dynamic flex bg-gray-950 text-white overflow-hidden">
       <Sidebar
@@ -114,6 +123,8 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
         onClose={() => setSidebarOpen(false)}
         user={user}
         onSwitchUser={onSwitchUser}
+        mode={mode}
+        onModeChange={handleModeChange}
       />
       <div className="flex-1 flex flex-col min-w-0">
         <Header
@@ -122,16 +133,29 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
           isAdmin={isAuthed}
           thinkingEnabled={thinkingEnabled}
           onToggleThinking={onToggleThinking}
+          conversation={activeConv}
         />
-        <ChatView
-          key={activeConv?.id || 'new'}
-          initialMessages={activeConv?.messages || []}
-          conversationId={activeConv?.id}
-          model={model}
-          thinkingEnabled={thinkingEnabled}
-          onMessageSent={refresh}
-          onConversationCreated={setActiveId}
-        />
+        {isAgent ? (
+          <AgentWorkspace
+            key={activeConv?.id || 'new'}
+            conversation={activeConv}
+            onCreateNew={handleNewChat}
+            model={model}
+            thinkingEnabled={thinkingEnabled}
+            onMessageSent={refresh}
+            onConversationCreated={setActiveId}
+          />
+        ) : (
+          <ChatView
+            key={activeConv?.id || 'new'}
+            initialMessages={activeConv?.messages || []}
+            conversationId={activeConv?.id}
+            model={model}
+            thinkingEnabled={thinkingEnabled}
+            onMessageSent={refresh}
+            onConversationCreated={setActiveId}
+          />
+        )}
       </div>
 
       <SettingsModal

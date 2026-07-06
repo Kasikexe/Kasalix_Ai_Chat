@@ -1,5 +1,5 @@
 import { useRef, useState, KeyboardEvent, useEffect } from 'react';
-import { Send, Square, Paperclip, X } from 'lucide-react';
+import { Send, Square, Paperclip, X, Mic } from 'lucide-react';
 
 interface Props {
   onSend: (content: string, imageDataUrl?: string) => void;
@@ -11,8 +11,10 @@ interface Props {
 export function InputBar({ onSend, onStop, isStreaming, disabled }: Props) {
   const [value, setValue] = useState('');
   const [image, setImage] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<any>(null);
 
   const adjust = () => {
     const el = ref.current;
@@ -83,6 +85,52 @@ export function InputBar({ onSend, onStop, isStreaming, disabled }: Props) {
     }
   };
 
+  const toggleRecording = () => {
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('Voice input is not supported in this browser.');
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+    recognition.continuous = false;
+
+    recognition.onresult = (event: any) => {
+      let transcript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          transcript += event.results[i][0].transcript;
+        }
+      }
+      if (transcript) {
+        setValue((prev) => {
+          const combined = prev ? prev + ' ' + transcript : transcript;
+          return combined.trim();
+        });
+      }
+    };
+
+    recognition.onerror = () => {
+      setIsRecording(false);
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsRecording(true);
+  };
+
   return (
     <div className="border-t border-gray-800 bg-gray-900 safe-bottom">
       <div className="max-w-3xl mx-auto p-3 md:p-4">
@@ -113,6 +161,19 @@ export function InputBar({ onSend, onStop, isStreaming, disabled }: Props) {
             title="Attach image"
           >
             <Paperclip size={18} />
+          </button>
+
+          <button
+            onClick={toggleRecording}
+            disabled={disabled || isStreaming}
+            className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
+              isRecording
+                ? 'bg-red-600 text-white hover:bg-red-700 animate-pulse'
+                : 'text-gray-400 hover:bg-gray-700'
+            }`}
+            title={isRecording ? 'Stop recording' : 'Voice input'}
+          >
+            <Mic size={18} />
           </button>
 
           <textarea

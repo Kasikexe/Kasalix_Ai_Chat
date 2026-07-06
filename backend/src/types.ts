@@ -1,4 +1,5 @@
 export type Role = 'user' | 'assistant' | 'system';
+export type ConversationMode = 'chat' | 'agent';
 
 export interface Message {
   role: Role;
@@ -11,6 +12,8 @@ export interface Conversation {
   title: string;
   messages: Message[];
   model: string;
+  mode: ConversationMode;
+  workspacePath?: string;
   ownerId: string;
   createdAt: number;
   updatedAt: number;

@@ -1,7 +1,15 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import type { Conversation, Message } from '../types';
+import type { Conversation, ConversationMode, Message } from '../types';
 import { generateId, truncate } from '../utils/helpers';
+
+function migrate(conv: any): Conversation {
+  return {
+    ...conv,
+    mode: conv.mode || 'chat',
+    workspacePath: conv.workspacePath || undefined,
+  };
+}
 
 const STORAGE_DIR = path.join(process.cwd(), 'data');
 const STORAGE_FILE = path.join(STORAGE_DIR, 'conversations.json');
@@ -20,7 +28,9 @@ async function loadFromFile(): Promise<void> {
     await ensureDir();
     const data = await fs.readFile(STORAGE_FILE, 'utf-8');
     const parsed = JSON.parse(data);
-    conversations = new Map(Object.entries(parsed));
+    conversations = new Map(
+      Object.entries(parsed).map(([k, v]) => [k, migrate(v)])
+    );
   } catch {
     conversations = new Map();
   }
@@ -58,16 +68,20 @@ export async function getConversation(id: string, ownerId?: string): Promise<Con
 export async function createConversation(
   model: string,
   ownerId: string,
-  title?: string
+  title?: string,
+  mode: ConversationMode = 'chat',
+  workspacePath?: string
 ): Promise<Conversation> {
   await loadFromFile();
   const now = Date.now();
   const conv: Conversation = {
     id: generateId(),
-    title: title || 'New Chat',
+    title: title || (mode === 'agent' ? 'New Agent Session' : 'New Chat'),
     messages: [],
     model,
     ownerId,
+    mode,
+    workspacePath,
     createdAt: now,
     updatedAt: now,
   };
@@ -76,10 +90,11 @@ export async function createConversation(
   return conv;
 }
 
+
 export async function updateConversation(
   id: string,
   ownerId: string,
-  updates: Partial<Pick<Conversation, 'title' | 'model'>>
+  updates: Partial<Pick<Conversation, 'title' | 'model' | 'mode' | 'workspacePath'>>
 ): Promise<Conversation | null> {
   await loadFromFile();
   const conv = conversations.get(id);
@@ -115,7 +130,7 @@ export async function addMessage(
   conv.messages.push(messageWithTime);
   conv.updatedAt = Date.now();
 
-  if (conv.title === 'New Chat' && message.role === 'user' && conv.messages.length === 1) {
+  if ((conv.title === 'New Chat' || conv.title === 'New Agent Session') && message.role === 'user' && conv.messages.length === 1) {
     conv.title = truncate(message.content, 50);
   }
 

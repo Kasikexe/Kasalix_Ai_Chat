@@ -1,4 +1,6 @@
-import { Menu, Settings, Lock, Brain } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Menu, Settings, Lock, Brain, Download } from 'lucide-react';
+import type { Conversation } from '../types';
 
 interface HeaderProps {
   onMenuClick: () => void;
@@ -6,11 +8,82 @@ interface HeaderProps {
   isAdmin: boolean;
   thinkingEnabled: boolean;
   onToggleThinking: () => void;
+  conversation?: Conversation | null;
 }
 
 export function Header({
-  onMenuClick, onSettingsClick, isAdmin, thinkingEnabled, onToggleThinking
+  onMenuClick, onSettingsClick, isAdmin, thinkingEnabled, onToggleThinking, conversation
 }: HeaderProps) {
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setExportOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  const formatMessages = (format: 'markdown' | 'json') => {
+    if (!conversation) return;
+    setExportOpen(false);
+
+    let content: string;
+    let filename: string;
+    let mimeType: string;
+
+    if (format === 'markdown') {
+      const lines: string[] = [
+        `# ${conversation.title}`,
+        '',
+        `*Exported on ${new Date().toLocaleString()}*`,
+        '',
+        '---',
+        '',
+      ];
+      for (const msg of conversation.messages) {
+        const role = msg.role === 'user' ? '👤 **You**' : '🤖 **Assistant**';
+        const content = msg.content.replace(/\[image:[^\]]+\]/g, '[Image attached]');
+        lines.push(`${role}:`);
+        lines.push('');
+        lines.push(content);
+        lines.push('');
+        lines.push('---');
+        lines.push('');
+      }
+      content = lines.join('\n');
+      filename = `${conversation.title.replace(/[^a-z0-9]/gi, '_')}.md`;
+      mimeType = 'text/markdown';
+    } else {
+      const exportData = {
+        title: conversation.title,
+        model: conversation.model,
+        exportedAt: new Date().toISOString(),
+        messages: conversation.messages.map((m) => ({
+          role: m.role,
+          content: m.content.replace(/\[image:[^\]]+\]/g, '[Image attached]'),
+          timestamp: m.timestamp,
+        })),
+      };
+      content = JSON.stringify(exportData, null, 2);
+      filename = `${conversation.title.replace(/[^a-z0-9]/gi, '_')}.json`;
+      mimeType = 'application/json';
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <header className="border-b border-gray-800 bg-gray-900/80 backdrop-blur-sm sticky top-0 z-20">
       <div className="flex items-center justify-between px-3 md:px-4 py-3 gap-2">
@@ -23,6 +96,35 @@ export function Header({
         </button>
         <h1 className="md:hidden text-sm font-medium text-gray-300">AI Chat</h1>
         <div className="flex-1" />
+
+        {/* Export dropdown */}
+        {conversation && conversation.messages.length > 0 && (
+          <div ref={exportRef} className="relative">
+            <button
+              onClick={() => setExportOpen(!exportOpen)}
+              className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
+              title="Export conversation"
+            >
+              <Download size={18} />
+            </button>
+            {exportOpen && (
+              <div className="absolute right-0 top-full mt-1 w-44 bg-gray-900 border border-gray-700 rounded-lg shadow-xl py-1 z-50">
+                <button
+                  onClick={() => formatMessages('markdown')}
+                  className="w-full text-left px-3 py-2 text-xs text-gray-300 hover:bg-gray-800 transition-colors"
+                >
+                  Export as Markdown
+                </button>
+                <button
+                  onClick={() => formatMessages('json')}
+                  className="w-full text-left px-3 py-2 text-xs text-gray-300 hover:bg-gray-800 transition-colors"
+                >
+                  Export as JSON
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Thinking mode toggle */}
         <button
