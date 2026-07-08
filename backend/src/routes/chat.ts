@@ -1,12 +1,14 @@
 import { Hono } from 'hono';
 import { runPipeline } from '../services/pipeline';
 import { addMessage, createConversation, getConversation } from '../services/storage';
-import type { Message } from '../types';
+import type { ConversationMode, Message } from '../types';
 
 const chat = new Hono();
 
 chat.post('/', async (c) => {
   let convId: string | undefined;
+  let convMode: ConversationMode = 'chat';
+  let convWorkspacePath: string | undefined;
 
   try {
     const ownerId = c.get('user').id;
@@ -15,6 +17,8 @@ chat.post('/', async (c) => {
     const messages: Message[] = body.messages;
     const providedConvId: string | undefined = body.conversationId;
     const thinkingEnabled: boolean = body.thinkingEnabled === true;
+    const mode: ConversationMode = body.mode === 'agent' ? 'agent' : 'chat';
+    const reqWorkspacePath: string | undefined = body.workspacePath;
 
     if (!model || !Array.isArray(messages) || messages.length === 0) {
       return c.json({ error: 'model and messages are required' }, 400);
@@ -25,9 +29,13 @@ chat.post('/', async (c) => {
       const existing = await getConversation(providedConvId, ownerId);
       if (!existing) return c.json({ error: 'Conversation not found' }, 404);
       convId = providedConvId;
+      convMode = existing.mode || 'chat';
+      convWorkspacePath = existing.workspacePath || reqWorkspacePath;
     } else {
-      const newConv = await createConversation(model, ownerId);
+      const newConv = await createConversation(model, ownerId, undefined, mode);
       convId = newConv.id;
+      convMode = mode;
+      convWorkspacePath = newConv.workspacePath;
     }
 
     // Save user message (strip image data to save space)
@@ -64,6 +72,8 @@ chat.post('/', async (c) => {
           await runPipeline({
             model,
             messages,
+            mode: convMode,
+            workspacePath: convWorkspacePath,
             thinkingEnabled,
             signal: ac.signal,
             onStage: (stage) => {

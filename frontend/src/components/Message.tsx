@@ -55,12 +55,14 @@ const FILE_PATH_RE = /^(?:\/\/|#|;|%|--|\/\*|<!--)\s*([^\s]+?\.[a-zA-Z]\w*)\s*(?
 const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode }: { children: string; className?: string; onApplyCode?: (filePath: string, content: string) => void }) {
   const [copied, setCopied] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
+  // Ensure children is a string (guard against React nodes during streaming edge cases)
+  const safeChildren = typeof children === 'string' ? children : '';
   const language = className?.replace('language-', '') || '';
   const extension = language ? languageExtensions[language] || `.${language}` : '.txt';
 
   // Detect file path in first line
   const { detectedPath, codeContent } = useMemo(() => {
-    const lines = children.split('\n');
+    const lines = safeChildren.split('\n');
     const firstLine = lines[0]?.trim() || '';
     const match = firstLine.match(FILE_PATH_RE);
     if (match) {
@@ -69,10 +71,10 @@ const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode }: 
         codeContent: lines.slice(1).join('\n').trimStart(),
       };
     }
-    return { detectedPath: null, codeContent: children };
-  }, [children]);
+    return { detectedPath: null, codeContent: safeChildren };
+  }, [safeChildren]);
 
-  const displayContent = detectedPath ? codeContent : children;
+  const displayContent = detectedPath ? codeContent : safeChildren;
 
   const handleCopy = useCallback(async () => {
     await navigator.clipboard.writeText(displayContent);
@@ -157,7 +159,10 @@ interface Props {
 
 const stageLabels: Record<string, string> = {
   'vision': '🔍 Analyzing image',
+  'reading': '📂 Reading workspace',
+  'writing': '✏️ Writing files',
   'code': '💻 Writing code',
+  'editing': '✏️ Editing files',
   'summary': '✨ Polishing response',
   'chat': '💬 Thinking',
 };

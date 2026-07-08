@@ -1,12 +1,14 @@
 import { useCallback, useRef, useState } from 'react';
-import type { Message } from '../types';
+import type { ConversationMode, Message } from '../types';
 import { api } from '../services/api';
 
 export function useChat(
   model: string,
   initialMessages: Message[],
   initialConversationId?: string,
-  thinkingEnabled = false
+  thinkingEnabled = false,
+  mode: ConversationMode = 'chat',
+  workspacePath?: string
 ) {
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -20,6 +22,11 @@ export function useChat(
 
   messagesRef.current = messages;
   convIdRef.current = conversationId;
+
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const workspacePathRef = useRef(workspacePath);
+  workspacePathRef.current = workspacePath;
 
   const startStream = useCallback(async (convId: string | undefined): Promise<string | undefined> => {
     const controller = new AbortController();
@@ -65,7 +72,9 @@ export function useChat(
             setMessages([...messagesRef.current]);
           },
         },
-        controller.signal
+        controller.signal,
+        modeRef.current,
+        workspacePathRef.current
       );
       return convIdRef.current;
     } catch (e) {

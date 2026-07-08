@@ -39,6 +39,14 @@ export interface FileEntry {
   size?: number;
 }
 
+export interface ModifiedFile {
+  filePath: string;
+  fileName: string;
+  changeType: 'created' | 'edited';
+  originalContent?: string;
+  timestamp: number;
+}
+
 export interface UserProfile {
   id: string;
   name: string;

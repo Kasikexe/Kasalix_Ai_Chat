@@ -221,6 +221,14 @@ export const api = {
     );
   },
 
+  async deleteFile(filePath: string): Promise<{ success: boolean; path: string }> {
+    return handleResponse(
+      await fetch(`${API_BASE}/files/delete?path=${encodeURIComponent(filePath)}`, authedFetch(`${API_BASE}/files/delete`, {
+        method: 'DELETE',
+      }))
+    );
+  },
+
   async writeFile(filePath: string, content: string): Promise<{ success: boolean; path: string; isNew: boolean; size: number }> {
     return handleResponse(
       await fetch(`${API_BASE}/files/write`, authedFetch(`${API_BASE}/files/write`, {
@@ -242,7 +250,9 @@ streamChat(
     onDone: () => void;
     onError: (err: string) => void;
   },
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  mode?: ConversationMode,
+  workspacePath?: string
 ): Promise<void> {
   return (async () => {
     const res = await fetch(`${API_BASE}/chat`, authedFetch(`${API_BASE}/chat`, {
@@ -252,6 +262,8 @@ streamChat(
         model,
         messages,
         conversationId,
+        mode,
+        workspacePath,
         thinkingEnabled: localStorage.getItem('ai-chat:thinkingEnabled') === 'true',
       }),
       signal,

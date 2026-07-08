@@ -16,7 +16,7 @@ export function ChatView({
   initialMessages, conversationId, model, thinkingEnabled = false, onMessageSent, onConversationCreated,
 }: Props) {
   const { messages, isStreaming, sendMessage, regenerate, editMessage, stopGeneration, currentStage } = useChat(
-    model, initialMessages, conversationId, thinkingEnabled
+    model, initialMessages, conversationId, thinkingEnabled, 'chat', undefined
   );
 
   const handleSend = async (content: string) => {

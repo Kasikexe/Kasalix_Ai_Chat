@@ -148,6 +148,31 @@ files.get('/content', async (c) => {
   }
 });
 
+files.delete('/delete', async (c) => {
+  const filePath = c.req.query('path');
+  if (!filePath) {
+    return c.json({ error: 'path query parameter is required' }, 400);
+  }
+
+  const resolved = path.resolve(filePath);
+
+  try {
+    await fs.access(resolved);
+    const stat = await fs.stat(resolved);
+    if (stat.isDirectory()) {
+      await fs.rm(resolved, { recursive: true });
+    } else {
+      await fs.unlink(resolved);
+    }
+    return c.json({ success: true, path: resolved });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+      return c.json({ error: 'File does not exist' }, 404);
+    }
+    return c.json({ error: 'Failed to delete file' }, 500);
+  }
+});
+
 files.put('/write', async (c) => {
   try {
     const { filePath, content } = await c.req.json();

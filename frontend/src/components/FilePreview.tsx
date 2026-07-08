@@ -17,6 +17,7 @@ interface Props {
   filePath: string;
   fileName: string;
   onClose: () => void;
+  onSave?: (filePath: string, changeType: 'created' | 'edited', originalContent?: string) => void;
 }
 
 function EditorWithLineNumbers({ value, onChange, language }: {
@@ -187,7 +188,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
-export function FilePreview({ filePath, fileName, onClose }: Props) {
+export function FilePreview({ filePath, fileName, onClose, onSave }: Props) {
   const [data, setData] = useState<FileContent | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -245,6 +246,10 @@ export function FilePreview({ filePath, fileName, onClose }: Props) {
       setSaved(true);
       setEditing(false);
       setShowingDiff(false);
+      // Notify parent about the modification
+      const oldContent = data?.content ?? '';
+      const wasNew = oldContent === '';
+      onSave?.(filePath, wasNew ? 'created' : 'edited', wasNew ? undefined : oldContent);
       // Reload content
       const result = await api.getFileContent(filePath);
       const fc = result as FileContent;

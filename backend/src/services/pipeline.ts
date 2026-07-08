@@ -1,5 +1,7 @@
+import { promises as fs } from 'fs';
+import path from 'path';
 import { streamChat } from './ollama';
-import type { Message } from '../types';
+import type { ConversationMode, Message } from '../types';
 
 const VISION_MODEL = process.env.VISION_MODEL || 'qwen2.5vl:3b';
 const CODE_MODEL = process.env.CODE_MODEL || 'qwen2.5-coder:7b';
@@ -11,6 +13,8 @@ const THINKING_ENABLED = process.env.THINKING_MODE === 'true';
 interface PipelineOptions {
   model: string;
   messages: Message[];
+  mode?: ConversationMode;
+  workspacePath?: string;
   signal?: AbortSignal;
   onStage: (stage: string) => void;
   onChunk: (chunk: string) => void;
@@ -20,17 +24,80 @@ interface PipelineOptions {
 interface DetectedIntent {
   hasImage: boolean;
   wantsCode: boolean;
+  wantsFileInfo: boolean;
   imageDataUrl?: string;
 }
 
-function detectIntent(messages: Message[]): DetectedIntent {
+// IGNORE_DIRS from files route — skip these when listing for the AI
+const LIST_IGNORE_DIRS = new Set([
+  'node_modules', '.git', '.svn', '.hg', '.DS_Store',
+  '__pycache__', '.next', '.nuxt', 'dist', 'build', '.cache',
+  'target', 'vendor', '.venv', 'venv', 'env',
+]);
+
+async function listWorkspaceFiles(wsPath: string): Promise<string> {
+  try {
+    const resolved = path.resolve(wsPath);
+    await fs.access(resolved);
+    const stat = await fs.stat(resolved);
+    if (!stat.isDirectory()) return '';
+
+    const entries = await fs.readdir(resolved, { withFileTypes: true });
+    const filtered = entries.filter((e) => !e.name.startsWith('.') && !LIST_IGNORE_DIRS.has(e.name));
+
+    // Build a formatted tree
+    const lines: string[] = [];
+    for (const entry of filtered) {
+      if (entry.isDirectory()) {
+        lines.push(`  📁 ${entry.name}/`);
+      } else {
+        let size = '';
+        try {
+          const s = await fs.stat(path.join(resolved, entry.name));
+          size = s.size < 1024 ? ` (${s.size}B)` : ` (${(s.size / 1024).toFixed(1)}KB)`;
+        } catch { /* skip */ }
+        lines.push(`  📄 ${entry.name}${size}`);
+      }
+    }
+
+    if (lines.length === 0) return '  (empty directory)';
+    return lines.join('\n');
+  } catch {
+    return '';
+  }
+}
+
+function detectIntent(messages: Message[], mode?: ConversationMode): DetectedIntent {
   const last = messages[messages.length - 1];
   if (!last || last.role !== 'user') {
-    return { hasImage: false, wantsCode: false };
+    return { hasImage: false, wantsCode: false, wantsFileInfo: false };
   }
 
   const content = last.content.toLowerCase();
   const hasImage = content.includes('[image:data:image');
+
+  // Detect if user is asking about files/directory contents
+  const fileQueryPhrases = [
+    'what files', 'list files', 'show files', 'tell me what files',
+    'what is in', 'what is inside', 'what\'s in', 'what\'s inside',
+    'files in this directory', 'files in this folder',
+    'list directory', 'show directory', 'directory contents',
+    'how many files', 'what do you see', 'what do you have',
+    'files are there', 'files are here', 'files exist',
+    'show me the files', 'tell me the files',
+  ];
+  const wantsFileInfo = fileQueryPhrases.some((phrase) => content.includes(phrase));
+
+  // Broader code-related phrases for agent mode (catches more requests)
+  const agentCodePhrases = [
+    ...['write', 'generate', 'create', 'build', 'make', 'code', 'implement',
+       'convert', 'turn', 'remake', 'recreate', 'show'],
+    'html page', 'css code', 'web page', 'app', 'website',
+    'function', 'script', 'program', 'component', 'file',
+    'project', 'template', 'ui', 'interface', 'style', 'layout',
+    'in html', 'in css', 'in javascript', 'in python', 'in typescript',
+    'in react', 'in vue', 'in go', 'in rust', 'in java',
+  ];
 
   // Only trigger code stage on explicit code requests
   const codePhrases = [
@@ -45,13 +112,28 @@ function detectIntent(messages: Message[]): DetectedIntent {
     'show me the code', 'give me the code', 'html page', 'css code',
   ];
 
-  const wantsCode = codePhrases.some((phrase) => content.includes(phrase));
+  let wantsCode: boolean;
+  if (mode === 'agent') {
+    // In agent mode, use a broader but still sensible heuristic:
+    // trigger code pipeline for messages that look like they involve code/files
+    const isShortQuery = content.split(/\s+/).length < 4;
+    if (isShortQuery) {
+      // Short queries like "hi", "hello", "thanks" skip the code pipeline
+      // unless they match the agent code phrases
+      wantsCode = agentCodePhrases.some((phrase) => content.includes(phrase));
+    } else {
+      // Longer queries likely involve code; run the code pipeline
+      wantsCode = true;
+    }
+  } else {
+    wantsCode = codePhrases.some((phrase) => content.includes(phrase));
+  }
 
   let imageDataUrl: string | undefined;
   const match = last.content.match(/\[image:(data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+))\]/);
   if (match) imageDataUrl = match[1];
 
-  return { hasImage, wantsCode, imageDataUrl };
+  return { hasImage, wantsCode, wantsFileInfo, imageDataUrl };
 }
 
 // Internal stage: runs the model without streaming output to user
@@ -117,17 +199,56 @@ async function runVisibleStage(
 }
 
 export async function runPipeline(opts: PipelineOptions): Promise<string> {
-  const { model, messages, signal, onStage, onChunk, thinkingEnabled } = opts;
-  const intent = detectIntent(messages);
+  const { model, messages, mode, workspacePath, signal, onStage, onChunk, thinkingEnabled } = opts;
+  const intent = detectIntent(messages, mode);
 
   // Determine thinking mode: request override > env default
   const think = thinkingEnabled !== undefined ? thinkingEnabled : THINKING_ENABLED;
 
-  console.log(`[pipeline] Intent: hasImage=${intent.hasImage}, wantsCode=${intent.wantsCode}, think=${think}`);
+  console.log(`[pipeline] Intent: hasImage=${intent.hasImage}, wantsCode=${intent.wantsCode}, wantsFileInfo=${intent.wantsFileInfo}, think=${think}`);
 
-  // Simple chat — no pipeline needed
+  // If user asks about files, read the actual directory listing and inject it
+  let fileListing = '';
+  if (intent.wantsFileInfo && workspacePath) {
+    onStage('reading:workspace');
+    fileListing = await listWorkspaceFiles(workspacePath);
+    console.log(`[pipeline] Workspace file listing: ${fileListing.substring(0, 200)}...`);
+  }
+
+  // Simple chat — no pipeline needed (injects agent awareness in agent mode)
   if (!intent.hasImage && !intent.wantsCode) {
     onStage('chat:thinking');
+    if (mode === 'agent') {
+      const agentMessages: Message[] = [
+        {
+          role: 'system',
+          content: `You are an AI coding agent that helps users build projects in their workspace.
+Your workspace is at: ${workspacePath || '(not set)'}
+
+${fileListing ? `Here are the ACTUAL files in this workspace (read from disk):
+${fileListing}
+
+Use this listing to answer questions about files. Do NOT make up files that are not listed here.` : `You cannot read files or list directories directly. If asked about files, say you cannot see them and offer to generate code instead.`}
+
+✅ WHAT YOU CAN DO:
+- When you generate code, ALWAYS put a file path comment on the FIRST LINE of each code block, like:
+
+// index.html
+<!DOCTYPE html>
+...
+
+// src/style.css
+body { ... }
+
+The file path format should be relative (src/index.ts, components/Button.tsx, etc.).
+If asked a question, answer conversationally.
+
+All file operations are limited to your workspace. Do NOT reference files outside it.`,
+        },
+        ...messages,
+      ];
+      return await runVisibleStage('chat', model, agentMessages, think, onChunk, signal);
+    }
     return await runVisibleStage('chat', model, messages, think, onChunk, signal);
   }
 
@@ -168,7 +289,7 @@ Rules:
 
   // STAGE 2: Code generation (INTERNAL — user sees the final summary)
   if (intent.wantsCode) {
-    onStage('code:generating');
+    if (!fileListing) onStage('reading:workspace');
 
     const userText = messages[messages.length - 1].content
       .replace(/\[image:data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+\]/g, '')
@@ -178,10 +299,39 @@ Rules:
       ? `Based on this image analysis:\n\n${imageDescription}\n\nUser request: ${userText}\n\nGenerate the code.`
       : userText;
 
+    const codeSystemPrompt = mode === 'agent'
+      ? `You are an expert developer working in a code agent workspace.
+Your workspace directory is: ${workspacePath || '(not set)'}
+
+${fileListing ? `Here are the ACTUAL files already in the workspace:
+${fileListing}
+
+Do NOT recreate files that already exist unless the user asks. Update them instead.` : ''}
+All file paths you generate MUST be relative to this directory.
+
+Generate clean, working code in markdown code blocks.
+
+IMPORTANT: Start EVERY code block with a comment on the FIRST LINE showing the relative file path, like:
+// index.html
+// src/style.css
+// src/app.js
+// lib/helper.ts
+// backend/routes/api.ts
+
+Use the appropriate comment syntax for each language:
+- // for JS/TS/CSS/Go/Rust
+- # for Python/YAML/Ruby
+- <!-- --> for HTML/XML
+- ; for INI
+- -- for SQL
+
+After the code blocks, write a 1-2 sentence technical summary.`
+      : 'You are an expert developer. Generate clean, working code in markdown code blocks with language tags. After the code, write a 1-2 sentence technical summary of what you built.';
+
     const codeMessages: Message[] = [
       {
         role: 'system',
-        content: 'You are an expert developer. Generate clean, working code in markdown code blocks with language tags. After the code, write a 1-2 sentence technical summary of what you built.',
+        content: codeSystemPrompt,
       },
       ...messages.slice(0, -1),
       { role: 'user', content: codeContext },
@@ -190,6 +340,8 @@ Rules:
     try {
       // Code model doesn't need thinking mode either
       codeOutput = await runInternalStage('code', CODE_MODEL, codeMessages, false, signal);
+      // After code generation completes, show writing stage
+      onStage('writing:files');
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') throw e;
       console.error('[pipeline] Code stage failed:', e);
@@ -206,10 +358,27 @@ Rules:
     const userText = messages[messages.length - 1].content
       .replace(/\[image:data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+\]/g, '')
       .trim();
-    finalMessages = [
-      {
-        role: 'system',
-        content: `You are a friendly assistant. The user asked: "${userText}"
+
+    const finalSystemPrompt = mode === 'agent'
+      ? `You are a friendly AI coding agent working in a file workspace.
+Your workspace is at: ${workspacePath || '(not set)'}
+All files you work on live inside this directory.
+
+${fileListing ? `Current workspace files:
+${fileListing}
+
+` : ''}The user asked: "${userText}"
+
+${imageDescription ? `Vision analysis of the image: ${imageDescription}\n\n` : ''}A code AI generated this:
+
+${codeOutput}
+
+Your job: Write a brief, friendly response (3-5 sentences) that:
+- States which files were created or modified
+- Includes the code in markdown code blocks with their FILE PATH COMMENTS on the first line (copy EXACTLY from the code above — the file path markers are REQUIRED)
+- Is conversational and helpful
+- Do NOT repeat technical analysis verbatim`
+      : `You are a friendly assistant. The user asked: "${userText}"
 
 ${imageDescription ? `Vision analysis of the image: ${imageDescription}\n\n` : ''}A code AI generated this:
 
@@ -219,7 +388,12 @@ Your job: Write a brief, friendly response (3-5 sentences) that:
 - Acknowledges what was built in plain language
 - Includes the code in markdown code blocks (copy from the code above)
 - Is conversational and helpful
-- Doesn't repeat the analysis verbatim`,
+- Doesn't repeat the analysis verbatim`;
+
+    finalMessages = [
+      {
+        role: 'system',
+        content: finalSystemPrompt,
       },
     ];
   } else if (imageDescription) {
