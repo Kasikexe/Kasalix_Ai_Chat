@@ -1,5 +1,5 @@
 export type Role = 'user' | 'assistant' | 'system';
-export type ConversationMode = 'chat' | 'agent';
+export type ConversationMode = 'chat' | 'agent' | 'editor';
 
 export interface Message {
   role: Role;

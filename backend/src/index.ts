@@ -9,6 +9,7 @@ import chatRoutes from './routes/chat';
 import conversationsRoutes from './routes/conversations';
 import settingsRoutes from './routes/settings';
 import filesRoutes from './routes/files';
+import editorRoutes from './routes/editor';
 import { errorHandler, generateId } from './utils/helpers';
 
 const app = new Hono();
@@ -45,6 +46,7 @@ app.route('/api/chat', chatRoutes);
 app.route('/api/conversations', conversationsRoutes);
 app.route('/api/settings', settingsRoutes);
 app.route('/api/files', filesRoutes);
+app.route('/api/editor', editorRoutes);
 
 app.get('/', (c) => c.json({ message: 'AI Chat API', version: '1.0.0' }));
 app.get('/api/health', (c) => c.json({ status: 'ok' }));

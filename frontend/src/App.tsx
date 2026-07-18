@@ -3,11 +3,13 @@ import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { ChatView } from './components/ChatView';
 import { AgentWorkspace } from './components/AgentWorkspace';
+import { VideoEditor } from './components/VideoEditor';
 import { SettingsModal } from './components/SettingsModal';
 import { PasswordPrompt } from './components/PasswordPrompt';
 import { UserSetup } from './components/UserSetup';
 import { useConversations } from './hooks/useConversations';
 import { useModelVisibility } from './hooks/useModelVisibility';
+import { useIsMobile } from './hooks/useIsMobile';
 import {
   getUserProfile,
   createUserProfile,
@@ -76,6 +78,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [mode, setMode] = useState<ConversationMode>('chat');
+  const isMobile = useIsMobile();
 
   const activeConv = useMemo(
     () => (activeId ? conversations.find((c) => c.id === activeId) ?? null : null),
@@ -104,11 +107,11 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
   };
 
   const handleModeChange = (newMode: ConversationMode) => {
+    // Prevent switching to Agent/Editor on mobile
+    if (isMobile && (newMode === 'agent' || newMode === 'editor')) return;
     setMode(newMode);
     setActiveId(null);
   };
-
-  const isAgent = mode === 'agent';
 
   return (
     <div className="h-screen-dynamic flex bg-gray-950 text-white overflow-hidden">
@@ -135,7 +138,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
           onToggleThinking={onToggleThinking}
           conversation={activeConv}
         />
-        {isAgent ? (
+        {mode === 'agent' ? (
           <AgentWorkspace
             key={activeConv?.id || 'new'}
             conversation={activeConv}
@@ -144,6 +147,17 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
             thinkingEnabled={thinkingEnabled}
             onMessageSent={refresh}
             onConversationCreated={setActiveId}
+          />
+        ) : mode === 'editor' ? (
+          <VideoEditor
+            key={activeConv?.id || 'new'}
+            conversation={activeConv}
+            onNewVideoProject={async (title: string, workspacePath: string) => {
+              const conv = await create(model, title, 'editor', workspacePath);
+              setActiveId(conv.id);
+              setSidebarOpen(false);
+              return conv;
+            }}
           />
         ) : (
           <ChatView

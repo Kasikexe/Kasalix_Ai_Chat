@@ -154,6 +154,21 @@ export const api = {
     );
   },
 
+  async addConversationMessage(
+    id: string,
+    role: 'user' | 'assistant',
+    content: string
+  ): Promise<Conversation> {
+    const data = await handleResponse<{ conversation: Conversation }>(
+      await fetch(`${API_BASE}/conversations/${id}/messages`, authedFetch(`${API_BASE}/conversations/${id}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role, content }),
+      }))
+    );
+    return data.conversation;
+  },
+
   async getSettings(): Promise<AppSettings> {
     return handleResponse<AppSettings>(
       await fetch(`${API_BASE}/settings`, authedFetch(`${API_BASE}/settings`))
@@ -313,4 +328,140 @@ streamChat(
     })();
   },
 
+  // --- Editor API ---
+  async getVideoInfo(filePath: string): Promise<{
+    fileName: string;
+    fileSize: number;
+    duration: number;
+    bitRate: number;
+    format: string;
+    video: {
+      codec: string;
+      width: number;
+      height: number;
+      fps: number;
+      pixelFormat: string;
+    } | null;
+    audio: {
+      codec: string;
+      sampleRate: number;
+      channels: number;
+    } | null;
+    streams: number;
+  }> {
+    const data = await handleResponse<{ info: any }>(
+      await fetch(`${API_BASE}/editor/info`, authedFetch(`${API_BASE}/editor/info`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath }),
+      }))
+    );
+    return data.info;
+  },
+
+  async extractFrame(
+    filePath: string,
+    time: number,
+    width: number = 640
+  ): Promise<{ frame: string; time: number; width: number }> {
+    const data = await handleResponse<{ frame: string; time: number; width: number }>(
+      await fetch(`${API_BASE}/editor/frames`, authedFetch(`${API_BASE}/editor/frames`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath, time, width }),
+      }))
+    );
+    return data;
+  },
+
+  async renderVideo(
+    inputPath: string,
+    outputFileName: string,
+    cmdArgs: string
+  ): Promise<{ success: boolean; outputPath: string; outputFileName: string; outputSize: number; elapsed: number }> {
+    const data = await handleResponse<any>(
+      await fetch(`${API_BASE}/editor/render`, authedFetch(`${API_BASE}/editor/render`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inputPath, outputFileName, cmdArgs }),
+      }))
+    );
+    return data;
+  },
+
+  editorChat(
+    message: string,
+    videoPath: string | null,
+    videoInfo: any,
+    messages: { role: 'user' | 'assistant'; content: string }[],
+    callbacks: {
+      onChunk: (chunk: string) => void;
+      onCommand: (args: string, auto?: boolean) => void;
+      onDone: () => void;
+      onError: (err: string) => void;
+      onStage?: (stage: string) => void;
+    },
+    signal?: AbortSignal
+  ): Promise<void> {
+    return (async () => {
+      const res = await fetch(`${API_BASE}/editor/chat`, authedFetch(`${API_BASE}/editor/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, videoPath, videoInfo, messages }),
+        signal,
+      }));
+
+      if (!res.ok || !res.body) {
+        callbacks.onError(`Editor chat failed: ${res.statusText}`);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
+
+          for (const evt of events) {
+            const line = evt.trim();
+            if (!line.startsWith('data:')) continue;
+            const payload = line.slice(5).trim();
+            if (!payload) continue;
+            try {
+              const parsed = JSON.parse(payload);
+              switch (parsed.type) {
+                case 'chunk': callbacks.onChunk(parsed.content); break;
+                case 'command': callbacks.onCommand(parsed.args, parsed.auto); break;
+                case 'stage': callbacks.onStage?.(parsed.stage); break;
+                case 'done': callbacks.onDone(); return;
+                case 'error': callbacks.onError(parsed.error); return;
+              }
+            } catch (e) {
+              console.error('SSE parse error:', e);
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    })();
+  },
+
+  async uploadVideo(file: File): Promise<{ fileName: string; filePath: string; size: number }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const data = await handleResponse<{ fileName: string; filePath: string; size: number }>(
+      await fetch(`${API_BASE}/editor/upload`, authedFetch(`${API_BASE}/editor/upload`, {
+        method: 'POST',
+        body: formData,
+      }))
+    );
+    return data;
+  },
 };

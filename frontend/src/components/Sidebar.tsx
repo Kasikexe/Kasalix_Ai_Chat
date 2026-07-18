@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { MessageSquare, Plus, Trash2, Edit2, X, Check, Menu, Wrench, Search } from 'lucide-react';
+import { MessageSquare, Plus, Trash2, Edit2, X, Check, Menu, Wrench, Search, Film, AlertTriangle } from 'lucide-react';
 import type { Conversation, ConversationMode } from '../types';
 import type { UserProfile } from '../types';
 import { UserBadge } from './UserBadge';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 interface SidebarProps {
   conversations: Conversation[];
@@ -27,6 +28,7 @@ export function Sidebar({
   const [editValue, setEditValue] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (editingId && inputRef.current) {
@@ -86,15 +88,40 @@ export function Sidebar({
             Chat
           </button>
           <button
-            onClick={() => onModeChange('agent')}
-            className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+            onClick={() => !isMobile && onModeChange('agent')}
+            disabled={isMobile}
+            className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all relative ${
               mode === 'agent'
                 ? 'bg-purple-600 text-white shadow-sm'
-                : 'text-gray-400 hover:text-gray-200'
+                : isMobile
+                  ? 'text-gray-600 cursor-not-allowed opacity-50'
+                  : 'text-gray-400 hover:text-gray-200'
             }`}
+            title={isMobile ? 'Agent mode is not available on mobile devices' : 'Agent mode'}
           >
             <Wrench size={14} />
             Agent
+            <span className="absolute -top-1.5 -right-1.5 px-1 py-0.5 text-[8px] font-bold bg-amber-500 text-black rounded-sm leading-none shadow-sm">
+              BETA
+            </span>
+          </button>
+          <button
+            onClick={() => !isMobile && onModeChange('editor')}
+            disabled={isMobile}
+            className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all relative ${
+              mode === 'editor'
+                ? 'bg-red-600 text-white shadow-sm'
+                : isMobile
+                  ? 'text-gray-600 cursor-not-allowed opacity-50'
+                  : 'text-gray-400 hover:text-gray-200'
+            }`}
+            title={isMobile ? 'Editor mode is not available on mobile devices' : 'Editor mode'}
+          >
+            <Film size={14} />
+            Editor
+            <span className="absolute -top-1.5 -right-1.5 px-1 py-0.5 text-[8px] font-bold bg-amber-500 text-black rounded-sm leading-none shadow-sm">
+              BETA
+            </span>
           </button>
         </div>
 
@@ -103,7 +130,7 @@ export function Sidebar({
           className="m-3 flex items-center gap-2 px-3 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors border border-gray-700 text-sm"
         >
           <Plus size={16} />
-          <span>{mode === 'agent' ? 'New agent session' : 'New chat'}</span>
+          <span>{mode === 'agent' ? 'New agent session' : mode === 'editor' ? 'New project' : 'New chat'}</span>
         </button>
 
         {/* Search */}
@@ -162,12 +189,13 @@ export function Sidebar({
                       onClick={() => onSelect(conv.id)}
                     >
                       <span
-                        className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                          conv.mode === 'agent' ? 'bg-purple-500' : 'bg-blue-500'
-                        }`}
-                      />
+                        className={`w-2 h-2 rounded-full flex-shrink-0 ${              conv.mode === 'agent' ? 'bg-purple-500' : conv.mode === 'editor' ? 'bg-red-500' : 'bg-blue-500'
+            }`}
+          />
                       {conv.mode === 'agent' ? (
                         <Wrench size={14} className="flex-shrink-0 text-purple-400" />
+                      ) : conv.mode === 'editor' ? (
+                        <Film size={14} className="flex-shrink-0 text-red-400" />
                       ) : (
                         <MessageSquare size={14} className="flex-shrink-0 text-gray-400" />
                       )}
