@@ -2,8 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import {
   X, User, Palette, Copy, Check, Key, Brain,
   LogOut, Pencil, CheckCircle, AtSign, Shield, Sun, Moon,
+  Database, Plus, Trash2, Edit3, BookOpen, RefreshCw,
 } from 'lucide-react';
-import type { UserProfile } from '../types';
+import type { UserProfile, MemoryData } from '../types';
 
 const COLORS = [
   '#ef4444', '#f97316', '#eab308', '#22c55e',
@@ -20,12 +21,28 @@ interface Props {
   onToggleThinking: () => void;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
+  memoryEnabled: boolean;
+  memoryCategories: Record<string, Record<string, string>>;
+  onToggleMemory: () => void;
+  onAddMemoryEntry: (category: string, key: string, value: string) => void;
+  onEditMemoryEntry: (category: string, key: string, value: string) => void;
+  onRemoveMemoryEntry: (category: string, key: string) => void;
+  onAddMemoryCategory: (category: string) => void;
+  onRemoveMemoryCategory: (category: string) => void;
+  onResetMemory: () => void;
+  onRefreshMemory?: () => void;
 }
 
 export function UserSettingsModal({
   open, onClose, profile, onUpdate, onSwitch,
   thinkingEnabled, onToggleThinking,
   theme, onToggleTheme,
+  memoryEnabled, memoryCategories,
+  onToggleMemory,
+  onAddMemoryEntry, onEditMemoryEntry, onRemoveMemoryEntry,
+  onAddMemoryCategory, onRemoveMemoryCategory,
+  onResetMemory,
+  onRefreshMemory,
 }: Props) {
   const [name, setName] = useState(profile.name);
   const [selectedColor, setSelectedColor] = useState(profile.color);
@@ -35,6 +52,17 @@ export function UserSettingsModal({
   const inputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
+  // Memory UI state
+  const [memoryExpanded, setMemoryExpanded] = useState(false);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+  const [editingEntry, setEditingEntry] = useState<{ category: string; key: string; value: string } | null>(null);
+  const [addingEntry, setAddingEntry] = useState<{ category: string } | null>(null);
+  const [newKey, setNewKey] = useState('');
+  const [newValue, setNewValue] = useState('');
+  const [editValue, setEditValue] = useState('');
+  const [addCategoryOpen, setAddCategoryOpen] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+
   // Reset state when profile changes or modal opens
   useEffect(() => {
     if (open) {
@@ -42,8 +70,10 @@ export function UserSettingsModal({
       setSelectedColor(profile.color);
       setIsEditing(false);
       setSaved(false);
+      // Refresh memory data from backend when modal opens
+      onRefreshMemory?.();
     }
-  }, [open, profile]);
+  }, [open, profile, onRefreshMemory]);
 
   useEffect(() => {
     if (!open) return;
@@ -93,6 +123,59 @@ export function UserSettingsModal({
     if (confirm('Switch user? You will return to the welcome screen.')) {
       onClose();
       onSwitch();
+    }
+  };
+
+  const toggleCategory = (cat: string) => {
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  };
+
+  const startAddEntry = (category: string) => {
+    setAddingEntry({ category });
+    setNewKey('');
+    setNewValue('');
+  };
+
+  const confirmAddEntry = () => {
+    if (addingEntry && newKey.trim() && newValue.trim()) {
+      onAddMemoryEntry(addingEntry.category, newKey.trim(), newValue.trim());
+      setAddingEntry(null);
+      setNewKey('');
+      setNewValue('');
+    }
+  };
+
+  const startEditEntry = (category: string, key: string, value: string) => {
+    setEditingEntry({ category, key, value });
+    setEditValue(value);
+  };
+
+  const confirmEditEntry = () => {
+    if (editingEntry && editValue.trim()) {
+      onEditMemoryEntry(editingEntry.category, editingEntry.key, editValue.trim());
+      setEditingEntry(null);
+      setEditValue('');
+    }
+  };
+
+  const confirmAddCategory = () => {
+    if (newCategoryName.trim()) {
+      onAddMemoryCategory(newCategoryName.trim());
+      setNewCategoryName('');
+      setAddCategoryOpen(false);
+      // Auto-expand the new category
+      setTimeout(() => {
+        setExpandedCategories((prev) => {
+          const next = new Set(prev);
+          next.add(newCategoryName.trim());
+          return next;
+        });
+      }, 100);
     }
   };
 
@@ -307,6 +390,248 @@ export function UserSettingsModal({
                 />
               </div>
             </div>
+          </div>
+
+          {/* Divider */}
+          <div className="border-t border-gray-800" />
+
+          {/* Memory Section */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-300">
+                <Database size={16} className="text-gray-500" />
+                AI Memory
+              </label>
+              <button
+                onClick={() => setMemoryExpanded(!memoryExpanded)}
+                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                {memoryExpanded ? 'Less' : 'Manage'}
+              </button>
+            </div>
+
+            {/* Memory toggle */}
+            <div
+              className={`flex items-center justify-between px-4 py-3 rounded-xl cursor-pointer transition-all duration-200 ${
+                memoryEnabled
+                  ? 'bg-emerald-900/20 border border-emerald-800/40'
+                  : 'bg-gray-800/50 border border-gray-800 hover:bg-gray-800'
+              }`}
+              onClick={onToggleMemory}
+            >
+              <div className="flex items-center gap-3">
+                <div className={`p-1.5 rounded-lg ${memoryEnabled ? 'bg-emerald-700/30' : 'bg-gray-700/50'}`}>
+                  <Brain size={18} className={memoryEnabled ? 'text-emerald-400' : 'text-gray-400'} />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-white">Memory {memoryEnabled ? 'On' : 'Off'}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {memoryEnabled
+                      ? `AI remembers ${Object.keys(memoryCategories).length} categories about you`
+                      : 'AI won\'t remember personal information'}
+                  </p>
+                </div>
+              </div>
+              <div
+                className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
+                  memoryEnabled ? 'bg-emerald-600' : 'bg-gray-700'
+                }`}
+              >
+                <div
+                  className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
+                    memoryEnabled ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </div>
+            </div>
+
+            {/* Expanded memory management */}
+            {memoryExpanded && (
+              <div className="space-y-3 animate-fade-in">
+                {/* Memory info badge */}
+                {memoryEnabled && Object.keys(memoryCategories).length === 0 && (
+                  <p className="text-xs text-gray-500 text-center py-2">
+                    Memory is on but empty. The AI will learn about you as you chat.
+                  </p>
+                )}
+
+                {/* Categories */}
+                {Object.entries(memoryCategories).map(([category, entries]) => (
+                  <div key={category} className="rounded-xl border border-gray-800 overflow-hidden">
+                    {/* Category header */}
+                    <div
+                      className="flex items-center justify-between px-3 py-2.5 bg-gray-800/50 cursor-pointer hover:bg-gray-800 transition-colors"
+                      onClick={() => toggleCategory(category)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <BookOpen size={14} className="text-blue-400" />
+                        <span className="text-sm font-medium text-white">#{category}</span>
+                        <span className="text-xs text-gray-500">({Object.keys(entries).length})</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); startAddEntry(category); }}
+                          className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-gray-200 transition-colors"
+                          title="Add entry"
+                        >
+                          <Plus size={12} />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm(`Delete entire "${category}" category?`)) onRemoveMemoryCategory(category);
+                          }}
+                          className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-red-400 transition-colors"
+                          title="Delete category"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Expanded entries */}
+                    {expandedCategories.has(category) && (
+                      <div className="px-3 py-2 space-y-1.5 border-t border-gray-800">
+                        {Object.entries(entries).length === 0 && !addingEntry && (
+                          <p className="text-xs text-gray-500 text-center py-2">No entries yet</p>
+                        )}
+
+                        {/* Adding new entry */}
+                        {addingEntry?.category === category && (
+                          <div className="flex items-center gap-2 p-2 bg-gray-800/30 rounded-lg">
+                            <input
+                              type="text"
+                              value={newKey}
+                              onChange={(e) => setNewKey(e.target.value)}
+                              placeholder="Key (e.g., age)"
+                              className="flex-1 min-w-0 px-2 py-1 bg-gray-800 border border-gray-700 rounded text-xs text-white placeholder-gray-500 outline-none focus:border-blue-600"
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') confirmAddEntry();
+                                if (e.key === 'Escape') setAddingEntry(null);
+                              }}
+                              autoFocus
+                            />
+                            <input
+                              type="text"
+                              value={newValue}
+                              onChange={(e) => setNewValue(e.target.value)}
+                              placeholder="Value"
+                              className="flex-1 min-w-0 px-2 py-1 bg-gray-800 border border-gray-700 rounded text-xs text-white placeholder-gray-500 outline-none focus:border-blue-600"
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') confirmAddEntry();
+                                if (e.key === 'Escape') setAddingEntry(null);
+                              }}
+                            />
+                            <button
+                              onClick={confirmAddEntry}
+                              className="p-1 bg-blue-600 hover:bg-blue-500 rounded text-white transition-colors"
+                              disabled={!newKey.trim() || !newValue.trim()}
+                            >
+                              <Check size={12} />
+                            </button>
+                          </div>
+                        )}
+
+                        {Object.entries(entries).map(([key, value]) => (
+                          <div key={key} className="group flex items-center gap-2">
+                            {editingEntry?.category === category && editingEntry.key === key ? (
+                              <div className="flex items-center gap-1 flex-1">
+                                <span className="text-xs text-gray-400 font-medium whitespace-nowrap">{key}:</span>
+                                <input
+                                  type="text"
+                                  value={editValue}
+                                  onChange={(e) => setEditValue(e.target.value)}
+                                  className="flex-1 px-2 py-0.5 bg-gray-800 border border-gray-700 rounded text-xs text-white outline-none focus:border-blue-600"
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') confirmEditEntry();
+                                    if (e.key === 'Escape') setEditingEntry(null);
+                                  }}
+                                  onBlur={confirmEditEntry}
+                                  autoFocus
+                                />
+                              </div>
+                            ) : (
+                              <>
+                                <span className="text-xs text-gray-400 font-medium whitespace-nowrap">{key}:</span>
+                                <span className="text-xs text-gray-200">{value}</span>
+                                <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button
+                                    onClick={() => startEditEntry(category, key, value)}
+                                    className="p-0.5 hover:bg-gray-700 rounded text-gray-500 hover:text-gray-300"
+                                    title="Edit"
+                                  >
+                                    <Edit3 size={10} />
+                                  </button>
+                                  <button
+                                    onClick={() => onRemoveMemoryEntry(category, key)}
+                                    className="p-0.5 hover:bg-gray-700 rounded text-gray-500 hover:text-red-400"
+                                    title="Delete"
+                                  >
+                                    <Trash2 size={10} />
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {/* Add category */}
+                {addCategoryOpen ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={newCategoryName}
+                      onChange={(e) => setNewCategoryName(e.target.value)}
+                      placeholder="Category name (e.g., Education)"
+                      className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs text-white placeholder-gray-500 outline-none focus:border-blue-600"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') confirmAddCategory();
+                        if (e.key === 'Escape') { setAddCategoryOpen(false); setNewCategoryName(''); }
+                      }}
+                      autoFocus
+                    />
+                    <button
+                      onClick={confirmAddCategory}
+                      className="p-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-white transition-colors"
+                      disabled={!newCategoryName.trim()}
+                    >
+                      <Check size={14} />
+                    </button>
+                    <button
+                      onClick={() => { setAddCategoryOpen(false); setNewCategoryName(''); }}
+                      className="p-2 hover:bg-gray-800 rounded-lg text-gray-400"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setAddCategoryOpen(true)}
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-gray-800/30 border border-dashed border-gray-700 hover:border-gray-600 rounded-xl text-xs text-gray-400 hover:text-gray-200 transition-all"
+                  >
+                    <Plus size={12} />
+                    Add Category
+                  </button>
+                )}
+
+                {/* Reset memory */}
+                {Object.keys(memoryCategories).length > 0 && (
+                  <button
+                    onClick={() => {
+                      if (confirm('Clear all memory? The AI will forget everything about you.')) onResetMemory();
+                    }}
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-red-900/10 border border-red-900/30 hover:bg-red-900/20 rounded-xl text-xs text-red-400 hover:text-red-300 transition-all"
+                  >
+                    <RefreshCw size={12} />
+                    Clear All Memory
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Divider */}

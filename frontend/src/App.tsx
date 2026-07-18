@@ -12,6 +12,7 @@ import { useConversations } from './hooks/useConversations';
 import { useModelVisibility } from './hooks/useModelVisibility';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useTheme } from './hooks/useTheme';
+import { useMemory } from './hooks/useMemory';
 import {
   getUserProfile,
   createUserProfile,
@@ -76,6 +77,17 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
     isHidden, toggle, showAll, hideAll, reset, isAuthed, authenticate,
   } = useModelVisibility();
   const { theme, toggleTheme } = useTheme();
+  const {
+    memory,
+    toggleMemory,
+    addEntry: addMemoryEntry,
+    editEntry: editMemoryEntry,
+    removeEntry: removeMemoryEntry,
+    addCategory: addMemoryCategory,
+    removeCategory: removeMemoryCategory,
+    resetMemory,
+    refresh: refreshMemory,
+  } = useMemory();
   const { conversations, create, remove, rename, refresh } = useConversations();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -157,7 +169,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
             onCreateNew={handleNewChat}
             model={model}
             thinkingEnabled={thinkingEnabled}
-            onMessageSent={refresh}
+            onMessageSent={() => { refresh(); refreshMemory(); }}
             onConversationCreated={setActiveId}
           />
         ) : mode === 'editor' ? (
@@ -178,7 +190,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
             conversationId={activeConv?.id}
             model={model}
             thinkingEnabled={thinkingEnabled}
-            onMessageSent={refresh}
+            onMessageSent={() => { refresh(); refreshMemory(); }}
             onConversationCreated={setActiveId}
           />
         )}
@@ -209,6 +221,16 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
         onToggleThinking={onToggleThinking}
         theme={theme}
         onToggleTheme={toggleTheme}
+        memoryEnabled={memory.enabled}
+        memoryCategories={memory.categories}
+        onToggleMemory={toggleMemory}
+        onAddMemoryEntry={addMemoryEntry}
+        onEditMemoryEntry={editMemoryEntry}
+        onRemoveMemoryEntry={removeMemoryEntry}
+        onAddMemoryCategory={addMemoryCategory}
+        onRemoveMemoryCategory={removeMemoryCategory}
+        onResetMemory={resetMemory}
+        onRefreshMemory={refreshMemory}
       />
 
       <PasswordPrompt

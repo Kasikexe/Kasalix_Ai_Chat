@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { runPipeline } from '../services/pipeline';
 import { addMessage, createConversation, getConversation } from '../services/storage';
+import { getMemory } from '../services/memory';
+import { extractMemoryFromTurn } from '../services/extractor';
 import type { ConversationMode, Message } from '../types';
 
 const chat = new Hono();
@@ -84,6 +86,7 @@ chat.post('/', async (c) => {
               fullResponse += chunk;
               send({ type: 'chunk', content: chunk });
             },
+            userId: ownerId,
           });
 
           if (fullResponse && activeConvId && !aborted) {
@@ -93,6 +96,26 @@ chat.post('/', async (c) => {
             });
           }
           send({ type: 'done', stage: currentStage });
+
+          // Async memory extraction after response is complete
+          if (fullResponse && lastMessage?.role === 'user' && !aborted) {
+            try {
+              const memory = await getMemory(ownerId);
+              if (memory.enabled) {
+                const userText = lastMessage.content
+                  .replace(/\[image:data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+\]/g, '[image]')
+                  .trim();
+                if (userText) {
+                  // Fire and forget
+                  extractMemoryFromTurn(ownerId, userText, fullResponse).catch((e) =>
+                    console.error('[chat] Memory extraction error:', e)
+                  );
+                }
+              }
+            } catch (e) {
+              console.error('[chat] Failed to check memory:', e);
+            }
+          }
         } catch (e) {
           const message = e instanceof Error ? e.message : 'Unknown error';
           console.error('[chat] Pipeline error:', message);

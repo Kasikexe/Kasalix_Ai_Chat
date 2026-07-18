@@ -1,4 +1,4 @@
-import type { Conversation, ConversationMode, Message, OllamaModel, FileEntry } from '../types';
+import type { Conversation, ConversationMode, Message, OllamaModel, FileEntry, MemoryData } from '../types';
 
 const API_BASE = '/api';
 
@@ -463,5 +463,30 @@ streamChat(
       }))
     );
     return data;
+  },
+
+  // --- Memory API ---
+  async getMemory(): Promise<MemoryData> {
+    return handleResponse<MemoryData>(
+      await fetch(`${API_BASE}/memory`, authedFetch(`${API_BASE}/memory`))
+    );
+  },
+
+  async updateMemory(updates: Partial<MemoryData> & { categories?: Record<string, Record<string, string>> }): Promise<MemoryData> {
+    return handleResponse<MemoryData>(
+      await fetch(`${API_BASE}/memory`, authedFetch(`${API_BASE}/memory`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      }))
+    );
+  },
+
+  async resetMemory(): Promise<MemoryData> {
+    return handleResponse<MemoryData>(
+      await fetch(`${API_BASE}/memory`, authedFetch(`${API_BASE}/memory`, {
+        method: 'DELETE',
+      }))
+    );
   },
 };

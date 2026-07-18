@@ -53,3 +53,9 @@ export interface UserProfile {
   color: string;
 }
 
+export interface MemoryData {
+  enabled: boolean;
+  categories: Record<string, Record<string, string>>;
+  updatedAt: number;
+}
+

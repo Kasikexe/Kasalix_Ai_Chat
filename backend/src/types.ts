@@ -38,6 +38,12 @@ export interface ChatRequest {
   conversationId?: string;
 }
 
+export interface MemoryData {
+  enabled: boolean;
+  categories: Record<string, Record<string, string>>;
+  updatedAt: number;
+}
+
 export type Variables = {
   user: { id: string };
   auth: { authenticated: boolean };

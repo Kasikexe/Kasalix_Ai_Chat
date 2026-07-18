@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { streamChat } from './ollama';
+import { getMemory } from './memory';
 import type { ConversationMode, Message } from '../types';
 
 const VISION_MODEL = process.env.VISION_MODEL || 'qwen2.5vl:3b';
@@ -19,6 +20,7 @@ interface PipelineOptions {
   onStage: (stage: string) => void;
   onChunk: (chunk: string) => void;
   thinkingEnabled?: boolean;
+  userId?: string;
 }
 
 interface DetectedIntent {
@@ -198,8 +200,31 @@ async function runVisibleStage(
   return output;
 }
 
+/**
+ * Build a memory context system message to inject personality/memory into the conversation.
+ */
+async function buildMemoryContext(userId?: string): Promise<string | null> {
+  if (!userId) return null;
+  try {
+    const memory = await getMemory(userId);
+    if (!memory.enabled || Object.keys(memory.categories).length === 0) return null;
+
+    const lines: string[] = ['Here is what I know about you:'];
+    for (const [category, entries] of Object.entries(memory.categories)) {
+      lines.push(`\n# ${category}`);
+      for (const [key, value] of Object.entries(entries)) {
+        lines.push(`- ${key}: ${value}`);
+      }
+    }
+    lines.push('\nUse this information naturally in our conversation. If I share updated info, update your knowledge.');
+    return lines.join('\n');
+  } catch {
+    return null;
+  }
+}
+
 export async function runPipeline(opts: PipelineOptions): Promise<string> {
-  const { model, messages, mode, workspacePath, signal, onStage, onChunk, thinkingEnabled } = opts;
+  const { model, messages, mode, workspacePath, signal, onStage, onChunk, thinkingEnabled, userId } = opts;
   const intent = detectIntent(messages, mode);
 
   // Determine thinking mode: request override > env default
@@ -215,39 +240,50 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
     console.log(`[pipeline] Workspace file listing: ${fileListing.substring(0, 200)}...`);
   }
 
+  // Build memory context if available
+  const memoryContext = await buildMemoryContext(userId);
+
+  // Helper function to append memory context to system content
+  const withMemory = (content: string): string =>
+    memoryContext ? content + '\n\n---\n\n' + memoryContext : content;
+
   // Simple chat — no pipeline needed (injects agent awareness in agent mode)
   if (!intent.hasImage && !intent.wantsCode) {
     onStage('chat:thinking');
     if (mode === 'agent') {
+      const fileInfo = fileListing
+        ? 'Here are the ACTUAL files in this workspace (read from disk):\n' + fileListing + '\n\nUse this listing to answer questions about files. Do NOT make up files that are not listed here.'
+        : 'You cannot read files or list directories directly. If asked about files, say you cannot see them and offer to generate code instead.';
+
+      const agentSystem = withMemory(
+        'You are an AI coding agent that helps users build projects in their workspace.\n' +
+        'Your workspace is at: ' + (workspacePath || '(not set)') + '\n\n' +
+        fileInfo +
+        '\n\nWHAT YOU CAN DO:\n' +
+        '- When you generate code, ALWAYS put a file path comment on the FIRST LINE of each code block, like:\n\n' +
+        '// index.html\n' +
+        '<!DOCTYPE html>\n' +
+        '...\n\n' +
+        '// src/style.css\n' +
+        'body { ... }\n\n' +
+        'The file path format should be relative (src/index.ts, components/Button.tsx, etc.).\n' +
+        'If asked a question, answer conversationally.\n\n' +
+        'All file operations are limited to your workspace. Do NOT reference files outside it.'
+      );
+
       const agentMessages: Message[] = [
-        {
-          role: 'system',
-          content: `You are an AI coding agent that helps users build projects in their workspace.
-Your workspace is at: ${workspacePath || '(not set)'}
-
-${fileListing ? `Here are the ACTUAL files in this workspace (read from disk):
-${fileListing}
-
-Use this listing to answer questions about files. Do NOT make up files that are not listed here.` : `You cannot read files or list directories directly. If asked about files, say you cannot see them and offer to generate code instead.`}
-
-✅ WHAT YOU CAN DO:
-- When you generate code, ALWAYS put a file path comment on the FIRST LINE of each code block, like:
-
-// index.html
-<!DOCTYPE html>
-...
-
-// src/style.css
-body { ... }
-
-The file path format should be relative (src/index.ts, components/Button.tsx, etc.).
-If asked a question, answer conversationally.
-
-All file operations are limited to your workspace. Do NOT reference files outside it.`,
-        },
+        { role: 'system', content: agentSystem },
         ...messages,
       ];
       return await runVisibleStage('chat', model, agentMessages, think, onChunk, signal);
+    }
+    // Inject memory into plain chat mode
+    if (memoryContext) {
+      const chatMessages: Message[] = [
+        { role: 'system', content: memoryContext },
+        ...messages,
+      ];
+      return await runVisibleStage('chat', model, chatMessages, think, onChunk, signal);
     }
     return await runVisibleStage('chat', model, messages, think, onChunk, signal);
   }
