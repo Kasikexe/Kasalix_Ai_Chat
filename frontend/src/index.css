@@ -36,6 +36,154 @@ body,
   }
 }
 
+/* ============================
+   LIGHT MODE
+   Applied when <html> has .light class
+   ============================ */
+html.light {
+  /* Main backgrounds */
+  --bg-950: #ffffff;
+  --bg-900: #f8fafc;
+  --bg-800: #f1f5f9;
+  --bg-700: #e2e8f0;
+  --bg-600: #cbd5e1;
+
+  /* Text */
+  --text-white: #0f172a;
+  --text-200: #1e293b;
+  --text-300: #334155;
+  --text-400: #64748b;
+  --text-500: #94a3b8;
+  --text-600: #cbd5e1;
+
+  /* Borders */
+  --border-800: #e2e8f0;
+  --border-700: #cbd5e1;
+  --border-600: #94a3b8;
+
+  /* Overlay */
+  --overlay: rgba(255, 255, 255, 0.7);
+
+  /* Scrollbar */
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-hover: #94a3b8;
+}
+
+/* ---- Background overrides ---- */
+html.light .bg-gray-950 { background-color: var(--bg-950); }
+html.light .bg-gray-900 { background-color: var(--bg-900); }
+html.light .bg-gray-900\/40 { background-color: rgba(248, 250, 252, 0.4); }
+html.light .bg-gray-900\/50 { background-color: rgba(248, 250, 252, 0.5); }
+html.light .bg-gray-900\/60 { background-color: rgba(248, 250, 252, 0.6); }
+html.light .bg-gray-900\/70 { background-color: rgba(248, 250, 252, 0.7); }
+html.light .bg-gray-900\/80 { background-color: rgba(248, 250, 252, 0.8); }
+html.light .bg-gray-800 { background-color: var(--bg-800); }
+html.light .bg-gray-800\/30 { background-color: rgba(241, 245, 249, 0.3); }
+html.light .bg-gray-800\/50 { background-color: rgba(241, 245, 249, 0.5); }
+html.light .bg-gray-800\/80 { background-color: rgba(241, 245, 249, 0.8); }
+html.light .bg-gray-700 { background-color: var(--bg-700); }
+html.light .bg-gray-700\/50 { background-color: rgba(226, 232, 240, 0.5); }
+html.light .bg-gray-700\/30 { background-color: rgba(226, 232, 240, 0.3); }
+html.light .bg-gray-600 { background-color: var(--bg-600); }
+html.light .bg-black\/70 {
+  background-color: var(--overlay);
+  backdrop-filter: blur(4px);
+}
+html.light .bg-black\/60 { background-color: var(--overlay); }
+
+/* ---- Hover overrides ---- */
+html.light .hover\:bg-gray-800:hover { background-color: var(--bg-700); }
+html.light .hover\:bg-gray-700:hover { background-color: var(--bg-600); }
+html.light .group:hover .group-hover\:bg-gray-800 { background-color: var(--bg-700); }
+html.light .group:hover .group-hover\:bg-gray-700 { background-color: var(--bg-600); }
+
+/* ---- Text overrides ---- */
+html.light .text-white { color: var(--text-white); }
+html.light .text-gray-200 { color: var(--text-200); }
+html.light .text-gray-300 { color: var(--text-300); }
+html.light .text-gray-400 { color: var(--text-400); }
+html.light .text-gray-500 { color: var(--text-500); }
+html.light .text-gray-600 { color: var(--text-600); }
+
+/* ---- Placeholder ---- */
+html.light ::placeholder { color: var(--text-500) !important; }
+
+/* ---- Border overrides ---- */
+html.light .border-gray-800 { border-color: var(--border-800); }
+html.light .border-gray-700 { border-color: var(--border-700); }
+html.light .border-gray-700\/50 { border-color: rgba(203, 213, 225, 0.5); }
+html.light .border-gray-600 { border-color: var(--border-600); }
+html.light .border-b-gray-800 { border-bottom-color: var(--border-800); }
+html.light .border-l-gray-800 { border-left-color: var(--border-800); }
+html.light .border-r-gray-800 { border-right-color: var(--border-800); }
+html.light .border-t-gray-800 { border-top-color: var(--border-800); }
+html.light .border-t-gray-700\/50 { border-top-color: rgba(203, 213, 225, 0.5); }
+
+/* ---- Focus states ---- */
+html.light .focus-within\:border-gray-600:focus-within { border-color: var(--border-600); }
+html.light .focus\:border-gray-600:focus { border-color: var(--border-600); }
+html.light .focus\:border-blue-600:focus { border-color: #2563eb; }
+
+/* ---- Ring ---- */
+html.light .ring-offset-gray-900 { --tw-ring-offset-color: var(--bg-900); }
+
+/* ---- Scrollbar ---- */
+html.light ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); }
+html.light ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
+
+/* ---- Prose / Markdown overrides ---- */
+html.light .prose pre {
+  background: #f8fafc !important;
+  border-color: #e2e8f0;
+}
+html.light .prose code:not(pre code) {
+  background: rgba(203, 213, 225, 0.5);
+  color: #dc2626;
+}
+html.light .prose pre code { color: #1e293b; }
+html.light .prose th { background: #f1f5f9; }
+html.light .prose th,
+html.light .prose td { border-color: #e2e8f0; }
+html.light .prose a { color: #2563eb; }
+html.light .prose blockquote {
+  border-left-color: #cbd5e1;
+  color: #64748b;
+}
+html.light .prose h1,
+html.light .prose h2,
+html.light .prose h3 { color: #0f172a; }
+
+/* ---- Highlight.js code blocks ---- */
+html.light .hljs { color: #1e293b; }
+html.light .hljs-comment,
+html.light .hljs-quote { color: #94a3b8; }
+html.light .hljs-keyword,
+html.light .hljs-selector-tag,
+html.light .hljs-subst { color: #7c3aed; }
+html.light .hljs-number,
+html.light .hljs-literal,
+html.light .hljs-variable,
+html.light .hljs-template-variable,
+html.light .hljs-tag .hljs-attr { color: #2563eb; }
+html.light .hljs-string,
+html.light .hljs-doctag { color: #059669; }
+html.light .hljs-title,
+html.light .hljs-section,
+html.light .hljs-selector-id { color: #d97706; }
+html.light .hljs-type { color: #0891b2; }
+
+/* ---- Sidebar-specific overrides ---- */
+html.light .proseln { color: #94a3b8; }
+
+/* ---- Line numbers in file preview ---- */
+html.light .text-gray-600\/50 { color: rgba(148, 163, 184, 0.5); }
+
+/* ---- Line number gutter background in FilePreview ---- */
+html.light .bg-gray-950\/80 { background-color: rgba(255, 255, 255, 0.8); }
+
+/* ---- Input bar area ---- */
+html.light .dark\:border-gray-600 { border-color: #cbd5e1; }
+
 /* Markdown prose */
 .prose pre {
   background: #0d1117 !important;

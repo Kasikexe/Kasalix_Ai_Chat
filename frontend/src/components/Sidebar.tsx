@@ -16,13 +16,14 @@ interface SidebarProps {
   onClose: () => void;
   user: UserProfile;
   onSwitchUser: () => void;
+  onUserSettings?: () => void;
   mode: ConversationMode;
   onModeChange: (mode: ConversationMode) => void;
 }
 
 export function Sidebar({
   conversations, activeId, onSelect, onCreate, onDelete, onRename,
-  isOpen, onClose, user, onSwitchUser, mode, onModeChange,
+  isOpen, onClose, user, onSwitchUser, onUserSettings, mode, onModeChange,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -228,7 +229,7 @@ export function Sidebar({
           })()}
         </div>
 
-        <UserBadge profile={user} onSwitch={onSwitchUser} />
+        <UserBadge profile={user} onSwitch={onSwitchUser} onSettings={onUserSettings} />
       </aside>
     </>
   );

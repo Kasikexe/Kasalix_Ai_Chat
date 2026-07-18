@@ -5,14 +5,17 @@ import { ChatView } from './components/ChatView';
 import { AgentWorkspace } from './components/AgentWorkspace';
 import { VideoEditor } from './components/VideoEditor';
 import { SettingsModal } from './components/SettingsModal';
+import { UserSettingsModal } from './components/UserSettingsModal';
 import { PasswordPrompt } from './components/PasswordPrompt';
 import { UserSetup } from './components/UserSetup';
 import { useConversations } from './hooks/useConversations';
 import { useModelVisibility } from './hooks/useModelVisibility';
 import { useIsMobile } from './hooks/useIsMobile';
+import { useTheme } from './hooks/useTheme';
 import {
   getUserProfile,
   createUserProfile,
+  updateUserProfile,
   clearUserProfile,
 } from './services/api';
 import type { ConversationMode, UserProfile } from './types';
@@ -72,12 +75,20 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
   const {
     isHidden, toggle, showAll, hideAll, reset, isAuthed, authenticate,
   } = useModelVisibility();
+  const { theme, toggleTheme } = useTheme();
   const { conversations, create, remove, rename, refresh } = useConversations();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [userSettingsOpen, setUserSettingsOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [mode, setMode] = useState<ConversationMode>('chat');
+
+  const [localUser, setLocalUser] = useState(user);
+
+  useEffect(() => {
+    setLocalUser(user);
+  }, [user]);
   const isMobile = useIsMobile();
 
   const activeConv = useMemo(
@@ -124,8 +135,9 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
         onRename={rename}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
-        user={user}
+        user={localUser}
         onSwitchUser={onSwitchUser}
+        onUserSettings={() => setUserSettingsOpen(true)}
         mode={mode}
         onModeChange={handleModeChange}
       />
@@ -181,6 +193,22 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
         onShowAll={showAll}
         onHideAll={hideAll}
         onReset={reset}
+      />
+
+      <UserSettingsModal
+        open={userSettingsOpen}
+        onClose={() => setUserSettingsOpen(false)}
+        profile={localUser}
+        onUpdate={(updates) => {
+          const updated = updateUserProfile(updates);
+          setLocalUser(updated);
+          return updated;
+        }}
+        onSwitch={onSwitchUser}
+        thinkingEnabled={thinkingEnabled}
+        onToggleThinking={onToggleThinking}
+        theme={theme}
+        onToggleTheme={toggleTheme}
       />
 
       <PasswordPrompt

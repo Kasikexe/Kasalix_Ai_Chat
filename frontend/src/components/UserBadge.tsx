@@ -1,13 +1,14 @@
-import { LogOut, Copy, Check } from 'lucide-react';
+import { LogOut, Copy, Check, Settings } from 'lucide-react';
 import { useState } from 'react';
 import type { UserProfile } from '../types';
 
 interface Props {
   profile: UserProfile;
   onSwitch: () => void;
+  onSettings?: () => void;
 }
 
-export function UserBadge({ profile, onSwitch }: Props) {
+export function UserBadge({ profile, onSwitch, onSettings }: Props) {
   const [copied, setCopied] = useState(false);
 
   const copyId = async () => {
@@ -30,18 +31,29 @@ export function UserBadge({ profile, onSwitch }: Props) {
           <div className="text-sm font-medium truncate">{profile.name}</div>
           <div className="text-xs text-gray-500">Local user</div>
         </div>
-        <button
-          onClick={() => {
-            if (confirm('Switch user? You will return to the welcome screen.')) onSwitch();
-          }}
-          className="p-1.5 hover:bg-gray-800 rounded text-gray-400"
-          title="Switch user"
-        >
-          <LogOut size={14} />
-        </button>
+        <div className="flex items-center gap-1">
+          {onSettings && (
+            <button
+              onClick={onSettings}
+              className="p-1.5 hover:bg-gray-800 rounded text-gray-400 hover:text-gray-200 transition-colors"
+              title="User settings"
+            >
+              <Settings size={14} />
+            </button>
+          )}
+          <button
+            onClick={() => {
+              if (confirm('Switch user? You will return to the welcome screen.')) onSwitch();
+            }}
+            className="p-1.5 hover:bg-gray-800 rounded text-gray-400 hover:text-red-400 transition-colors"
+            title="Switch user"
+          >
+            <LogOut size={14} />
+          </button>
+        </div>
       </div>
 
-      {/* Debug: show user ID */}
+      {/* Quick user ID display */}
       <button
         onClick={copyId}
         className="w-full flex items-center gap-2 px-2 py-1.5 bg-gray-800/50 hover:bg-gray-800 rounded text-left transition-colors group"
