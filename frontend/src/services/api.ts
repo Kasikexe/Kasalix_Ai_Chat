@@ -10,8 +10,49 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return res.json();
 }
 
+export interface ModelAssignments {
+  chat_thinking: string;
+  chat_fast: string;
+  code: string;
+  vision: string;
+  extraction: string;
+  editor: string;
+  editor_vision: string;
+}
+
+export const MODEL_ASSIGNMENT_KEYS: (keyof ModelAssignments)[] = [
+  'chat_thinking',
+  'chat_fast',
+  'code',
+  'vision',
+  'extraction',
+  'editor',
+  'editor_vision',
+];
+
+export const MODEL_ASSIGNMENT_LABELS: Record<keyof ModelAssignments, string> = {
+  chat_thinking: 'Chat (Thinking)',
+  chat_fast: 'Chat (Fast)',
+  code: 'Code Generation',
+  vision: 'Vision Analysis',
+  extraction: 'Memory Extraction',
+  editor: 'Video Editor',
+  editor_vision: 'Editor Vision',
+};
+
+export const MODEL_ASSIGNMENT_ICONS: Record<keyof ModelAssignments, string> = {
+  chat_thinking: '🧠',
+  chat_fast: '⚡',
+  code: '💻',
+  vision: '👁️',
+  extraction: '🧠',
+  editor: '🎬',
+  editor_vision: '👁️',
+};
+
 export interface AppSettings {
   hiddenModels: string[];
+  modelAssignments?: Record<string, string>;
   updatedAt: number;
 }
 
@@ -175,12 +216,12 @@ export const api = {
     );
   },
 
-  async saveSettings(hiddenModels: string[]): Promise<AppSettings> {
+  async saveSettings(payload: { hiddenModels?: string[]; modelAssignments?: Record<string, string> }): Promise<AppSettings> {
     return handleResponse<AppSettings>(
       await fetch(`${API_BASE}/settings`, authedFetch(`${API_BASE}/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hiddenModels }),
+        body: JSON.stringify(payload),
       }))
     );
   },

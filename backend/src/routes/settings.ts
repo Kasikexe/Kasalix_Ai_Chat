@@ -10,11 +10,13 @@ const SETTINGS_PASSWORD = process.env.SETTINGS_PASSWORD || 'letmein';
 
 interface AppSettings {
   hiddenModels: string[];
+  modelAssignments?: Record<string, string>;
   updatedAt: number;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   hiddenModels: [],
+  modelAssignments: {},
   updatedAt: 0,
 };
 
@@ -71,8 +73,16 @@ settings.put('/', async (c) => {
   }
   try {
     const body = await c.req.json();
+    // Merge with existing settings to preserve fields not sent in this request
+    const existing = await loadSettings();
     const next: AppSettings = {
-      hiddenModels: Array.isArray(body.hiddenModels) ? body.hiddenModels : [],
+      ...existing,
+      ...(body.hiddenModels !== undefined
+        ? { hiddenModels: body.hiddenModels }
+        : {}),
+      ...(body.modelAssignments !== undefined
+        ? { modelAssignments: body.modelAssignments }
+        : {}),
       updatedAt: Date.now(),
     };
     await saveSettings(next);
@@ -86,7 +96,7 @@ settings.post('/reset', async (c) => {
   if (!c.get('auth').authenticated) {
     return c.json({ error: 'Not authenticated' }, 401);
   }
-  const data: AppSettings = { ...DEFAULT_SETTINGS, updatedAt: Date.now() };
+  const data: AppSettings = { ...DEFAULT_SETTINGS, modelAssignments: {}, updatedAt: Date.now() };
   await saveSettings(data);
   return c.json(data);
 });

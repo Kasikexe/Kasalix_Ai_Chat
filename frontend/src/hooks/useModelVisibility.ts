@@ -25,7 +25,7 @@ export function useModelVisibility() {
 
   useEffect(() => {
     if (!loaded || !isAuthed) return;
-    api.saveSettings(Array.from(hidden)).catch((e) => {
+    api.saveSettings({ hiddenModels: Array.from(hidden) }).catch((e) => {
       console.error('Failed to save settings:', e);
     });
   }, [hidden, loaded, isAuthed]);

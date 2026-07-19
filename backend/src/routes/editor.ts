@@ -3,6 +3,7 @@ import { promises as fs } from 'fs';
 import { execSync, spawn } from 'child_process';
 import path from 'path';
 import { streamChat } from '../services/ollama';
+import { getModelAssignment } from '../services/model-assignments';
 import type { Message } from '../types';
 
 // @ts-ignore – ffmpeg-static and ffprobe-static have no type definitions
@@ -12,9 +13,6 @@ import ffprobe from 'ffprobe-static';
 
 const FFPROBE_PATH = ffprobe.path;
 const FFMPEG_PATH = ffmpegPath;
-
-const EDITOR_MODEL = process.env.EDITOR_MODEL || 'qwen2.5:3b';
-const VISION_MODEL = process.env.EDITOR_VISION_MODEL || 'qwen2.5vl:3b';
 
 const editor = new Hono();
 
@@ -89,8 +87,9 @@ editor.post('/chat', async (c) => {
             }
           }
 
+          const editorModel = await getModelAssignment('editor');
           await streamChat(
-            EDITOR_MODEL,
+            editorModel,
             allMessages,
             (chunk) => {
               fullResponse += chunk;
@@ -449,8 +448,9 @@ ${frames.map((f) => `[image:data:image/jpeg;base64,${f}]`).join('\n')}`,
 
   try {
     let description = '';
+    const editorVisionModel = await getModelAssignment('editor_vision');
     await streamChat(
-      VISION_MODEL,
+      editorVisionModel,
       visionMessages,
       (chunk) => { description += chunk; },
       { signal, think: false }

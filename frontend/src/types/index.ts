@@ -59,3 +59,14 @@ export interface MemoryData {
   updatedAt: number;
 }
 
+export interface ModelAssignments {
+  [key: string]: string;
+  chat_thinking: string;
+  chat_fast: string;
+  code: string;
+  vision: string;
+  extraction: string;
+  editor: string;
+  editor_vision: string;
+}
+

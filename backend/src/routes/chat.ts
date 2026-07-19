@@ -106,8 +106,9 @@ chat.post('/', async (c) => {
                   .replace(/\[image:data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+\]/g, '[image]')
                   .trim();
                 if (userText) {
-                  // Fire and forget
-                  extractMemoryFromTurn(ownerId, userText, fullResponse).catch((e) =>
+                  // Fire and forget — only pass the user's message, NOT the AI's response.
+                  // This prevents the AI's own hallucinations from being saved as memory.
+                  extractMemoryFromTurn(ownerId, userText).catch((e) =>
                     console.error('[chat] Memory extraction error:', e)
                   );
                 }

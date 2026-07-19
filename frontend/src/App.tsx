@@ -4,28 +4,26 @@ import { Header } from './components/Header';
 import { ChatView } from './components/ChatView';
 import { AgentWorkspace } from './components/AgentWorkspace';
 import { VideoEditor } from './components/VideoEditor';
-import { SettingsModal } from './components/SettingsModal';
+import { ModelAssignmentModal } from './components/ModelAssignmentModal';
 import { UserSettingsModal } from './components/UserSettingsModal';
 import { PasswordPrompt } from './components/PasswordPrompt';
 import { UserSetup } from './components/UserSetup';
+import { useModelAssignments } from './hooks/useModelAssignments';
 import { useConversations } from './hooks/useConversations';
 import { useModelVisibility } from './hooks/useModelVisibility';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useTheme } from './hooks/useTheme';
 import { useMemory } from './hooks/useMemory';
 import {
+  api,
   getUserProfile,
   createUserProfile,
   updateUserProfile,
   clearUserProfile,
 } from './services/api';
-import type { ConversationMode, UserProfile } from './types';
+import type { ConversationMode, UserProfile, OllamaModel } from './types';
 
 const THINKING_KEY = 'ai-chat:thinkingEnabled';
-
-function getModel(thinkingEnabled: boolean): string {
-  return thinkingEnabled ? 'qwen3:4b' : 'qwen2.5:3b';
-}
 
 function App() {
   const [user, setUser] = useState<UserProfile | null>(() => getUserProfile());
@@ -59,7 +57,6 @@ function App() {
       }}
       thinkingEnabled={thinkingEnabled}
       onToggleThinking={() => setThinkingEnabled(t => !t)}
-      model={getModel(thinkingEnabled)}
     />
   );
 }
@@ -69,13 +66,18 @@ interface ChatAppProps {
   onSwitchUser: () => void;
   thinkingEnabled: boolean;
   onToggleThinking: () => void;
-  model: string;
 }
 
-function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model }: ChatAppProps) {
+function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: ChatAppProps) {
   const {
-    isHidden, toggle, showAll, hideAll, reset, isAuthed, authenticate,
+    isAuthed, authenticate,
   } = useModelVisibility();
+  const {
+    assignments: modelAssignments,
+    loading: assignmentsLoading,
+    getChatModel,
+    saveAll: saveModelAssignments,
+  } = useModelAssignments();
   const { theme, toggleTheme } = useTheme();
   const {
     memory,
@@ -91,10 +93,18 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
   const { conversations, create, remove, rename, refresh } = useConversations();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [modelAssignOpen, setModelAssignOpen] = useState(false);
   const [userSettingsOpen, setUserSettingsOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [mode, setMode] = useState<ConversationMode>('chat');
+
+  // Derive the main chat model from assignments + thinking toggle
+  const model = assignmentsLoading ? (thinkingEnabled ? 'qwen3:4b' : 'qwen2.5:3b') : getChatModel(thinkingEnabled);
+  // Fetch all installed models for the assignment modal
+  const [allModels, setAllModels] = useState<OllamaModel[]>([]);
+  useEffect(() => {
+    api.getModels().then(setAllModels).catch(() => {});
+  }, []);
 
   const [localUser, setLocalUser] = useState(user);
 
@@ -108,8 +118,8 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
     [activeId, conversations]
   );
 
-  const handleSettingsClick = () => {
-    if (isAuthed) setSettingsOpen(true);
+  const handleAdminClick = () => {
+    if (isAuthed) setModelAssignOpen(true);
     else setPasswordOpen(true);
   };
 
@@ -156,7 +166,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
       <div className="flex-1 flex flex-col min-w-0">
         <Header
           onMenuClick={() => setSidebarOpen(true)}
-          onSettingsClick={handleSettingsClick}
+          onAdminClick={handleAdminClick}
           isAdmin={isAuthed}
           thinkingEnabled={thinkingEnabled}
           onToggleThinking={onToggleThinking}
@@ -196,17 +206,6 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
         )}
       </div>
 
-      <SettingsModal
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        models={[]}
-        isHidden={isHidden}
-        onToggle={toggle}
-        onShowAll={showAll}
-        onHideAll={hideAll}
-        onReset={reset}
-      />
-
       <UserSettingsModal
         open={userSettingsOpen}
         onClose={() => setUserSettingsOpen(false)}
@@ -231,6 +230,14 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking, model 
         onRemoveMemoryCategory={removeMemoryCategory}
         onResetMemory={resetMemory}
         onRefreshMemory={refreshMemory}
+      />
+
+      <ModelAssignmentModal
+        open={modelAssignOpen}
+        onClose={() => setModelAssignOpen(false)}
+        models={allModels}
+        assignments={modelAssignments}
+        onSave={saveModelAssignments}
       />
 
       <PasswordPrompt

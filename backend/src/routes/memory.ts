@@ -62,14 +62,14 @@ memory.post('/extract', async (c) => {
     const userId = c.get('user').id;
     const body = await c.req.json();
     const userMessage: string = body.userMessage || '';
-    const assistantResponse: string = body.assistantResponse || '';
 
-    if (!userMessage || !assistantResponse) {
-      return c.json({ error: 'userMessage and assistantResponse are required' }, 400);
+    if (!userMessage) {
+      return c.json({ error: 'userMessage is required' }, 400);
     }
 
     // Fire and forget — don't await
-    extractMemoryFromTurn(userId, userMessage, assistantResponse);
+    // Only the user's message is analyzed to prevent hallucination feedback loops
+    extractMemoryFromTurn(userId, userMessage);
 
     return c.json({ status: 'extraction started' });
   } catch (e) {

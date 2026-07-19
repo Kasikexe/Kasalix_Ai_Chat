@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
-import { Menu, Settings, Lock, Brain, Download } from 'lucide-react';
+import { Menu, Brain, Download, Sparkles, Lock } from 'lucide-react';
 import type { Conversation } from '../types';
 
 interface HeaderProps {
   onMenuClick: () => void;
-  onSettingsClick: () => void;
+  onAdminClick: () => void;
   isAdmin: boolean;
   thinkingEnabled: boolean;
   onToggleThinking: () => void;
@@ -12,7 +12,7 @@ interface HeaderProps {
 }
 
 export function Header({
-  onMenuClick, onSettingsClick, isAdmin, thinkingEnabled, onToggleThinking, conversation
+  onMenuClick, onAdminClick, isAdmin, thinkingEnabled, onToggleThinking, conversation
 }: HeaderProps) {
   const [exportOpen, setExportOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
@@ -143,12 +143,18 @@ export function Header({
         </button>
 
         <button
-          onClick={onSettingsClick}
-          className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
-          aria-label="Settings"
-          title={isAdmin ? 'Settings' : 'Settings (locked)'}
+          onClick={onAdminClick}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            isAdmin
+              ? 'bg-indigo-900/30 text-indigo-300 border border-indigo-700/50 hover:bg-indigo-800/40'
+              : 'bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700'
+          }`}
+          title={isAdmin ? 'Assign models to different tasks' : 'Enter admin password to configure models'}
         >
-          {isAdmin ? <Settings size={18} /> : <Lock size={18} />}
+          {isAdmin ? <Sparkles size={14} /> : <Lock size={14} />}
+          <span className="hidden sm:inline">
+            {isAdmin ? 'Models' : 'Admin'}
+          </span>
         </button>
       </div>
     </header>

@@ -1,21 +1,21 @@
 import { streamChat } from './ollama';
 import { getMemory, mergeMemoryEntries } from './memory';
+import { getModelAssignment } from './model-assignments';
 import type { Message } from '../types';
-
-const EXTRACTOR_MODEL = process.env.EXTRACTOR_MODEL || 'qwen2.5:3b';
 
 interface ExtractionResult {
   changes: Record<string, Record<string, string>>;
 }
 
 /**
- * Analyze a conversation turn and decide if any info should be remembered.
+ * Analyze the user's message and decide if any info should be remembered.
  * This runs asynchronously after the assistant responds, so it doesn't block the user.
+ * IMPORTANT: Only the user's message is analyzed — NOT the AI's response.
+ * This prevents the AI's own hallucinations from being saved as memory.
  */
 export async function extractMemoryFromTurn(
   userId: string,
-  userMessage: string,
-  assistantResponse: string
+  userMessage: string
 ): Promise<void> {
   try {
     const currentMemory = await getMemory(userId);
@@ -27,11 +27,11 @@ export async function extractMemoryFromTurn(
     const truncatedUser = userMessage.length > 500
       ? userMessage.slice(0, 500) + '...'
       : userMessage;
-    const truncatedResponse = assistantResponse.length > 2000
-      ? assistantResponse.slice(0, 2000) + '...'
-      : assistantResponse;
 
-    const systemPrompt = `You extract personal info about the user from chat messages.
+    const systemPrompt = `You extract personal info about the user from their messages.
+
+CRITICAL RULE: Only extract information that the USER explicitly states about themselves.
+NEVER extract information from the AI assistant's responses — only the user's own words matter.
 
 EXTRACT when the user shares:
 - Their name, age, gender, location, job, hobbies, skills, goals, preferences
@@ -42,6 +42,7 @@ EXTRACT when the user shares:
 DO NOT EXTRACT:
 - Random facts, general knowledge questions, one-off jokes
 - Code snippets that aren't about the user's own projects
+- Information the AI assistant mentioned — only trust the USER's statements
 
 EXAMPLES:
 User: "My name is Filip" -> { "changes": { "Person": { "name": "Filip" } } }
@@ -50,8 +51,7 @@ User: "I work on a Unity game" -> { "changes": { "Projects": { "game_dev": "Work
 
 Current memory: ${memoryJson}
 
-Last user message: "${truncatedUser}"
-Assistant: "${truncatedResponse}"
+User message: "${truncatedUser}"
 
 Respond with JSON: { "changes": { "Category": { "key": "value" } } }
 Use categories like Person, Projects, Hobbies, Work, Preferences, Skills.
@@ -65,8 +65,9 @@ ONLY output the JSON object. No other text.`;
 
     let rawOutput = '';
     try {
+      const extractorModel = await getModelAssignment('extraction');
       await streamChat(
-        EXTRACTOR_MODEL,
+        extractorModel,
         extractionMessages,
         (chunk) => {
           rawOutput += chunk;

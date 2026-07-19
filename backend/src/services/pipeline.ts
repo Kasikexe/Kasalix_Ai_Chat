@@ -2,11 +2,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { streamChat } from './ollama';
 import { getMemory } from './memory';
+import { getModelAssignment } from './model-assignments';
 import type { ConversationMode, Message } from '../types';
-
-const VISION_MODEL = process.env.VISION_MODEL || 'qwen2.5vl:3b';
-const CODE_MODEL = process.env.CODE_MODEL || 'qwen2.5-coder:7b';
-const TEXT_MODEL = process.env.TEXT_MODEL || 'qwen3:4b';
 
 // Global default for thinking mode. Can be overridden per-request.
 const THINKING_ENABLED = process.env.THINKING_MODE === 'true';
@@ -316,7 +313,8 @@ Rules:
 
     try {
       // Vision model doesn't need thinking mode (it's factual description)
-      imageDescription = await runInternalStage('vision', VISION_MODEL, visionMessages, false, signal);
+      const visionModel = await getModelAssignment('vision');
+      imageDescription = await runInternalStage('vision', visionModel, visionMessages, false, signal);
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') throw e;
       console.error('[pipeline] Vision stage failed:', e);
@@ -375,7 +373,8 @@ After the code blocks, write a 1-2 sentence technical summary.`
 
     try {
       // Code model doesn't need thinking mode either
-      codeOutput = await runInternalStage('code', CODE_MODEL, codeMessages, false, signal);
+      const codeModel = await getModelAssignment('code');
+      codeOutput = await runInternalStage('code', codeModel, codeMessages, false, signal);
       // After code generation completes, show writing stage
       onStage('writing:files');
     } catch (e) {
