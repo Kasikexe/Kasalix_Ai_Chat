@@ -3,6 +3,7 @@ import path from 'path';
 import { streamChat } from './ollama';
 import { getMemory } from './memory';
 import { getModelAssignment } from './model-assignments';
+import { getWebContext } from './search';
 import type { ConversationMode, Message } from '../types';
 
 // Global default for thinking mode. Can be overridden per-request.
@@ -18,6 +19,7 @@ interface PipelineOptions {
   onChunk: (chunk: string) => void;
   thinkingEnabled?: boolean;
   userId?: string;
+  searchEnabled?: boolean;
 }
 
 interface DetectedIntent {
@@ -221,7 +223,7 @@ async function buildMemoryContext(userId?: string): Promise<string | null> {
 }
 
 export async function runPipeline(opts: PipelineOptions): Promise<string> {
-  const { model, messages, mode, workspacePath, signal, onStage, onChunk, thinkingEnabled, userId } = opts;
+  const { model, messages, mode, workspacePath, signal, onStage, onChunk, thinkingEnabled, userId, searchEnabled } = opts;
   const intent = detectIntent(messages, mode);
 
   // Determine thinking mode: request override > env default
@@ -240,9 +242,28 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   // Build memory context if available
   const memoryContext = await buildMemoryContext(userId);
 
-  // Helper function to append memory context to system content
-  const withMemory = (content: string): string =>
-    memoryContext ? content + '\n\n---\n\n' + memoryContext : content;
+  // Web search context — performed before the chat if search is enabled
+  let webContext: string | null = null;
+  if (searchEnabled && !intent.hasImage && !intent.wantsCode) {
+    const lastUserMsg = messages.filter((m) => m.role === 'user').pop();
+    if (lastUserMsg) {
+      onStage('search:web');
+      webContext = await getWebContext(
+        lastUserMsg.content.replace(/\[image:[^\]]+\]/g, '').trim()
+      );
+    }
+  }
+
+  // Helper function to append memory and web context to system content
+  const withContext = (content: string): string => {
+    let result = content;
+    if (memoryContext) result += '\n\n---\n\n' + memoryContext;
+    if (webContext) {
+      result += '\n\n---\n\n' +
+        `[WEB SEARCH RESULTS — CURRENT AND LIVE]\n\nThe information below was retrieved from the internet in real-time through a web search. It is MORE CURRENT than my training data.\n\nINSTRUCTIONS TO ANSWER:\n- I MUST answer the user's question using THESE search results as my primary source of truth\n- I should answer DIRECTLY with the facts from these results — do NOT just provide links or tell the user to visit websites\n- If the results contain the answer, state it clearly and confidently in my response\n- Treat this information as accurate and current\n- Only mention website URLs if the user specifically asks for sources\n- If the results don't contain enough info to answer, say so honestly\n\nSearch results:\n${webContext}`;
+    }
+    return result;
+  };
 
   // Simple chat — no pipeline needed (injects agent awareness in agent mode)
   if (!intent.hasImage && !intent.wantsCode) {
@@ -252,7 +273,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
         ? 'Here are the ACTUAL files in this workspace (read from disk):\n' + fileListing + '\n\nUse this listing to answer questions about files. Do NOT make up files that are not listed here.'
         : 'You cannot read files or list directories directly. If asked about files, say you cannot see them and offer to generate code instead.';
 
-      const agentSystem = withMemory(
+      const agentSystem = withContext(
         'You are an AI coding agent that helps users build projects in their workspace.\n' +
         'Your workspace is at: ' + (workspacePath || '(not set)') + '\n\n' +
         fileInfo +
@@ -274,10 +295,20 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
       ];
       return await runVisibleStage('chat', model, agentMessages, think, onChunk, signal);
     }
-    // Inject memory into plain chat mode
-    if (memoryContext) {
+
+    // Build context messages for plain chat
+    const contextParts: string[] = [];
+    if (memoryContext) contextParts.push(memoryContext);
+    if (webContext) {
+      contextParts.push(
+        `[WEB SEARCH RESULTS — CURRENT AND LIVE]\n\nThe information below was retrieved from the internet in real-time through a web search. It is MORE CURRENT than my training data.\n\nINSTRUCTIONS TO ANSWER:\n- I MUST answer the user's question using THESE search results as my primary source of truth\n- I should answer DIRECTLY with the facts from these results — do NOT just provide links or tell the user to visit websites\n- If the results contain the answer, state it clearly and confidently in my response\n- I should treat this information as accurate and current\n- Only mention website URLs if the user specifically asks for sources\n- If the results don't contain enough info to answer, I should say so honestly\n\nSearch results:\n${webContext}`
+      );
+    }
+    const combinedContext = contextParts.length > 0 ? contextParts.join('\n\n---\n\n') : null;
+
+    if (combinedContext) {
       const chatMessages: Message[] = [
-        { role: 'system', content: memoryContext },
+        { role: 'system', content: combinedContext },
         ...messages,
       ];
       return await runVisibleStage('chat', model, chatMessages, think, onChunk, signal);

@@ -18,6 +18,7 @@ export interface ModelAssignments {
   extraction: string;
   editor: string;
   editor_vision: string;
+  search: string;
 }
 
 export const MODEL_ASSIGNMENT_KEYS: (keyof ModelAssignments)[] = [
@@ -28,6 +29,7 @@ export const MODEL_ASSIGNMENT_KEYS: (keyof ModelAssignments)[] = [
   'extraction',
   'editor',
   'editor_vision',
+  'search',
 ];
 
 export const MODEL_ASSIGNMENT_LABELS: Record<keyof ModelAssignments, string> = {
@@ -38,6 +40,7 @@ export const MODEL_ASSIGNMENT_LABELS: Record<keyof ModelAssignments, string> = {
   extraction: 'Memory Extraction',
   editor: 'Video Editor',
   editor_vision: 'Editor Vision',
+  search: 'Web Search',
 };
 
 export const MODEL_ASSIGNMENT_ICONS: Record<keyof ModelAssignments, string> = {
@@ -48,6 +51,7 @@ export const MODEL_ASSIGNMENT_ICONS: Record<keyof ModelAssignments, string> = {
   extraction: '🧠',
   editor: '🎬',
   editor_vision: '👁️',
+  search: '🌐',
 };
 
 export interface AppSettings {
@@ -210,6 +214,15 @@ export const api = {
     return data.conversation;
   },
 
+  async deleteConversationMessage(id: string, messageIndex: number): Promise<Conversation> {
+    const data = await handleResponse<{ conversation: Conversation }>(
+      await fetch(`${API_BASE}/conversations/${id}/messages/${messageIndex}`, authedFetch(`${API_BASE}/conversations/${id}/messages/${messageIndex}`, {
+        method: 'DELETE',
+      }))
+    );
+    return data.conversation;
+  },
+
   async getSettings(): Promise<AppSettings> {
     return handleResponse<AppSettings>(
       await fetch(`${API_BASE}/settings`, authedFetch(`${API_BASE}/settings`))
@@ -308,7 +321,8 @@ streamChat(
   },
   signal?: AbortSignal,
   mode?: ConversationMode,
-  workspacePath?: string
+  workspacePath?: string,
+  searchEnabled?: boolean
 ): Promise<void> {
   return (async () => {
     const res = await fetch(`${API_BASE}/chat`, authedFetch(`${API_BASE}/chat`, {
@@ -321,6 +335,7 @@ streamChat(
         mode,
         workspacePath,
         thinkingEnabled: localStorage.getItem('ai-chat:thinkingEnabled') === 'true',
+        searchEnabled: searchEnabled === true,
       }),
       signal,
     }));

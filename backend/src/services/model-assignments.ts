@@ -15,6 +15,7 @@ export interface ModelAssignments {
   extraction: string;
   editor: string;
   editor_vision: string;
+  search: string;
 }
 
 export const ASSIGNMENT_KEYS: (keyof ModelAssignments)[] = [
@@ -25,6 +26,7 @@ export const ASSIGNMENT_KEYS: (keyof ModelAssignments)[] = [
   'extraction',
   'editor',
   'editor_vision',
+  'search',
 ];
 
 export const ASSIGNMENT_LABELS: Record<keyof ModelAssignments, string> = {
@@ -35,6 +37,7 @@ export const ASSIGNMENT_LABELS: Record<keyof ModelAssignments, string> = {
   extraction: 'Memory Extraction',
   editor: 'Video Editor',
   editor_vision: 'Editor Vision',
+  search: 'Web Search',
 };
 
 export const ASSIGNMENT_ICONS: Record<keyof ModelAssignments, string> = {
@@ -45,6 +48,7 @@ export const ASSIGNMENT_ICONS: Record<keyof ModelAssignments, string> = {
   extraction: '🧠',
   editor: '🎬',
   editor_vision: '👁️',
+  search: '🌐',
 };
 
 const DEFAULTS: ModelAssignments = {
@@ -55,6 +59,7 @@ const DEFAULTS: ModelAssignments = {
   extraction: 'qwen2.5:3b',
   editor: 'qwen2.5:3b',
   editor_vision: 'qwen2.5vl:3b',
+  search: 'qwen2.5:3b',
 };
 
 /** Env-var names for legacy backward compatibility */
@@ -66,6 +71,7 @@ const ENV_MAP: Record<keyof ModelAssignments, string> = {
   extraction: 'EXTRACTOR_MODEL',
   editor: 'EDITOR_MODEL',
   editor_vision: 'EDITOR_VISION_MODEL',
+  search: 'SEARCH_MODEL',
 };
 
 /**

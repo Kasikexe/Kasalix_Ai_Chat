@@ -5,6 +5,7 @@ export interface Message {
   role: Role;
   content: string;
   timestamp?: number;
+  durationMs?: number;
 }
 
 export interface Conversation {
@@ -68,5 +69,6 @@ export interface ModelAssignments {
   extraction: string;
   editor: string;
   editor_vision: string;
+  search: string;
 }
 

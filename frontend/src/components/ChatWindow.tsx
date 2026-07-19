@@ -6,12 +6,14 @@ interface Props {
   messages: MessageType[];
   isStreaming: boolean;
   currentStage?: string;
+  liveDuration?: number;
   onEdit?: (index: number, newContent: string) => void;
+  onDelete?: (index: number) => void;
   onRegenerate?: () => void;
   onApplyCode?: (filePath: string, codeContent: string) => void;
 }
 
-export function ChatWindow({ messages, isStreaming, currentStage, onEdit, onRegenerate, onApplyCode }: Props) {
+export function ChatWindow({ messages, isStreaming, currentStage, liveDuration, onEdit, onDelete, onRegenerate, onApplyCode }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
@@ -67,7 +69,9 @@ export function ChatWindow({ messages, isStreaming, currentStage, onEdit, onRege
                 message={msg}
                 isStreaming={streaming}
                 stage={streaming ? currentStage : undefined}
+                liveDuration={streaming ? liveDuration : undefined}
                 onEdit={onEdit}
+                onDelete={onDelete}
                 onRegenerate={isLastAssistant ? onRegenerate : undefined}
                 isLastAssistant={isLastAssistant}
                 onApplyCode={onApplyCode}

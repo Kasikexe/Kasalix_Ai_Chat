@@ -3,6 +3,7 @@ import {
   addMessage,
   createConversation,
   deleteConversation,
+  deleteMessage,
   getAllConversations,
   getConversation,
   updateConversation,
@@ -70,6 +71,23 @@ conversations.post('/:id/messages', async (c) => {
     return c.json({ conversation: conv });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Failed to add message' }, 500);
+  }
+});
+
+// DELETE /:id/messages/:index — Delete a single message by index
+conversations.delete('/:id/messages/:index', async (c) => {
+  try {
+    const ownerId = c.get('user').id;
+    const convId = c.req.param('id');
+    const index = parseInt(c.req.param('index'), 10);
+    if (isNaN(index) || index < 0) {
+      return c.json({ error: 'Invalid message index' }, 400);
+    }
+    const conv = await deleteMessage(convId, ownerId, index);
+    if (!conv) return c.json({ error: 'Conversation or message not found' }, 404);
+    return c.json({ conversation: conv });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Failed to delete message' }, 500);
   }
 });
 

@@ -138,3 +138,25 @@ export async function addMessage(
   await saveToFile();
   return conv;
 }
+
+/**
+ * Delete a single message by index from a conversation.
+ */
+export async function deleteMessage(
+  conversationId: string,
+  ownerId: string,
+  messageIndex: number
+): Promise<Conversation | null> {
+  await loadFromFile();
+  const conv = conversations.get(conversationId);
+  if (!conv) return null;
+  if (conv.ownerId !== ownerId) return null;
+  if (messageIndex < 0 || messageIndex >= conv.messages.length) return null;
+
+  conv.messages.splice(messageIndex, 1);
+  conv.updatedAt = Date.now();
+
+  conversations.set(conversationId, conv);
+  await saveToFile();
+  return conv;
+}

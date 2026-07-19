@@ -106,6 +106,16 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
     api.getModels().then(setAllModels).catch(() => {});
   }, []);
 
+  // Web search toggle
+  const SEARCH_KEY = 'ai-chat:searchEnabled';
+  const [searchEnabled, setSearchEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem(SEARCH_KEY) === 'true'; }
+    catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(SEARCH_KEY, String(searchEnabled)); } catch {}
+  }, [searchEnabled]);
+
   const [localUser, setLocalUser] = useState(user);
 
   useEffect(() => {
@@ -170,6 +180,8 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
           isAdmin={isAuthed}
           thinkingEnabled={thinkingEnabled}
           onToggleThinking={onToggleThinking}
+          searchEnabled={searchEnabled}
+          onToggleSearch={() => setSearchEnabled(s => !s)}
           conversation={activeConv}
         />
         {mode === 'agent' ? (
@@ -200,6 +212,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
             conversationId={activeConv?.id}
             model={model}
             thinkingEnabled={thinkingEnabled}
+            searchEnabled={searchEnabled}
             onMessageSent={() => { refresh(); refreshMemory(); }}
             onConversationCreated={setActiveId}
           />

@@ -8,15 +8,16 @@ interface Props {
   conversationId?: string;
   model: string;
   thinkingEnabled?: boolean;
+  searchEnabled?: boolean;
   onMessageSent: () => void;
   onConversationCreated: (id: string) => void;
 }
 
 export function ChatView({
-  initialMessages, conversationId, model, thinkingEnabled = false, onMessageSent, onConversationCreated,
+  initialMessages, conversationId, model, thinkingEnabled = false, searchEnabled = false, onMessageSent, onConversationCreated,
 }: Props) {
-  const { messages, isStreaming, sendMessage, regenerate, editMessage, stopGeneration, currentStage } = useChat(
-    model, initialMessages, conversationId, thinkingEnabled, 'chat', undefined
+  const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, currentStage, liveDuration } = useChat(
+    model, initialMessages, conversationId, thinkingEnabled, 'chat', undefined, searchEnabled
   );
 
   const handleSend = async (content: string) => {
@@ -43,7 +44,9 @@ export function ChatView({
         messages={messages}
         isStreaming={isStreaming}
         currentStage={currentStage}
+        liveDuration={liveDuration}
         onEdit={handleEdit}
+        onDelete={deleteMessage}
         onRegenerate={handleRegenerate}
       />
       <InputBar onSend={handleSend} onStop={stopGeneration} isStreaming={isStreaming} />

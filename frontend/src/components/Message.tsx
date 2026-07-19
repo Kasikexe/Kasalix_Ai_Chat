@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
-import { Check, Copy, Download, User, Bot, FileCode, RefreshCw, Pencil, X, Save, FilePlus2 } from 'lucide-react';
+import { Check, Copy, Download, User, Bot, FileCode, RefreshCw, Pencil, X, Save, FilePlus2, Trash2 } from 'lucide-react';
 import type { Message as MessageType } from '../types';
 
 const languageExtensions: Record<string, string> = {
@@ -150,8 +150,10 @@ interface Props {
   message: MessageType;
   isStreaming?: boolean;
   stage?: string;
+  liveDuration?: number;
   index?: number;
   onEdit?: (index: number, newContent: string) => void;
+  onDelete?: (index: number) => void;
   onRegenerate?: () => void;
   isLastAssistant?: boolean;
   onApplyCode?: (filePath: string, codeContent: string) => void;
@@ -165,6 +167,7 @@ const stageLabels: Record<string, string> = {
   'editing': '✏️ Editing files',
   'summary': '✨ Polishing response',
   'chat': '💬 Thinking',
+  'search': '🌐 Searching the web',
 };
 
 function getStageLabel(stage?: string): string | null {
@@ -175,7 +178,7 @@ function getStageLabel(stage?: string): string | null {
   return '⚙️ Processing';
 }
 
-export const Message = memo(function Message({ message, isStreaming, stage, index, onEdit, onRegenerate, isLastAssistant, onApplyCode }: Props) {
+export const Message = memo(function Message({ message, isStreaming, stage, liveDuration, index, onEdit, onDelete, onRegenerate, isLastAssistant, onApplyCode }: Props) {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -242,21 +245,42 @@ export const Message = memo(function Message({ message, isStreaming, stage, inde
       <div className="flex-1 min-w-0 overflow-hidden">
         <div className="font-semibold text-sm mb-1 text-gray-200 flex items-center gap-2">
           <span>{isUser ? 'You' : 'Assistant'}</span>
-          {isUser && !editing && index !== undefined && onEdit && !isStreaming && (
-            <button
-              onClick={startEdit}
-              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-700 rounded text-gray-500 hover:text-gray-300 transition-all"
-              title="Edit message"
-            >
-              <Pencil size={12} />
-            </button>
+          {!editing && index !== undefined && !isStreaming && (
+            <span className="flex items-center gap-0.5 ml-1">
+              {isUser && onEdit && (
+                <button
+                  onClick={startEdit}
+                  className="p-1 hover:bg-gray-700 rounded text-gray-500 hover:text-gray-300 transition-all"
+                  title="Edit message"
+                >
+                  <Pencil size={12} />
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm('Delete this message?')) onDelete(index!);
+                  }}
+                  className="p-1 hover:bg-gray-700 rounded text-gray-500 hover:text-red-400 transition-all"
+                  title="Delete message"
+                >
+                  <Trash2 size={12} />
+                </button>
+              )}
+            </span>
           )}
         </div>
 
         {isStreaming && stageLabel && (
-          <div className="mb-2 inline-flex items-center gap-1.5 text-xs text-gray-400">
+          <div className="mb-2 inline-flex items-center gap-2 text-xs text-gray-400">
             <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
             <span>{stageLabel}</span>
+            {liveDuration !== undefined && (
+              <span className="tabular-nums text-gray-500">
+                ⏱️ {liveDuration < 1000 ? `${liveDuration}ms` : `${(liveDuration / 1000).toFixed(1)}s`}
+              </span>
+            )}
           </div>
         )}
 
@@ -321,6 +345,11 @@ export const Message = memo(function Message({ message, isStreaming, stage, inde
 
         {!editing && (
           <div className="flex items-center gap-1 mt-2">
+            {!isUser && message.durationMs && !isStreaming && (
+              <span className="text-xs text-gray-500 mr-1" title="Response time">
+                ⏱️ {message.durationMs < 1000 ? `${message.durationMs}ms` : `${(message.durationMs / 1000).toFixed(1)}s`}
+              </span>
+            )}
             {!isUser && displayContent && !isStreaming && (
               <button
                 onClick={copy}

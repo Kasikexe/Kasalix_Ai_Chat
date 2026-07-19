@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   X, User, Palette, Copy, Check, Key, Brain,
   LogOut, Pencil, CheckCircle, AtSign, Shield, Sun, Moon,
-  Database, Plus, Trash2, Edit3, BookOpen, RefreshCw,
+  Database, Plus, Trash2, Edit3, BookOpen, RefreshCw, Quote,
 } from 'lucide-react';
 import type { UserProfile, MemoryData } from '../types';
 
@@ -62,6 +62,28 @@ export function UserSettingsModal({
   const [editValue, setEditValue] = useState('');
   const [addCategoryOpen, setAddCategoryOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
+
+  // System prompt state
+  const [systemPrompt, setSystemPrompt] = useState<string>('');
+  const [systemPromptSaved, setSystemPromptSaved] = useState(false);
+  const SYSTEM_PROMPT_KEY = 'ai-chat:systemPrompt';
+
+  // Load system prompt on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(SYSTEM_PROMPT_KEY);
+      if (stored) setSystemPrompt(stored);
+    } catch {}
+  }, []);
+
+  const saveSystemPrompt = (value: string) => {
+    setSystemPrompt(value);
+    try {
+      localStorage.setItem(SYSTEM_PROMPT_KEY, value);
+      setSystemPromptSaved(true);
+      setTimeout(() => setSystemPromptSaved(false), 2000);
+    } catch {}
+  };
 
   // Reset state when profile changes or modal opens
   useEffect(() => {
@@ -388,6 +410,49 @@ export function UserSettingsModal({
                     thinkingEnabled ? 'translate-x-5' : 'translate-x-0'
                   }`}
                 />
+              </div>
+            </div>
+          </div>
+
+          {/* Divider */}
+          <div className="border-t border-gray-800" />
+
+          {/* System Prompt Section */}
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 text-sm font-medium text-gray-300">
+              <Quote size={16} className="text-gray-500" />
+              System Prompt
+            </label>
+            <p className="text-xs text-gray-500 leading-relaxed">
+              Custom instructions the AI follows in every chat. Use this to set its persona,
+              behavior, or rules. Leave empty for default behavior.
+            </p>
+            <div className="relative">
+              <textarea
+                value={systemPrompt}
+                onChange={(e) => saveSystemPrompt(e.target.value)}
+                placeholder="You are a helpful AI assistant. Be concise and friendly..."
+                rows={4}
+                maxLength={2000}
+                className="w-full bg-gray-800 border border-gray-700 rounded-xl text-sm text-white placeholder-gray-500 p-3 outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600/30 transition-all resize-none"
+              />
+              <div className="flex items-center justify-between mt-1.5 px-1">
+                <span className="text-xs text-gray-600">
+                  {systemPrompt.length} / 2000 characters
+                </span>
+                {systemPromptSaved && (
+                  <span className="text-xs text-emerald-400 flex items-center gap-1">
+                    <Check size={10} /> Saved
+                  </span>
+                )}
+                {systemPrompt && (
+                  <button
+                    onClick={() => saveSystemPrompt('')}
+                    className="text-xs text-gray-500 hover:text-red-400 transition-colors"
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
             </div>
           </div>

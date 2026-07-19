@@ -51,6 +51,41 @@ export function Sidebar({
     setEditValue('');
   };
 
+  // Find the first message content that matches the search query
+  const findMessageMatch = (conv: Conversation, query: string): { role: string; snippet: string } | null => {
+    const lower = query.toLowerCase();
+    for (const msg of conv.messages) {
+      const idx = msg.content.toLowerCase().indexOf(lower);
+      if (idx !== -1) {
+        // Extract a snippet around the match
+        const start = Math.max(0, idx - 40);
+        const end = Math.min(msg.content.length, idx + query.length + 60);
+        let snippet = msg.content.slice(start, end);
+        // Clean up image markers from snippets
+        snippet = snippet.replace(/\[image:data:image\/[^\]]+\]/g, '[image]');
+        if (start > 0) snippet = '...' + snippet;
+        if (end < msg.content.length) snippet = snippet + '...';
+        return { role: msg.role === 'user' ? 'You' : 'AI', snippet };
+      }
+    }
+    return null;
+  };
+
+  // Count total matches across all messages
+  const countMatches = (conv: Conversation, query: string): number => {
+    const lower = query.toLowerCase();
+    let count = 0;
+    for (const msg of conv.messages) {
+      let idx = 0;
+      const content = msg.content.toLowerCase();
+      while ((idx = content.indexOf(lower, idx)) !== -1) {
+        count++;
+        idx += query.length;
+      }
+    }
+    return count;
+  };
+
   return (
     <>
       {isOpen && (
@@ -148,21 +183,42 @@ export function Sidebar({
 
         <div className="flex-1 overflow-y-auto px-2 pb-2">
           {(() => {
+            const q = searchQuery.toLowerCase().trim();
             const filtered = conversations.filter((c) => {
-              const modeMatch = (c.mode || 'chat') === mode;
-              const searchMatch = !searchQuery || c.title.toLowerCase().includes(searchQuery.toLowerCase());
-              return modeMatch && searchMatch;
+              if ((c.mode || 'chat') !== mode) return false;
+              if (!q) return true;
+              // Search by title
+              if (c.title.toLowerCase().includes(q)) return true;
+              // Search by message content
+              return c.messages.some((m) => m.content.toLowerCase().includes(q));
             });
             if (filtered.length === 0) {
               return (
                 <p className="text-gray-500 text-sm text-center mt-8 px-4">
-                  {mode === 'agent' ? 'No agent sessions yet.' : 'No conversations yet.'}
+                  {searchQuery
+                    ? `No results for "${searchQuery}"`
+                    : mode === 'agent'
+                      ? 'No agent sessions yet.'
+                      : 'No conversations yet.'}
                 </p>
               );
             }
             return (
-              <ul className="space-y-0.5">
-                {filtered.map((conv) => (
+              <>
+                {searchQuery && (
+                  <p className="px-3 pb-1 text-xs text-gray-500">
+                    {filtered.length} conversation{filtered.length !== 1 ? 's' : ''} found
+                  </p>
+                )}
+                <ul className="space-y-0.5">
+                  {filtered.map((conv) => {
+                    const contentMatch = searchQuery
+                      ? findMessageMatch(conv, searchQuery)
+                      : null;
+                    const matchCount = searchQuery
+                      ? countMatches(conv, searchQuery)
+                      : 0;
+                    return (
                 <li key={conv.id}>
                   {editingId === conv.id ? (
                     <div className="flex items-center gap-1 px-2 py-1.5 bg-gray-800 rounded-lg">
@@ -184,13 +240,14 @@ export function Sidebar({
                     </div>
                   ) : (
                     <div
-                      className={`group flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
+                      className={`group flex flex-col px-3 py-2 rounded-lg cursor-pointer transition-colors ${
                         activeId === conv.id ? 'bg-gray-800' : 'hover:bg-gray-800/60'
                       }`}
                       onClick={() => onSelect(conv.id)}
                     >
-                      <span
-                        className={`w-2 h-2 rounded-full flex-shrink-0 ${              conv.mode === 'agent' ? 'bg-purple-500' : conv.mode === 'editor' ? 'bg-red-500' : 'bg-blue-500'
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span
+                          className={`w-2 h-2 rounded-full flex-shrink-0 ${              conv.mode === 'agent' ? 'bg-purple-500' : conv.mode === 'editor' ? 'bg-red-500' : 'bg-blue-500'
             }`}
           />
                       {conv.mode === 'agent' ? (
@@ -201,7 +258,12 @@ export function Sidebar({
                         <MessageSquare size={14} className="flex-shrink-0 text-gray-400" />
                       )}
                       <span className="flex-1 text-sm truncate">{conv.title}</span>
-                      <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5">
+                      {matchCount > 0 && (
+                        <span className="text-xs text-amber-400/70 flex-shrink-0 mr-1">
+                          {matchCount} match{matchCount !== 1 ? 'es' : ''}
+                        </span>
+                      )}
+                      <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 flex-shrink-0">
                         <button
                           onClick={(e) => { e.stopPropagation(); startEdit(conv); }}
                           className="p-1 hover:bg-gray-700 rounded"
@@ -220,11 +282,21 @@ export function Sidebar({
                           <Trash2 size={12} />
                         </button>
                       </div>
+                      </div>
+                      {contentMatch && (
+                        <div className="mt-1 ml-7 text-xs text-gray-500 truncate leading-relaxed">
+                          <span className={`font-medium ${contentMatch.role === 'You' ? 'text-blue-400' : 'text-green-400'}`}>
+                            {contentMatch.role}
+                          </span>
+                          : {contentMatch.snippet}
+                        </div>
+                      )}
                     </div>
                   )}
                 </li>
-              ))}
-            </ul>
+              )})}
+                </ul>
+              </>
             );
           })()}
         </div>

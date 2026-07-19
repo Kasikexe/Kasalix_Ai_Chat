@@ -10,6 +10,7 @@ const DEFAULT_ASSIGNMENTS: ModelAssignments = {
   extraction: 'qwen2.5:3b',
   editor: 'qwen2.5:3b',
   editor_vision: 'qwen2.5vl:3b',
+  search: 'qwen2.5:3b',
 };
 
 export type ModelAssignmentKey = keyof ModelAssignments;

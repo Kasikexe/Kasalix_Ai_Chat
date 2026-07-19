@@ -19,6 +19,7 @@ chat.post('/', async (c) => {
     const messages: Message[] = body.messages;
     const providedConvId: string | undefined = body.conversationId;
     const thinkingEnabled: boolean = body.thinkingEnabled === true;
+    const searchEnabled: boolean = body.searchEnabled === true;
     const mode: ConversationMode = body.mode === 'agent' ? 'agent' : 'chat';
     const reqWorkspacePath: string | undefined = body.workspacePath;
 
@@ -77,6 +78,7 @@ chat.post('/', async (c) => {
             mode: convMode,
             workspacePath: convWorkspacePath,
             thinkingEnabled,
+            searchEnabled,
             signal: ac.signal,
             onStage: (stage) => {
               currentStage = stage;
