@@ -19,7 +19,12 @@ interface PipelineOptions {
   onChunk: (chunk: string) => void;
   thinkingEnabled?: boolean;
   userId?: string;
+  userName?: string;
   searchEnabled?: boolean;
+  planningEnabled?: boolean;
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
 }
 
 interface DetectedIntent {
@@ -143,7 +148,8 @@ async function runInternalStage(
   model: string,
   messages: Message[],
   think: boolean,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  extraOpts: { temperature?: number; top_p?: number; max_tokens?: number } = {}
 ): Promise<string> {
   console.log(`[pipeline] Internal stage "${stageName}" — model: ${model}, think: ${think}`);
   let output = '';
@@ -154,7 +160,7 @@ async function runInternalStage(
       (chunk) => {
         output += chunk;
       },
-      { signal, think }
+      { signal, think, ...extraOpts }
     );
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') {
@@ -174,7 +180,8 @@ async function runVisibleStage(
   messages: Message[],
   think: boolean,
   onChunk: (chunk: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  extraOpts: { temperature?: number; top_p?: number; max_tokens?: number } = {}
 ): Promise<string> {
   console.log(`[pipeline] Visible stage "${stageName}" — model: ${model}, think: ${think}`);
   let output = '';
@@ -186,7 +193,7 @@ async function runVisibleStage(
         output += chunk;
         onChunk(chunk);
       },
-      { signal, think }
+      { signal, think, ...extraOpts }
     );
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') {
@@ -223,7 +230,7 @@ async function buildMemoryContext(userId?: string): Promise<string | null> {
 }
 
 export async function runPipeline(opts: PipelineOptions): Promise<string> {
-  const { model, messages, mode, workspacePath, signal, onStage, onChunk, thinkingEnabled, userId, searchEnabled } = opts;
+  const { model, messages, mode, workspacePath, signal, onStage, onChunk, thinkingEnabled, userId, userName, searchEnabled, planningEnabled, temperature, top_p, max_tokens } = opts;
   const intent = detectIntent(messages, mode);
 
   // Determine thinking mode: request override > env default
@@ -231,9 +238,10 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
 
   console.log(`[pipeline] Intent: hasImage=${intent.hasImage}, wantsCode=${intent.wantsCode}, wantsFileInfo=${intent.wantsFileInfo}, think=${think}`);
 
-  // If user asks about files, read the actual directory listing and inject it
+  // If user asks about files (or planning mode is on), read the actual directory listing and inject it
   let fileListing = '';
-  if (intent.wantsFileInfo && workspacePath) {
+  const needsFileListing = intent.wantsFileInfo || (intent.wantsCode && planningEnabled);
+  if (needsFileListing && workspacePath) {
     onStage('reading:workspace');
     fileListing = await listWorkspaceFiles(workspacePath);
     console.log(`[pipeline] Workspace file listing: ${fileListing.substring(0, 200)}...`);
@@ -274,18 +282,24 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
         : 'You cannot read files or list directories directly. If asked about files, say you cannot see them and offer to generate code instead.';
 
       const agentSystem = withContext(
-        'You are an AI coding agent that helps users build projects in their workspace.\n' +
+        'You are an AI coding agent helping ' + (userName || 'a user') + ' build projects in their workspace.\n' +
         'Your workspace is at: ' + (workspacePath || '(not set)') + '\n\n' +
         fileInfo +
-        '\n\nWHAT YOU CAN DO:\n' +
-        '- When you generate code, ALWAYS put a file path comment on the FIRST LINE of each code block, like:\n\n' +
-        '// index.html\n' +
-        '<!DOCTYPE html>\n' +
-        '...\n\n' +
-        '// src/style.css\n' +
-        'body { ... }\n\n' +
-        'The file path format should be relative (src/index.ts, components/Button.tsx, etc.).\n' +
-        'If asked a question, answer conversationally.\n\n' +
+        '\n\nCRITICAL RULES FOR CODE BLOCKS:\n' +
+        '1) ALWAYS start EVERY code block with a file path comment on the FIRST LINE.\n' +
+        '   Example: `// index.html` then the HTML on the next line.\n' +
+        '   Example: `# main.py` then Python code.\n' +
+        '   Example: `<!-- app.component.html -->` then Angular template.\n' +
+        '2) The file path MUST include a file extension (.html, .py, .ts, .css, etc.).\n' +
+        '3) Use relative paths like src/index.ts, components/Button.tsx, etc.\n' +
+        '4) NEVER output a code block without a file path comment on the first line.\n' +
+        '\n' +
+        'CRITICAL — You MUST output the COMPLETE file content in every code block. NEVER use placeholders like "# rest of the code", "...", "// remaining code unchanged", or similar shortcuts. Every code block must be the ENTIRE file from start to finish.\n' +
+        '\n' +
+        'To DELETE a file, output a code block with the first line as: `// DELETE: path/to/file.ext`\n' +
+        'and NO other content in the code block.\n' +
+        '\n' +
+        'If asked a question, answer conversationally.\n' +
         'All file operations are limited to your workspace. Do NOT reference files outside it.'
       );
 
@@ -293,7 +307,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
         { role: 'system', content: agentSystem },
         ...messages,
       ];
-      return await runVisibleStage('chat', model, agentMessages, think, onChunk, signal);
+      return await runVisibleStage('chat', model, agentMessages, think, onChunk, signal, { temperature, top_p, max_tokens });
     }
 
     // Build context messages for plain chat
@@ -311,12 +325,13 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
         { role: 'system', content: combinedContext },
         ...messages,
       ];
-      return await runVisibleStage('chat', model, chatMessages, think, onChunk, signal);
+      return await runVisibleStage('chat', model, chatMessages, think, onChunk, signal, { temperature, top_p, max_tokens });
     }
-    return await runVisibleStage('chat', model, messages, think, onChunk, signal);
+    return await runVisibleStage('chat', model, messages, think, onChunk, signal, { temperature, top_p, max_tokens });
   }
 
   let imageDescription = '';
+  let planOutput = '';
   let codeOutput = '';
 
   // STAGE 1: Vision analysis (INTERNAL — user doesn't see this)
@@ -345,14 +360,60 @@ Rules:
     try {
       // Vision model doesn't need thinking mode (it's factual description)
       const visionModel = await getModelAssignment('vision');
-      imageDescription = await runInternalStage('vision', visionModel, visionMessages, false, signal);
+      imageDescription = await runInternalStage('vision', visionModel, visionMessages, false, signal, { temperature, top_p, max_tokens });
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') throw e;
       console.error('[pipeline] Vision stage failed:', e);
     }
   }
 
-  // STAGE 2: Code generation (INTERNAL — user sees the final summary)
+  // STAGE 2: Planning (VISIBLE — streamed to user when planning mode is on)
+  if (intent.wantsCode && planningEnabled) {
+    onStage('planning:create');
+
+    const userText = messages[messages.length - 1].content
+      .replace(/\[image:data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+\]/g, '')
+      .trim();
+
+    const visionContext = imageDescription
+      ? `\nThe user also provided an image with this description: ${imageDescription}`
+      : '';
+
+    const planMessages: Message[] = [
+      {
+        role: 'system',
+        content: `You are a technical planning agent helping ${userName || 'a user'} with their coding project.
+Your workspace is at: ${workspacePath || '(not set)'}
+
+${fileListing ? `Current workspace files:\n${fileListing}\n` : ''}
+
+Your job is to create a CLEAR, CONCISE plan BEFORE any code is written.
+
+The plan should include:
+- A summary of what needs to be done
+- The list of files that will be created, modified, or deleted
+- The key technical decisions or approach
+- Any dependencies or important considerations
+
+Keep it brief — 3-6 bullet points. Do NOT write any code yet. Just plan.
+
+User request: ${userText}${visionContext}
+
+Output ONLY the plan — no introductory text, no conclusion, no code blocks.`,
+      },
+    ];
+
+    try {
+      const planningModel = await getModelAssignment('code');
+      planOutput = await runVisibleStage('planning', planningModel, planMessages, false, onChunk, signal, { temperature, top_p, max_tokens });
+      console.log(`[pipeline] Planning done. Length: ${planOutput.length}`);
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') throw e;
+      console.error('[pipeline] Planning stage failed:', e);
+    }
+  }
+
+  // STAGE 3: Code generation (INTERNAL — user sees the final summary)
   if (intent.wantsCode) {
     if (!fileListing) onStage('reading:workspace');
 
@@ -364,8 +425,12 @@ Rules:
       ? `Based on this image analysis:\n\n${imageDescription}\n\nUser request: ${userText}\n\nGenerate the code.`
       : userText;
 
+    const planInstructions = planOutput
+      ? `\n\n---\n\nA plan has already been created and shared with the user above. Follow this plan EXACTLY when generating code:\n${planOutput}\n\nGenerate code that implements this plan precisely. Do NOT deviate from the plan unless the user explicitly asks for changes.`
+      : '';
+
     const codeSystemPrompt = mode === 'agent'
-      ? `You are an expert developer working in a code agent workspace.
+      ? `You are an expert developer working in a code agent workspace for ${userName || 'a user'}.
 Your workspace directory is: ${workspacePath || '(not set)'}
 
 ${fileListing ? `Here are the ACTUAL files already in the workspace:
@@ -390,8 +455,10 @@ Use the appropriate comment syntax for each language:
 - ; for INI
 - -- for SQL
 
-After the code blocks, write a 1-2 sentence technical summary.`
-      : 'You are an expert developer. Generate clean, working code in markdown code blocks with language tags. After the code, write a 1-2 sentence technical summary of what you built.';
+CRITICAL — COMPLETE FILES ONLY: Every code block MUST contain the ENTIRE file from start to finish. NEVER use placeholders like "# rest of the code", "...", "// remaining code unchanged", or similar shortcuts. Partial code with placeholders will corrupt the user's files.
+
+After the code blocks, write a 1-2 sentence technical summary.${planInstructions}`
+      : `You are an expert developer. Generate clean, working code in markdown code blocks with language tags. After the code, write a 1-2 sentence technical summary of what you built.${planInstructions}`;
 
     const codeMessages: Message[] = [
       {
@@ -405,7 +472,7 @@ After the code blocks, write a 1-2 sentence technical summary.`
     try {
       // Code model doesn't need thinking mode either
       const codeModel = await getModelAssignment('code');
-      codeOutput = await runInternalStage('code', codeModel, codeMessages, false, signal);
+      codeOutput = await runInternalStage('code', codeModel, codeMessages, false, signal, { temperature, top_p, max_tokens });
       // After code generation completes, show writing stage
       onStage('writing:files');
     } catch (e) {
@@ -414,7 +481,7 @@ After the code blocks, write a 1-2 sentence technical summary.`
     }
   }
 
-  // STAGE 3: Final response (VISIBLE to user)
+  // STAGE 4: Final response (VISIBLE to user)
   onStage('summary:writing');
 
   let finalMessages: Message[];
@@ -426,7 +493,7 @@ After the code blocks, write a 1-2 sentence technical summary.`
       .trim();
 
     const finalSystemPrompt = mode === 'agent'
-      ? `You are a friendly AI coding agent working in a file workspace.
+      ? `You are a friendly AI coding agent working in a file workspace, helping ${userName || 'the user'}.
 Your workspace is at: ${workspacePath || '(not set)'}
 All files you work on live inside this directory.
 
@@ -442,6 +509,7 @@ ${codeOutput}
 Your job: Write a brief, friendly response (3-5 sentences) that:
 - States which files were created or modified
 - Includes the code in markdown code blocks with their FILE PATH COMMENTS on the first line (copy EXACTLY from the code above — the file path markers are REQUIRED)
+- CRITICAL: Each code block must contain the COMPLETE file — NEVER use "# rest of the code", "...", or similar placeholders
 - Is conversational and helpful
 - Do NOT repeat technical analysis verbatim`
       : `You are a friendly assistant. The user asked: "${userText}"
@@ -479,5 +547,5 @@ Your job: Write a brief, friendly response (2-3 sentences) that describes what's
     finalMessages = messages;
   }
 
-  return await runVisibleStage('final', model, finalMessages, think, onChunk, signal);
+  return await runVisibleStage('final', model, finalMessages, think, onChunk, signal, { temperature, top_p, max_tokens });
 }

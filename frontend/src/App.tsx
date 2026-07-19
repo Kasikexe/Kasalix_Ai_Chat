@@ -8,6 +8,7 @@ import { ModelAssignmentModal } from './components/ModelAssignmentModal';
 import { UserSettingsModal } from './components/UserSettingsModal';
 import { PasswordPrompt } from './components/PasswordPrompt';
 import { UserSetup } from './components/UserSetup';
+import { ToastProvider } from './hooks/useToast';
 import { useModelAssignments } from './hooks/useModelAssignments';
 import { useConversations } from './hooks/useConversations';
 import { useModelVisibility } from './hooks/useModelVisibility';
@@ -49,15 +50,17 @@ function App() {
   }
 
   return (
-    <ChatApp
-      user={user}
-      onSwitchUser={() => {
-        clearUserProfile();
-        setUser(null);
-      }}
-      thinkingEnabled={thinkingEnabled}
-      onToggleThinking={() => setThinkingEnabled(t => !t)}
-    />
+    <ToastProvider>
+      <ChatApp
+        user={user}
+        onSwitchUser={() => {
+          clearUserProfile();
+          setUser(null);
+        }}
+        thinkingEnabled={thinkingEnabled}
+        onToggleThinking={() => setThinkingEnabled(t => !t)}
+      />
+    </ToastProvider>
   );
 }
 
@@ -90,17 +93,36 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
     resetMemory,
     refresh: refreshMemory,
   } = useMemory();
-  const { conversations, create, remove, rename, refresh } = useConversations();
+  const { conversations, loading: conversationsLoading, create, remove, rename, update, refresh } = useConversations();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [modelAssignOpen, setModelAssignOpen] = useState(false);
   const [userSettingsOpen, setUserSettingsOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [mode, setMode] = useState<ConversationMode>('chat');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchActive, setSearchActive] = useState(false);
+
+  const handleSearchChange = (query: string) => {
+    setSearchQuery(query);
+    if (query) setSearchActive(true);
+  };
+
+  const handleSearchClose = () => {
+    setSearchActive(false);
+    setSearchQuery('');
+  };
+
+  const [localUser, setLocalUser] = useState(user);
+
+  useEffect(() => {
+    setLocalUser(user);
+  }, [user]);
 
   // Derive the main chat model from assignments + thinking toggle
   const model = assignmentsLoading ? (thinkingEnabled ? 'qwen3:4b' : 'qwen2.5:3b') : getChatModel(thinkingEnabled);
-  // Fetch all installed models for the assignment modal
+
+  // Fetch all installed models for the assignment modal and model selector
   const [allModels, setAllModels] = useState<OllamaModel[]>([]);
   useEffect(() => {
     api.getModels().then(setAllModels).catch(() => {});
@@ -116,11 +138,6 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
     try { localStorage.setItem(SEARCH_KEY, String(searchEnabled)); } catch {}
   }, [searchEnabled]);
 
-  const [localUser, setLocalUser] = useState(user);
-
-  useEffect(() => {
-    setLocalUser(user);
-  }, [user]);
   const isMobile = useIsMobile();
 
   const activeConv = useMemo(
@@ -156,6 +173,41 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
     setActiveId(null);
   };
 
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore when typing in inputs
+      const isInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      
+      // Ctrl+N: New conversation
+      if (e.ctrlKey && e.key === 'n') {
+        e.preventDefault();
+        handleNewChat();
+        return;
+      }
+      // Ctrl+Shift+Delete: Delete current conversation
+      if (e.ctrlKey && e.shiftKey && (e.key === 'Delete' || e.key === 'Backspace')) {
+        e.preventDefault();
+        if (activeId) handleDelete(activeId);
+        return;
+      }
+      // Ctrl+F: Search messages
+      if (e.ctrlKey && e.key === 'f' && mode === 'chat') {
+        e.preventDefault();
+        setSearchActive((prev) => !prev);
+        if (searchActive) setSearchQuery('');
+        return;
+      }
+      // Escape: Close search
+      if (e.key === 'Escape' && searchActive) {
+        handleSearchClose();
+        return;
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [activeId, searchActive, mode]);
+
   return (
     <div className="h-screen-dynamic flex bg-gray-950 text-white overflow-hidden">
       <Sidebar
@@ -172,6 +224,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
         onUserSettings={() => setUserSettingsOpen(true)}
         mode={mode}
         onModeChange={handleModeChange}
+        loading={conversationsLoading}
       />
       <div className="flex-1 flex flex-col min-w-0">
         <Header
@@ -184,39 +237,87 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
           onToggleSearch={() => setSearchEnabled(s => !s)}
           conversation={activeConv}
         />
-        {mode === 'agent' ? (
-          <AgentWorkspace
-            key={activeConv?.id || 'new'}
-            conversation={activeConv}
-            onCreateNew={handleNewChat}
-            model={model}
-            thinkingEnabled={thinkingEnabled}
-            onMessageSent={() => { refresh(); refreshMemory(); }}
-            onConversationCreated={setActiveId}
-          />
-        ) : mode === 'editor' ? (
-          <VideoEditor
-            key={activeConv?.id || 'new'}
-            conversation={activeConv}
-            onNewVideoProject={async (title: string, workspacePath: string) => {
-              const conv = await create(model, title, 'editor', workspacePath);
-              setActiveId(conv.id);
-              setSidebarOpen(false);
-              return conv;
-            }}
-          />
-        ) : (
-          <ChatView
-            key={activeConv?.id || 'new'}
-            initialMessages={activeConv?.messages || []}
-            conversationId={activeConv?.id}
-            model={model}
-            thinkingEnabled={thinkingEnabled}
-            searchEnabled={searchEnabled}
-            onMessageSent={() => { refresh(); refreshMemory(); }}
-            onConversationCreated={setActiveId}
-          />
-        )}
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
+          {/* Smooth mode transition wrapper */}
+          <div
+            key={mode}
+            className="flex-1 flex flex-col min-h-0 animate-mode-fade-in"
+          >
+            {mode === 'agent' ? (
+              <AgentWorkspace
+                key={activeConv?.id || 'new'}
+                conversation={activeConv}
+                onCreateNew={handleNewChat}                model={model}
+                thinkingEnabled={thinkingEnabled}
+                onMessageSent={() => { refresh(); refreshMemory(); }}
+                onConversationCreated={setActiveId}
+                onForkConversation={async (forkMessages) => {
+                  const conv = await create(model, undefined, 'agent');
+                  for (const msg of forkMessages) {
+                    await api.addConversationMessage(conv.id, msg.role as 'user' | 'assistant', msg.content);
+                  }
+                  try {
+                    const updatedConv = await api.getConversation(conv.id);
+                    update(updatedConv);
+                    setActiveId(updatedConv.id);
+                    refresh();
+                  } catch {
+                    setActiveId(conv.id);
+                  }
+                  setSidebarOpen(false);
+                }}
+              />
+            ) : mode === 'editor'
+                ? (
+                  <VideoEditor
+                    key={activeConv?.id || 'new'}
+                    conversation={activeConv}
+                    onNewVideoProject={async (title: string, workspacePath: string) => {
+                      const conv = await create(model, title, 'editor', workspacePath);
+                      setActiveId(conv.id);
+                      setSidebarOpen(false);
+                      return conv;
+                    }}
+                  />
+                )
+                : (
+                  <ChatView
+                    key={activeConv?.id || 'new'}
+                    initialMessages={activeConv?.messages || []}
+                    conversationId={activeConv?.id}
+                    model={model}
+                thinkingEnabled={thinkingEnabled}
+                searchEnabled={searchEnabled}
+                onMessageSent={() => { refresh(); refreshMemory(); }}
+                onConversationCreated={setActiveId}
+                searchQuery={searchActive ? searchQuery : undefined}
+                onSearchChange={handleSearchChange}
+                onConversationUpdate={(id, updates) => {
+                  // Update local state immediately without waiting for API refresh
+                  api.getConversation(id).then((conv) => update(conv)).catch(() => {});
+                }}
+                onForkConversation={async (forkMessages) => {
+                  const conv = await create(model, undefined, 'chat');
+                  // Add the forked messages to the new conversation
+                  for (const msg of forkMessages) {
+                    await api.addConversationMessage(conv.id, msg.role as 'user' | 'assistant', msg.content);
+                  }
+                  // Fetch the full conversation data so ChatView mounts with all messages
+                  try {
+                    const updatedConv = await api.getConversation(conv.id);
+                    update(updatedConv);
+                    setActiveId(updatedConv.id);
+                    // Force refresh sidebar immediately
+                    refresh();
+                  } catch {
+                    setActiveId(conv.id);
+                  }
+                  setSidebarOpen(false);
+                }}
+              />
+            )}
+          </div>
+        </div>
       </div>
 
       <UserSettingsModal

@@ -1,9 +1,10 @@
-import { useState, useCallback, useMemo, memo, type ReactNode } from 'react';
+import { useState, useCallback, useMemo, useRef, memo, type ReactNode } from 'react';
+import { useToast } from '../hooks/useToast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
-import { Check, Copy, Download, User, Bot, FileCode, RefreshCw, Pencil, X, Save, FilePlus2, Trash2 } from 'lucide-react';
+import { Check, Copy, Download, User, Bot, FileCode, RefreshCw, Pencil, X, Save, FilePlus2, Trash2, GitBranch, Code2, FileText, Layers } from 'lucide-react';
 import type { Message as MessageType } from '../types';
 
 const languageExtensions: Record<string, string> = {
@@ -51,30 +52,76 @@ const languageExtensions: Record<string, string> = {
 };
 
 const FILE_PATH_RE = /^(?:\/\/|#|;|%|--|\/\*|<!--)\s*([^\s]+?\.[a-zA-Z]\w*)\s*(?:\*\/|-->)?$/;
+const DELETE_PATH_RE = /^(?:\/\/|#|--)\s*DELETE:\s*([^\s]+)/i;
+const CODE_BLOCK_RE = /```(?:\w*)\n([\s\S]*?)```/g;
 
-const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode }: { children: string; className?: string; onApplyCode?: (filePath: string, content: string) => void }) {
+// Extract all code blocks with detected file paths from a markdown string
+function extractApplicableFiles(content: string): { filePath: string; content: string }[] {
+  const result: { filePath: string; content: string }[] = [];
+  let match;
+  while ((match = CODE_BLOCK_RE.exec(content)) !== null) {
+    const block = match[1];
+    const lines = block.split('\n');
+    const firstLine = lines[0]?.trim() || '';
+    const pathMatch = firstLine.match(FILE_PATH_RE);
+    if (pathMatch) {
+      const filePath = pathMatch[1];
+      const codeContent = lines.slice(1).join('\n').trimStart();
+      result.push({ filePath, content: codeContent });
+    }
+  }
+  return result;
+}
+
+const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode, onDeleteFile }: { children: string; className?: string; onApplyCode?: (filePath: string, content: string) => void; onDeleteFile?: (filePath: string) => void }) {
   const [copied, setCopied] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
-  // Ensure children is a string (guard against React nodes during streaming edge cases)
-  const safeChildren = typeof children === 'string' ? children : '';
-  const language = className?.replace('language-', '') || '';
+  const [manualPath, setManualPath] = useState('');
+  const [showPathInput, setShowPathInput] = useState(false);
+  const pathInputRef = useRef<HTMLInputElement>(null);
+  const { toast } = useToast();
+  // Extract text content from React nodes (handles rehypeHighlight <span> elements after streaming)
+  const extractText = (node: ReactNode): string => {
+    if (typeof node === 'string') return node;
+    if (typeof node === 'number') return String(node);
+    if (Array.isArray(node)) return node.map(extractText).join('');
+    if (node && typeof node === 'object' && 'props' in node) {
+      return extractText((node as any).props.children);
+    }
+    return '';
+  };
+  const safeChildren = extractText(children);
+  const language = className?.replace(/^language-/, '').split(/\s+/)[0] || '';
   const extension = language ? languageExtensions[language] || `.${language}` : '.txt';
 
-  // Detect file path in first line
-  const { detectedPath, codeContent } = useMemo(() => {
+  // Detect file path or delete directive in first line
+  const { detectedPath, codeContent, isDelete } = useMemo(() => {
     const lines = safeChildren.split('\n');
     const firstLine = lines[0]?.trim() || '';
+    
+    // Check for DELETE directive first
+    const deleteMatch = firstLine.match(DELETE_PATH_RE);
+    if (deleteMatch) {
+      return {
+        detectedPath: deleteMatch[1],
+        codeContent: lines.slice(1).join('\n').trimStart(),
+        isDelete: true,
+      };
+    }
+    
+    // Normal file path detection
     const match = firstLine.match(FILE_PATH_RE);
     if (match) {
       return {
         detectedPath: match[1],
         codeContent: lines.slice(1).join('\n').trimStart(),
+        isDelete: false,
       };
     }
-    return { detectedPath: null, codeContent: safeChildren };
+    return { detectedPath: null, codeContent: safeChildren, isDelete: false };
   }, [safeChildren]);
 
-  const displayContent = detectedPath ? codeContent : safeChildren;
+  const displayContent = detectedPath && !isDelete ? codeContent : safeChildren;
 
   const handleCopy = useCallback(async () => {
     await navigator.clipboard.writeText(displayContent);
@@ -104,15 +151,89 @@ const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode }: 
           <span>{detectedPath || language || 'code'}</span>
         </div>
         <div className="flex items-center gap-1">
-          {detectedPath && onApplyCode && (
+          {/* Delete button when isDelete is detected */}
+          {isDelete && detectedPath && onDeleteFile && (
             <button
-              onClick={() => onApplyCode(detectedPath!, displayContent)}
-              className="flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-all duration-150 hover:bg-purple-900/40 hover:text-purple-300 text-purple-400 active:scale-95"
-              title={`Apply to ${detectedPath}`}
+              onClick={() => onDeleteFile(detectedPath!)}
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-all duration-150 hover:bg-red-900/40 hover:text-red-300 text-red-400 active:scale-95"
+              title={`Delete ${detectedPath}`}
             >
-              <FilePlus2 size={12} />
-              Apply
+              <Trash2 size={12} />
+              Delete
             </button>
+          )}
+          {/* Always show Apply/Save button when onApplyCode is available (unless it's a delete) */}
+          {!isDelete && onApplyCode && (
+            detectedPath ? (
+              <button
+                onClick={() => onApplyCode(detectedPath!, displayContent)}
+                className="flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-all duration-150 hover:bg-purple-900/40 hover:text-purple-300 text-purple-400 active:scale-95"
+                title={`Apply to ${detectedPath}`}
+              >
+                <FilePlus2 size={12} />
+                Apply
+              </button>
+            ) : showPathInput ? (
+              <div className="flex items-center gap-1">
+                <input
+                  ref={pathInputRef}
+                  type="text"
+                  value={manualPath}
+                  onChange={(e) => setManualPath(e.target.value)}
+                  placeholder="path/to/file.ext"
+                  className="w-28 px-1.5 py-0.5 text-[10px] bg-gray-800 border border-gray-600 rounded text-white placeholder-gray-500 outline-none focus:border-blue-500"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && manualPath.trim()) {
+                      onApplyCode(manualPath.trim(), safeChildren);
+                      setShowPathInput(false);
+                      setManualPath('');
+                    }
+                    if (e.key === 'Escape') {
+                      setShowPathInput(false);
+                      setManualPath('');
+                    }
+                  }}
+                  onBlur={() => {
+                    if (!manualPath.trim()) {
+                      setShowPathInput(false);
+                    }
+                  }}
+                  autoFocus
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <button
+                  onClick={() => {
+                    if (manualPath.trim()) {
+                      onApplyCode(manualPath.trim(), safeChildren);
+                      setShowPathInput(false);
+                      setManualPath('');
+                    }
+                  }}
+                  className="p-0.5 hover:bg-gray-700 rounded text-gray-400 hover:text-blue-400 transition-colors"
+                  disabled={!manualPath.trim()}
+                >
+                  <Check size={10} />
+                </button>
+                <button
+                  onClick={() => { setShowPathInput(false); setManualPath(''); }}
+                  className="p-0.5 hover:bg-gray-700 rounded text-gray-400 hover:text-red-400 transition-colors"
+                >
+                  <X size={10} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  setShowPathInput(true);
+                  setTimeout(() => pathInputRef.current?.focus(), 50);
+                }}
+                className="flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-all duration-150 hover:bg-purple-900/40 hover:text-purple-300 text-purple-400 active:scale-95"
+                title="Specify file path to save this code"
+              >
+                <FilePlus2 size={12} />
+                Save as...
+              </button>
+            )
           )}
           <button
             onClick={handleDownload}
@@ -157,6 +278,12 @@ interface Props {
   onRegenerate?: () => void;
   isLastAssistant?: boolean;
   onApplyCode?: (filePath: string, codeContent: string) => void;
+  onDeleteFile?: (filePath: string) => void;
+  onApplyAll?: (files: { filePath: string; content: string }[]) => void;
+  selected?: boolean;
+  onToggleSelect?: (index: number) => void;
+  selectable?: boolean;
+  onFork?: (index: number) => void;
 }
 
 const stageLabels: Record<string, string> = {
@@ -168,6 +295,7 @@ const stageLabels: Record<string, string> = {
   'summary': '✨ Polishing response',
   'chat': '💬 Thinking',
   'search': '🌐 Searching the web',
+  'planning': '📋 Creating a plan',
 };
 
 function getStageLabel(stage?: string): string | null {
@@ -178,12 +306,14 @@ function getStageLabel(stage?: string): string | null {
   return '⚙️ Processing';
 }
 
-export const Message = memo(function Message({ message, isStreaming, stage, liveDuration, index, onEdit, onDelete, onRegenerate, isLastAssistant, onApplyCode }: Props) {
+export const Message = memo(function Message({ message, isStreaming, stage, liveDuration, index, onEdit, onDelete, onRegenerate, isLastAssistant, onApplyCode, onDeleteFile, onApplyAll, selected, onToggleSelect, selectable, onFork }: Props) {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
+  const [showRaw, setShowRaw] = useState(false);
   const isUser = message.role === 'user';
   const stageLabel = getStageLabel(stage);
+  const { toast } = useToast();
 
   const copy = async () => {
     await navigator.clipboard.writeText(message.content);
@@ -211,6 +341,12 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
   // Strip the [image:...] tag from display
   const displayContent = message.content.replace(/\[image:[^\]]+\]/g, '').trim();
 
+  // Extract applicable files for "Apply All" button
+  const applicableFiles = useMemo(
+    () => (onApplyAll && !isUser && displayContent && !isStreaming ? extractApplicableFiles(displayContent) : []),
+    [onApplyAll, isUser, displayContent, isStreaming]
+  );
+
   // Skip expensive rehypeHighlight during streaming — only syntax-highlight after completion
   const rehypePlugins = useMemo(
     () => (isStreaming ? [] : [rehypeHighlight]),
@@ -222,15 +358,32 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
     pre: ({ children }: { children?: ReactNode }) => {
       if (children && typeof children === 'object' && 'type' in children && (children as any).type === 'code') {
         const codeChild = children as any;
-        return <CodeBlock className={codeChild.props?.className} onApplyCode={onApplyCode}>{codeChild.props?.children}</CodeBlock>;
+        return <CodeBlock className={codeChild.props?.className} onApplyCode={onApplyCode} onDeleteFile={onDeleteFile}>{codeChild.props?.children}</CodeBlock>;
       }
       return <pre>{children}</pre>;
     },
   }), [onApplyCode]);
 
   return (
-    <div className={`flex gap-3 px-4 py-6 animate-fade-in ${isUser ? '' : 'bg-gray-900/40'}`}>
-      <div className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center">
+    <div className={`group relative flex gap-3 px-4 py-6 animate-fade-in transition-colors duration-200 ${isUser ? '' : 'bg-gray-900/40'} ${selected ? 'bg-blue-900/20' : ''}`}>
+      <div className="flex items-start gap-3">
+        {/* Selection checkbox - always visible on mobile, on hover on desktop */}
+        {selectable && !isStreaming && (
+          <div className="flex-shrink-0 pt-2 opacity-60 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-150">
+            <button
+              onClick={() => onToggleSelect?.(index!)}
+              className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+                selected
+                  ? 'bg-blue-500 border-blue-500'
+                  : 'border-gray-600 hover:border-gray-400 bg-gray-800'
+              }`}
+            >
+              {selected && <Check size={12} className="text-white" />}
+            </button>
+          </div>
+        )}
+
+        <div className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center">
         {isUser ? (
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
             <User size={16} className="text-white" />
@@ -260,12 +413,44 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (confirm('Delete this message?')) onDelete(index!);
+                    onDelete(index!);
+                    toast('success', 'Message deleted');
                   }}
                   className="p-1 hover:bg-gray-700 rounded text-gray-500 hover:text-red-400 transition-all"
                   title="Delete message"
                 >
                   <Trash2 size={12} />
+                </button>
+              )}
+              {/* Fork button */}
+              {onFork && !isStreaming && (
+                <button
+                  onClick={() => onFork(index!)}
+                  className="p-1 hover:bg-gray-700 rounded text-gray-500 hover:text-amber-400 transition-all"
+                  title="Fork conversation from here"
+                >
+                  <GitBranch size={12} />
+                </button>
+              )}
+              {/* Apply All button */}
+              {applicableFiles.length >= 2 && (
+                <button
+                  onClick={() => onApplyAll?.(applicableFiles)}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-emerald-700/30 text-emerald-400 hover:bg-emerald-700/50 transition-all active:scale-95"
+                  title={`Apply all ${applicableFiles.length} files`}
+                >
+                  <Layers size={11} />
+                  Apply All ({applicableFiles.length})
+                </button>
+              )}
+              {/* Markdown/Raw toggle */}
+              {!isUser && displayContent && !isStreaming && (
+                <button
+                  onClick={() => setShowRaw(!showRaw)}
+                  className={`p-1 rounded transition-all ${showRaw ? 'bg-gray-700 text-amber-400' : 'text-gray-500 hover:text-gray-300'}`}
+                  title={showRaw ? 'Show rendered' : 'Show raw markdown'}
+                >
+                  {showRaw ? <FileText size={12} /> : <Code2 size={12} />}
                 </button>
               )}
             </span>
@@ -326,13 +511,17 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
         ) : (
           <div className="prose prose-invert prose-sm max-w-none break-words">
             {displayContent ? (
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={rehypePlugins}
-                components={markdownComponents}
-              >
-                {displayContent}
-              </ReactMarkdown>
+              showRaw ? (
+                <pre className="text-sm text-gray-300 font-mono whitespace-pre-wrap overflow-x-auto bg-gray-950/50 rounded-lg p-3 border border-gray-800">{displayContent}</pre>
+              ) : (
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={rehypePlugins}
+                  components={markdownComponents}
+                >
+                  {displayContent}
+                </ReactMarkdown>
+              )
             ) : isStreaming ? (
               <span className="inline-flex gap-1 items-center text-gray-400">
                 <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-pulse-soft" />
@@ -371,6 +560,7 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
             )}
           </div>
         )}
+      </div>
       </div>
     </div>
   );

@@ -12,6 +12,21 @@ function loadSystemPrompt(): string | null {
   }
 }
 
+// Storage keys for advanced settings
+const TEMP_KEY = 'ai-chat:temperature';
+const TOP_P_KEY = 'ai-chat:top_p';
+const MAX_TOKENS_KEY = 'ai-chat:maxTokens';
+const AUTO_TITLE_KEY = 'ai-chat:autoTitle';
+
+export function loadSettings() {
+  return {
+    temperature: parseFloat(localStorage.getItem(TEMP_KEY) ?? '') || undefined,
+    top_p: parseFloat(localStorage.getItem(TOP_P_KEY) ?? '') || undefined,
+    max_tokens: parseInt(localStorage.getItem(MAX_TOKENS_KEY) ?? '', 10) || undefined,
+    autoTitle: localStorage.getItem(AUTO_TITLE_KEY) !== 'false',
+  };
+}
+
 export function useChat(
   model: string,
   initialMessages: Message[],
@@ -19,7 +34,9 @@ export function useChat(
   thinkingEnabled = false,
   mode: ConversationMode = 'chat',
   workspacePath?: string,
-  searchEnabled = false
+  searchEnabled = false,
+  onConversationUpdate?: (id: string, updates: Partial<{ title: string }>) => void,
+  planningEnabled = false
 ) {
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -54,6 +71,8 @@ export function useChat(
   workspacePathRef.current = workspacePath;
   const searchEnabledRef = useRef(searchEnabled);
   searchEnabledRef.current = searchEnabled;
+  const planningEnabledRef = useRef(planningEnabled);
+  planningEnabledRef.current = planningEnabled;
 
   const startStream = useCallback(async (convId: string | undefined): Promise<string | undefined> => {
     const controller = new AbortController();
@@ -72,6 +91,8 @@ export function useChat(
       const filtered = msgs.filter((m) => m.role !== 'system');
       return [{ role: 'system' as const, content: sp }, ...filtered];
     })();
+
+    const settings = loadSettings();
 
     try {
       await api.streamChat(
@@ -94,7 +115,7 @@ export function useChat(
           onStage: (stage) => {
             setCurrentStage(stage);
           },
-          onDone: () => {
+          onDone: async () => {
             // Store response duration on the last assistant message
             const duration = Date.now() - startTimeRef.current;
             const msgs = [...messagesRef.current];
@@ -104,6 +125,29 @@ export function useChat(
               messagesRef.current = msgs;
               setMessages(msgs);
             }
+
+            // Auto-title: if this is the first response and autoTitle is enabled
+            if (settings.autoTitle && currentConvId) {
+              const lastMsg = messagesRef.current[messagesRef.current.length - 1];
+              const hasContent = lastMsg && lastMsg.role === 'assistant' && lastMsg.content.length > 0;
+              if (hasContent && messagesRef.current.length <= 3) {
+                const userMsg = messagesToSend.find((m) => m.role === 'user');
+                if (userMsg) {
+                  const textOnly = userMsg.content.replace(/\[image:[^\]]+\]/g, '').trim();
+                  if (textOnly) {
+                    try {
+                      const title = await api.generateTitle(textOnly, model);
+                      await api.updateConversation(currentConvId, { title });
+                      // Notify parent to update local conversation state immediately
+                      onConversationUpdate?.(currentConvId, { title });
+                    } catch (e) {
+                      console.error('[useChat] Auto-title failed:', e);
+                    }
+                  }
+                }
+              }
+            }
+
             setIsStreaming(false);
             streamingRef.current = false;
             setCurrentStage('');
@@ -134,7 +178,11 @@ export function useChat(
         controller.signal,
         modeRef.current,
         workspacePathRef.current,
-        searchEnabledRef.current
+        searchEnabledRef.current,
+        settings.temperature,
+        settings.top_p,
+        settings.max_tokens,
+        planningEnabledRef.current
       );
       return convIdRef.current;
     } catch (e) {

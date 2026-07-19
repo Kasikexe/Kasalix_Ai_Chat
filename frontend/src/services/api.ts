@@ -308,6 +308,21 @@ export const api = {
     );
   },
 
+  async generateTitle(message: string, model: string): Promise<string> {
+    try {
+      const data = await handleResponse<{ title: string }>(
+        await fetch(`${API_BASE}/chat/title`, authedFetch(`${API_BASE}/chat/title`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message, model }),
+        }))
+      );
+      return data.title;
+    } catch {
+      return 'New Chat';
+    }
+  },
+
 streamChat(
   model: string,
   messages: Message[],
@@ -322,9 +337,14 @@ streamChat(
   signal?: AbortSignal,
   mode?: ConversationMode,
   workspacePath?: string,
-  searchEnabled?: boolean
+  searchEnabled?: boolean,
+  temperature?: number,
+  top_p?: number,
+  max_tokens?: number,
+  planningEnabled?: boolean
 ): Promise<void> {
   return (async () => {
+    const profile = loadProfile();
     const res = await fetch(`${API_BASE}/chat`, authedFetch(`${API_BASE}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -336,6 +356,11 @@ streamChat(
         workspacePath,
         thinkingEnabled: localStorage.getItem('ai-chat:thinkingEnabled') === 'true',
         searchEnabled: searchEnabled === true,
+        temperature,
+        top_p,
+        max_tokens,
+        userName: profile?.name || 'User',
+        planningEnabled: planningEnabled === true,
       }),
       signal,
     }));

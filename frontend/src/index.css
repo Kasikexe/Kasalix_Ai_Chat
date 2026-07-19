@@ -19,6 +19,10 @@ body,
 ::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
 
+/* Hide scrollbar for tab bar and other horizontal-scroll containers */
+.scrollbar-none::-webkit-scrollbar { display: none; }
+.scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
+
 /* iOS safe area support */
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0);
@@ -183,6 +187,99 @@ html.light .bg-gray-950\/80 { background-color: rgba(255, 255, 255, 0.8); }
 
 /* ---- Input bar area ---- */
 html.light .dark\:border-gray-600 { border-color: #cbd5e1; }
+
+/* ============================
+   MODE TRANSITION ANIMATION
+   ============================ */
+@keyframes modeFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-mode-fade-in {
+  animation: modeFadeIn 0.25s ease-out;
+}
+
+/* ============================
+   RESPONSIVE MARKDOWN TABLES
+   ============================ */
+.prose table {
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+@media (min-width: 768px) {
+  .prose table {
+    white-space: normal;
+  }
+}
+.prose table tbody tr:nth-child(even) {
+  background: rgba(255,255,255,0.03);
+}
+html.light .prose table tbody tr:nth-child(even) {
+  background: rgba(0,0,0,0.02);
+}
+.prose table tbody tr:hover {
+  background: rgba(59, 130, 246, 0.08);
+}
+html.light .prose table tbody tr:hover {
+  background: rgba(59, 130, 246, 0.05);
+}
+
+/* ============================
+   SKELETON LOADING ANIMATION
+   ============================ */
+@keyframes skeletonPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}
+.animate-skeleton-pulse {
+  animation: skeletonPulse 1.5s ease-in-out infinite;
+}
+
+/* ============================
+   TOAST SLIDE IN ANIMATION
+   ============================ */
+@keyframes toastSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(100%) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+.animate-toast-slide-in {
+  animation: toastSlideIn 0.3s ease-out;
+}
+
+/* ============================
+   SEARCH HIGHLIGHT
+   ============================ */
+mark.search-highlight {
+  background: rgba(250, 204, 21, 0.3);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+html.light mark.search-highlight {
+  background: rgba(250, 204, 21, 0.5);
+}
+mark.search-highlight.active {
+  background: rgba(250, 204, 21, 0.6);
+  box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.5);
+}
+html.light mark.search-highlight.active {
+  background: rgba(250, 204, 21, 0.7);
+}
 
 /* Markdown prose */
 .prose pre {

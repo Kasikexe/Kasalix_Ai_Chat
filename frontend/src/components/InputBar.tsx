@@ -1,20 +1,25 @@
-import { useRef, useState, KeyboardEvent, useEffect } from 'react';
-import { Send, Square, Paperclip, X, Mic } from 'lucide-react';
+import { useRef, useState, KeyboardEvent, useEffect, DragEvent } from 'react';
+import { Send, Square, Paperclip, X, Mic, ClipboardList } from 'lucide-react';
+import { useToast } from '../hooks/useToast';
 
 interface Props {
   onSend: (content: string, imageDataUrl?: string) => void;
   onStop: () => void;
   isStreaming: boolean;
   disabled?: boolean;
+  planningEnabled?: boolean;
+  onPlanningToggle?: () => void;
 }
 
-export function InputBar({ onSend, onStop, isStreaming, disabled }: Props) {
+export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnabled, onPlanningToggle }: Props) {
   const [value, setValue] = useState('');
   const [image, setImage] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
+  const { error: toastError, info: toastInfo, success: toastSuccess } = useToast();
 
   const adjust = () => {
     const el = ref.current;
@@ -54,11 +59,51 @@ export function InputBar({ onSend, onStop, isStreaming, disabled }: Props) {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) {
-      alert('Image must be under 10MB');
+      toastError('Image must be under 10MB');
       return;
     }
     const reader = new FileReader();
     reader.onload = () => setImage(reader.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  // Drag & drop image support
+  const handleDragOver = (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+    if (!file.type.startsWith('image/')) {
+      toastInfo('Only image files are supported.');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toastError('Image must be under 10MB');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setImage(reader.result as string);
+      toastSuccess('Image attached');
+    };
     reader.readAsDataURL(file);
   };
 
@@ -94,7 +139,7 @@ export function InputBar({ onSend, onStop, isStreaming, disabled }: Props) {
 
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert('Voice input is not supported in this browser.');
+      toastInfo('Voice input is not supported in this browser.');
       return;
     }
 
@@ -132,8 +177,23 @@ export function InputBar({ onSend, onStop, isStreaming, disabled }: Props) {
   };
 
   return (
-    <div className="border-t border-gray-800 bg-gray-900 safe-bottom">
-      <div className="max-w-3xl mx-auto p-3 md:p-4">
+    <div
+      className={`border-t border-gray-800 bg-gray-900 safe-bottom transition-all duration-200 ${
+        isDragOver ? 'bg-blue-900/30' : ''
+      }`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Drag & drop overlay */}
+      {isDragOver && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none">
+          <div className="bg-blue-900/80 border-2 border-dashed border-blue-400 rounded-2xl px-8 py-6 shadow-2xl backdrop-blur-sm">
+            <p className="text-blue-200 text-sm font-medium">Drop image to attach</p>
+          </div>
+        </div>
+      )}
+      <div className="max-w-3xl mx-auto p-3 md:p-4 relative">
         {image && (
           <div className="mb-2 relative inline-block">
             <img src={image} alt="Upload preview" className="max-h-32 rounded-lg border border-gray-700" />
@@ -162,6 +222,22 @@ export function InputBar({ onSend, onStop, isStreaming, disabled }: Props) {
           >
             <Paperclip size={18} />
           </button>
+
+          {/* Planning toggle — only shown in agent mode */}
+          {onPlanningToggle !== undefined && (
+            <button
+              onClick={onPlanningToggle}
+              disabled={disabled || isStreaming}
+              className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
+                planningEnabled
+                  ? 'bg-violet-600 text-white hover:bg-violet-700'
+                  : 'text-gray-400 hover:bg-gray-700'
+              }`}
+              title={planningEnabled ? 'Planning mode: on (AI plans before coding)' : 'Planning mode: off'}
+            >
+              <ClipboardList size={18} />
+            </button>
+          )}
 
           <button
             onClick={toggleRecording}

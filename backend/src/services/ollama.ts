@@ -43,6 +43,8 @@ function convertMessagesForOllama(messages: Message[]): any[] {
 export interface StreamOptions {
   signal?: AbortSignal;
   temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
   /**
    * Thinking mode for models that support it (qwen3, deepseek-r1, etc.)
    * - true: enable thinking (slower, more accurate)
@@ -69,6 +71,14 @@ export async function streamChat(
 
   if (temperature !== undefined) {
     body.options = { ...body.options, temperature };
+  }
+
+  // Read top_p and max_tokens from the body if provided
+  if (options.top_p !== undefined) {
+    body.options = { ...body.options, top_p: options.top_p };
+  }
+  if (options.max_tokens !== undefined) {
+    body.options = { ...body.options, num_predict: options.max_tokens };
   }
 
   // ALWAYS set think for models that support it

@@ -687,14 +687,34 @@ export function VideoEditor({ conversation, onNewVideoProject }: VideoEditorProp
                 Your browser does not support the video tag.
               </video>
             ) : (
-              <div className="text-center">
-                <div className="w-24 h-24 mx-auto rounded-2xl bg-gradient-to-br from-red-500 to-orange-600 flex items-center justify-center mb-3 shadow-lg">
-                  <Film size={40} className="text-white" />
+              <div className="text-center animate-fade-in">
+                <div className="relative mx-auto mb-4">
+                  <div className="w-28 h-28 mx-auto rounded-2xl bg-gradient-to-br from-red-500 to-orange-600 flex items-center justify-center shadow-xl shadow-red-500/20">
+                    <Film size={48} className="text-white" />
+                  </div>
+                  <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-emerald-500 rounded-full flex items-center justify-center shadow-lg border-2 border-gray-950">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  </div>
                 </div>
-                <p className="text-sm text-gray-400 mb-1">No video loaded</p>
-                <p className="text-xs text-gray-600">Upload a video file to get started</p>
-                <div className="mt-4 flex items-center justify-center gap-2">
-                  <label className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm font-medium cursor-pointer transition-colors inline-flex items-center gap-2">
+                <p className="text-base text-gray-300 font-medium mb-1">No video loaded</p>
+                <p className="text-xs text-gray-500 mb-6 max-w-xs mx-auto leading-relaxed">
+                  Upload a video file to get started. Supports MP4, AVI, MOV, and more.
+                </p>
+                <div className="flex flex-wrap justify-center gap-3 mb-6 text-xs text-gray-500">
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-800/50 border border-gray-700/50">
+                    ✂️ Trim & Cut
+                  </span>
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-800/50 border border-gray-700/50">
+                    🎨 AI Filters
+                  </span>
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-800/50 border border-gray-700/50">
+                    🔊 Audio editing
+                  </span>
+                </div>
+                <div className="flex items-center justify-center gap-3">
+                  <label className="px-5 py-2.5 bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 rounded-xl text-sm font-medium cursor-pointer transition-all duration-200 inline-flex items-center gap-2 shadow-lg shadow-red-600/20 hover:scale-105 active:scale-95">
                     <Upload size={16} />
                     Browse video
                     <input type="file" accept="video/*" className="hidden" onChange={handleFileSelect} />

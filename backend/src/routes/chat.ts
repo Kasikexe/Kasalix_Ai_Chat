@@ -3,6 +3,7 @@ import { runPipeline } from '../services/pipeline';
 import { addMessage, createConversation, getConversation } from '../services/storage';
 import { getMemory } from '../services/memory';
 import { extractMemoryFromTurn } from '../services/extractor';
+import { streamChat } from '../services/ollama';
 import type { ConversationMode, Message } from '../types';
 
 const chat = new Hono();
@@ -22,6 +23,11 @@ chat.post('/', async (c) => {
     const searchEnabled: boolean = body.searchEnabled === true;
     const mode: ConversationMode = body.mode === 'agent' ? 'agent' : 'chat';
     const reqWorkspacePath: string | undefined = body.workspacePath;
+    const temperature: number | undefined = body.temperature;
+    const top_p: number | undefined = body.top_p;
+    const max_tokens: number | undefined = body.max_tokens;
+    const userName: string | undefined = body.userName;
+    const planningEnabled: boolean = body.planningEnabled === true;
 
     if (!model || !Array.isArray(messages) || messages.length === 0) {
       return c.json({ error: 'model and messages are required' }, 400);
@@ -89,6 +95,11 @@ chat.post('/', async (c) => {
               send({ type: 'chunk', content: chunk });
             },
             userId: ownerId,
+            userName,
+            planningEnabled,
+            temperature,
+            top_p,
+            max_tokens,
           });
 
           if (fullResponse && activeConvId && !aborted) {
@@ -161,6 +172,63 @@ chat.post('/', async (c) => {
       { error: e instanceof Error ? e.message : 'Chat request failed' },
       500
     );
+  }
+});
+
+// --- Title generation ---
+chat.post('/title', async (c) => {
+  try {
+    const body = await c.req.json();
+    const message: string = body.message;
+    const model: string = body.model || 'qwen2.5:3b';
+
+    if (!message) {
+      return c.json({ title: 'New Chat' });
+    }
+
+    const cleaned = message
+      .replace(/\[image:data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+\]/g, '[image]')
+      .replace(/\[image\]/g, '')
+      .trim()
+      .substring(0, 200);
+
+    if (!cleaned) {
+      return c.json({ title: 'New Chat' });
+    }
+
+    let title = '';
+    try {
+      await streamChat(
+        model,
+        [
+          {
+            role: 'system',
+            content: 'Generate a short, descriptive title (max 6 words, no quotes, no punctuation at end) for a conversation that starts with this message. Only output the title, nothing else.',
+          },
+          { role: 'user', content: cleaned },
+        ],
+        (chunk) => {
+          title += chunk;
+        },
+        { temperature: 0.3, max_tokens: 20 }
+      );
+    } catch (e) {
+      console.error('[chat] Title generation failed:', e);
+    }
+
+    const finalTitle = title
+      .replace(/^["']+|["']+$/g, '')          // Remove surrounding quotes
+      .replace(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+/g, '')  // Strip CJK, Korean characters
+      .replace(/[\-–—_*/]+/g, ' ')            // Replace underscores, dashes, asterisks with spaces
+      .replace(/[^a-zA-Z0-9\s'?!,.:;@#$%&()+\[\]{}|\\]/g, '') // Only keep readable chars
+      .replace(/\s+/g, ' ')                   // Collapse whitespace
+      .trim()
+      .substring(0, 60) || 'New Chat';
+
+    return c.json({ title: finalTitle });
+  } catch (e) {
+    console.error('[chat] Title route error:', e);
+    return c.json({ title: 'New Chat' });
   }
 });
 

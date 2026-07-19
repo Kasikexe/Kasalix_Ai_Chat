@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { MessageSquare, Plus, Trash2, Edit2, X, Check, Menu, Wrench, Search, Film, AlertTriangle } from 'lucide-react';
+import { MessageSquare, Plus, Trash2, Edit2, X, Check, Menu, Wrench, Search, Film, FolderOpen, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import type { Conversation, ConversationMode } from '../types';
 import type { UserProfile } from '../types';
 import { UserBadge } from './UserBadge';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useToast } from '../hooks/useToast';
+import { ConversationSkeleton } from './Skeleton';
 
 interface SidebarProps {
   conversations: Conversation[];
@@ -19,17 +21,84 @@ interface SidebarProps {
   onUserSettings?: () => void;
   mode: ConversationMode;
   onModeChange: (mode: ConversationMode) => void;
+  loading?: boolean;
+}
+
+// Generate a consistent avatar color from a string
+function getAvatarColor(str: string): string {
+  const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#14b8a6', '#a855f7'];
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return colors[Math.abs(hash) % colors.length];
+}
+
+function getInitials(title: string): string {
+  if (!title) return '?';
+  const words = title.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+  return title.slice(0, 2).toUpperCase();
 }
 
 export function Sidebar({
   conversations, activeId, onSelect, onCreate, onDelete, onRename,
-  isOpen, onClose, user, onSwitchUser, onUserSettings, mode, onModeChange,
+  isOpen, onClose, user, onSwitchUser, onUserSettings, mode, onModeChange, loading = false,
 }: SidebarProps) {
+  const { toast } = useToast();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
   const isMobile = useIsMobile();
+
+  // Extract project name from workspace path
+  const getProjectName = (wsPath?: string): string => {
+    if (!wsPath) return 'Other';
+    const parts = wsPath.replace(/\\/g, '/').split('/').filter(Boolean);
+    return parts[parts.length - 1] || 'Other';
+  };
+
+  // Track whether auto-expand has already happened (to avoid stale dep warnings)
+  const hasAutoExpanded = useRef(false);
+
+  // Auto-expand the most recent project group when first entering agent mode
+  useEffect(() => {
+    if (mode === 'agent' && !hasAutoExpanded.current) {
+      const agentConvs = conversations.filter((c) => (c.mode || 'chat') === 'agent');
+      if (agentConvs.length > 0) {
+        // Find the most recent project
+        const groups = new Map<string, typeof agentConvs>();
+        for (const conv of agentConvs) {
+          const project = conv.workspacePath ? getProjectName(conv.workspacePath) : 'Other';
+          if (!groups.has(project)) groups.set(project, []);
+          groups.get(project)!.push(conv);
+        }
+        let topProject = '';
+        let topTime = 0;
+        for (const [proj, convs] of groups) {
+          const latest = Math.max(...convs.map((c) => c.updatedAt));
+          if (latest > topTime) { topTime = latest; topProject = proj; }
+        }
+        if (topProject) {
+          setExpandedProjects(new Set([topProject]));
+          hasAutoExpanded.current = true;
+        }
+      }
+    }
+  }, [mode, conversations]);
+
+  // Toggle project group expansion
+  const toggleProject = (project: string) => {
+    setExpandedProjects((prev) => {
+      const next = new Set(prev);
+      if (next.has(project)) next.delete(project);
+      else next.add(project);
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (editingId && inputRef.current) {
@@ -187,11 +256,18 @@ export function Sidebar({
             const filtered = conversations.filter((c) => {
               if ((c.mode || 'chat') !== mode) return false;
               if (!q) return true;
-              // Search by title
               if (c.title.toLowerCase().includes(q)) return true;
-              // Search by message content
               return c.messages.some((m) => m.content.toLowerCase().includes(q));
             });
+            if (loading && !searchQuery) {
+              return (
+                <div className="space-y-1 px-2">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <ConversationSkeleton key={i} />
+                  ))}
+                </div>
+              );
+            }
             if (filtered.length === 0) {
               return (
                 <p className="text-gray-500 text-sm text-center mt-8 px-4">
@@ -203,6 +279,158 @@ export function Sidebar({
                 </p>
               );
             }
+
+            // Group agent conversations by project/workspace
+            if (mode === 'agent') {
+              const groups = new Map<string, typeof filtered>();
+              for (const conv of filtered) {
+                const project = conv.workspacePath ? getProjectName(conv.workspacePath) : 'Other';
+                if (!groups.has(project)) groups.set(project, []);
+                groups.get(project)!.push(conv);
+              }
+              // Sort groups: most recently updated first
+              const sortedGroups = Array.from(groups.entries()).sort((a, b) => {
+                const latestA = Math.max(...a[1].map((c) => c.updatedAt));
+                const latestB = Math.max(...b[1].map((c) => c.updatedAt));
+                return latestB - latestA;
+              });
+
+              return (
+                <>
+                  {searchQuery && (
+                    <p className="px-3 pb-1 text-xs text-gray-500">
+                      {filtered.length} session{filtered.length !== 1 ? 's' : ''} found
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    {sortedGroups.map(([project, convs]) => {
+                      const isExpanded = expandedProjects.has(project);
+                      const sortedConvs = convs.sort((a, b) => b.updatedAt - a.updatedAt);
+                      const latest = sortedConvs[0];
+                      return (
+                        <div key={project}>
+                          {/* Project group header */}
+                          <button
+                            onClick={() => toggleProject(project)}
+                            className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                              isExpanded ? 'bg-gray-800/50' : 'hover:bg-gray-800/30'
+                            }`}
+                          >
+                            {isExpanded ? (
+                              <ChevronDown size={12} className="text-gray-500 flex-shrink-0" />
+                            ) : (
+                              <ChevronRight size={12} className="text-gray-500 flex-shrink-0" />
+                            )}
+                            <FolderOpen size={14} className="text-purple-400 flex-shrink-0" />
+                            <span className="flex-1 text-xs font-medium text-gray-300 truncate text-left">
+                              {project}
+                            </span>
+                            <span className="text-[10px] text-gray-600 flex-shrink-0">
+                              {convs.length}
+                            </span>
+                            {!isExpanded && (
+                              <span className="text-[10px] text-gray-500 truncate max-w-[80px] text-right">
+                                {latest?.title || ''}
+                              </span>
+                            )}
+                          </button>
+
+                          {/* Conversation list */}
+                          {isExpanded && (
+                            <div className="ml-4 mt-0.5 space-y-0.5 border-l border-gray-800 pl-2">
+                              {sortedConvs.map((conv) => {
+                                const contentMatch = searchQuery
+                                  ? findMessageMatch(conv, searchQuery)
+                                  : null;
+                                const matchCount = searchQuery
+                                  ? countMatches(conv, searchQuery)
+                                  : 0;
+                                return (
+                                  <div key={conv.id}>
+                                    {editingId === conv.id ? (
+                                      <div className="flex items-center gap-1 px-2 py-1.5 bg-gray-800 rounded-lg">
+                                        <input
+                                          ref={inputRef}
+                                          type="text"
+                                          value={editValue}
+                                          onChange={(e) => setEditValue(e.target.value)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') commitEdit();
+                                            if (e.key === 'Escape') setEditingId(null);
+                                          }}
+                                          onBlur={commitEdit}
+                                          className="flex-1 bg-transparent text-sm outline-none px-1"
+                                        />
+                                        <button onClick={commitEdit} className="p-1 hover:bg-gray-700 rounded">
+                                          <Check size={14} />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div
+                                        className={`group flex flex-col px-2 py-1.5 rounded-lg cursor-pointer transition-all duration-200 ${
+                                          activeId === conv.id ? 'bg-gray-800 shadow-sm' : 'hover:bg-gray-800/50'
+                                        }`}
+                                        onClick={() => onSelect(conv.id)}
+                                      >
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          <Wrench size={12} className="flex-shrink-0 text-purple-400" />
+                                          <div
+                                            className="w-6 h-6 rounded-lg flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0 shadow-sm"
+                                            style={{ backgroundColor: getAvatarColor(conv.id + conv.title) }}
+                                          >
+                                            {getInitials(conv.title)}
+                                          </div>
+                                          <span className="flex-1 text-xs truncate">{conv.title}</span>
+                                          {matchCount > 0 && (
+                                            <span className="text-xs text-amber-400/70 flex-shrink-0 mr-1">
+                                              {matchCount}
+                                            </span>
+                                          )}
+                                          <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 flex-shrink-0">
+                                            <button
+                                              onClick={(e) => { e.stopPropagation(); startEdit(conv); }}
+                                              className="p-0.5 hover:bg-gray-700 rounded"
+                                              aria-label="Rename"
+                                            >
+                                              <Edit2 size={10} />
+                                            </button>
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                onDelete(conv.id);
+                                                toast('success', 'Session deleted');
+                                              }}
+                                              className="p-0.5 hover:bg-gray-700 rounded text-red-400"
+                                              aria-label="Delete"
+                                            >
+                                              <Trash2 size={10} />
+                                            </button>
+                                          </div>
+                                        </div>
+                                        {contentMatch && (
+                                          <div className="mt-0.5 ml-8 text-[10px] text-gray-500 truncate leading-relaxed">
+                                            <span className={`font-medium ${contentMatch.role === 'You' ? 'text-blue-400' : 'text-green-400'}`}>
+                                              {contentMatch.role}
+                                            </span>
+                                            : {contentMatch.snippet}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            }
+
+            // Flat list for chat/editor modes
             return (
               <>
                 {searchQuery && (
@@ -240,23 +468,25 @@ export function Sidebar({
                     </div>
                   ) : (
                     <div
-                      className={`group flex flex-col px-3 py-2 rounded-lg cursor-pointer transition-colors ${
-                        activeId === conv.id ? 'bg-gray-800' : 'hover:bg-gray-800/60'
+                      className={`group flex flex-col px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 ${
+                        activeId === conv.id ? 'bg-gray-800 shadow-sm' : 'hover:bg-gray-800/60'
                       }`}
                       onClick={() => onSelect(conv.id)}
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <span
-                          className={`w-2 h-2 rounded-full flex-shrink-0 ${              conv.mode === 'agent' ? 'bg-purple-500' : conv.mode === 'editor' ? 'bg-red-500' : 'bg-blue-500'
-            }`}
-          />
-                      {conv.mode === 'agent' ? (
-                        <Wrench size={14} className="flex-shrink-0 text-purple-400" />
-                      ) : conv.mode === 'editor' ? (
-                        <Film size={14} className="flex-shrink-0 text-red-400" />
-                      ) : (
-                        <MessageSquare size={14} className="flex-shrink-0 text-gray-400" />
-                      )}
+                        {/* Mode icon */}
+                        {conv.mode === 'editor' ? (
+                          <Film size={14} className="flex-shrink-0 text-red-400" />
+                        ) : (
+                          <MessageSquare size={14} className="flex-shrink-0 text-gray-400" />
+                        )}
+                        <div
+                          className="w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0 shadow-sm"
+                          style={{ backgroundColor: getAvatarColor(conv.id + conv.title) }}
+                          title={conv.title}
+                        >
+                          {getInitials(conv.title)}
+                        </div>
                       <span className="flex-1 text-sm truncate">{conv.title}</span>
                       {matchCount > 0 && (
                         <span className="text-xs text-amber-400/70 flex-shrink-0 mr-1">
@@ -274,7 +504,8 @@ export function Sidebar({
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (confirm('Delete this conversation?')) onDelete(conv.id);
+                            onDelete(conv.id);
+                            toast('success', 'Conversation deleted');
                           }}
                           className="p-1 hover:bg-gray-700 rounded text-red-400"
                           aria-label="Delete"

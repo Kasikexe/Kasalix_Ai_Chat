@@ -9,7 +9,6 @@ export function UserSetup({ onSubmit }: Props) {
   const [name, setName] = useState('');
 
   const go = () => {
-    alert('Button clicked! Name: ' + name);
     if (name.trim()) {
       onSubmit(name.trim());
     }
