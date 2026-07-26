@@ -200,6 +200,49 @@ app.get('/download', async (c) => {
   }
 });
 
+// ─── Auto-Update Server ────────────────────────────────────────
+// Serves latest.yml and installer files for the Electron auto-updater
+const UPDATE_DIR = path.join(process.cwd(), '..', 'frontend', 'release');
+
+app.get('/latest.yml', async (c) => {
+  try {
+    const data = await fs.readFile(path.join(UPDATE_DIR, 'latest.yml'), 'utf-8');
+    return c.body(data, 200, {
+      'Content-Type': 'application/x-yaml',
+      'Cache-Control': 'no-cache',
+    });
+  } catch {
+    return c.json({ error: 'No update available yet' }, 404);
+  }
+});
+
+app.get('/latest.yml.blockmap', async (c) => {
+  try {
+    const data = await fs.readFile(path.join(UPDATE_DIR, 'latest.yml.blockmap'));
+    return c.body(data, 200, {
+      'Content-Type': 'application/octet-stream',
+      'Cache-Control': 'no-cache',
+    });
+  } catch {
+    return c.json({ error: 'Not found' }, 404);
+  }
+});
+
+app.get('/:filename{[A-Za-z0-9._-]+\.exe}', async (c) => {
+  const filename = c.req.param('filename');
+  try {
+    const data = await fs.readFile(path.join(UPDATE_DIR, filename));
+    return new Response(data, {
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+      },
+    });
+  } catch {
+    return c.json({ error: 'Installer not found' }, 404);
+  }
+});
+
 // ─── Tools API ────────────────────────────────────────────
 app.get('/api/tools', (c) => {
   const tools = getAllTools();

@@ -328,7 +328,8 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   if (!intent.hasImage && !intent.wantsCode && !intent.wantsImage) {
     // If we have tool output, inject it into the conversation (skip AI for tools)
     if (toolStageHandled && toolOutput) {
-      // Return the tool result directly — no need to run AI on simple conversions
+      // Send tool output through onChunk so the client receives it AND fullResponse is populated
+      onChunk(toolOutput);
       return toolOutput;
     }
     onStage('chat:thinking');

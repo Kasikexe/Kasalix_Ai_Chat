@@ -217,10 +217,21 @@ async function runMenu(config) {
         console.log('');
 
         // Auto-update reminder
-        console.log('  💡 Tip for auto-update in the future:');
-        console.log('     Always bump the version before building!');
-        console.log('     Run build_electron.bat again for the next');
-        console.log('     release and choose option [1] to bump.');
+        console.log('  💡 Auto-Update is now active!');
+        console.log('     When you build a NEW version, the app will');
+        console.log('     automatically update on all devices connected');
+        console.log('     to the backend server.');
+        console.log('');
+        console.log('  📋 Version: ' + config.version);
+        console.log('     The latest.yml file is generated alongside the');
+        console.log('     installer in the release/ folder.');
+        console.log('     The backend serves it at /latest.yml');
+        console.log('');
+        console.log('  🔄 Flow: Build new version → Restart backend →');
+        console.log('     All apps check for update on startup →');
+        console.log('     Users see a notification → Click to update.');
+        console.log('');
+        console.log('  📝 Tip: Always bump version before building!');
         console.log('');
 
         running = false;

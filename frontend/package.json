@@ -1,7 +1,7 @@
 {
   "name": "ai-chat-frontend",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -14,13 +14,14 @@
     "configure-build": "node scripts/configure-build.mjs"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
+    "highlight.js": "^11.10.0",
+    "lucide-react": "^0.453.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1",
-    "remark-gfm": "^4.0.0",
     "rehype-highlight": "^7.0.0",
-    "highlight.js": "^11.10.0",
-    "lucide-react": "^0.453.0"
+    "remark-gfm": "^4.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
@@ -68,10 +69,16 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "AI Chat"
+      "shortcutName": "AI Chat",
+      "artifactName": "AI-Chat-Setup-${version}.exe"
     },
     "portable": {
       "artifactName": "AI-Chat-Portable-${version}.exe"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://localhost:3001",
+      "channel": "latest"
     }
   },
   "description": "AI Chat Desktop Application"

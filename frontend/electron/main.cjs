@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const http = require('http');
 const https = require('https');
+const { autoUpdater } = require('electron-updater');
 const { startServer, setBackendUrl, getBackendUrl } = require('./server.cjs');
 
 // The default URL of the backend AI server
@@ -14,6 +15,60 @@ const CONFIG_FILE = 'server-config.json';
 
 let mainWindow = null;
 let server = null;
+
+// ─── Auto-Updater ───────────────────────────────────────────────
+
+// Auto-download enabled — updates download silently in the background
+autoUpdater.autoDownload = true;
+autoUpdater.allowPrerelease = true;
+
+/** Configure the updater feed URL based on the current backend URL */
+function configureUpdater(backendUrl) {
+  try {
+    const url = new URL(backendUrl);
+    // electron-updater expects a generic provider URL
+    // Point it to the backend server which serves the update files
+    autoUpdater.setFeedURL({
+      provider: 'generic',
+      url: `${url.protocol}//${url.host}`,
+      channel: 'latest',
+    });
+    console.log(`[updater] Feed URL configured: ${url.protocol}//${url.host}`);
+  } catch (err) {
+    console.error('[updater] Failed to configure feed URL:', err.message);
+  }
+}
+
+/** Check for updates manually (called after window is ready) */
+async function checkForUpdates(showSilent = true) {
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    if (result && result.updateInfo && result.updateInfo.version) {
+      const current = app.getVersion();
+      const latest = result.updateInfo.version;
+      console.log(`[updater] Current: ${current}, Latest: ${latest}`);
+
+      if (current !== latest) {
+        // Notify the renderer about the update
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update-available', {
+            version: latest,
+            currentVersion: current,
+            releaseNotes: result.updateInfo.releaseNotes || '',
+          });
+        }
+        return { available: true, version: latest, currentVersion: current };
+      }
+    }
+    return { available: false };
+  } catch (err) {
+    // Silent check failures are expected (server might not have update files yet)
+    if (!showSilent) {
+      console.warn('[updater] Check failed:', err.message);
+    }
+    return { available: false, error: err.message };
+  }
+}
 
 // ─── Server Config ───────────────────────────────────────────────
 
@@ -160,7 +215,7 @@ function listDir(dirPath) {
       }
       return {
         name: e.name,
-        path: fullPath.replace(/\\/g, '/'),
+        path: fullPath.replace(/\\\\/g, '/'),
         type: e.isDirectory() ? 'directory' : 'file',
         size,
       };
@@ -232,6 +287,9 @@ app.whenReady().then(async () => {
 
   console.log(`[main] Backend URL: ${backendUrl}`);
 
+  // Configure the auto-updater to use the backend as update server
+  configureUpdater(backendUrl);
+
   // Start a local static file server that also proxies /api to the backend
   const distDir = path.join(__dirname, '..', 'dist');
   const result = await startServer(distDir, backendUrl);
@@ -259,6 +317,12 @@ app.whenReady().then(async () => {
   // Show window when ready (avoids white flash)
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+    // Check for updates silently after the window is shown
+    setTimeout(() => {
+      checkForUpdates(true).catch((err) => {
+        console.warn('[updater] Initial check failed:', err.message);
+      });
+    }, 5000); // Wait 5 seconds to let the app settle
   });
 
   // Hide menu bar
@@ -267,6 +331,72 @@ app.whenReady().then(async () => {
   if (process.env.NODE_ENV === 'development') {
     mainWindow.webContents.openDevTools();
   }
+});
+
+// ─── Auto-Updater Event Handlers ─────────────────────────────────
+
+autoUpdater.on('download-progress', (progress) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-download-progress', {
+      percent: Math.round(progress.percent),
+      bytesPerSecond: progress.bytesPerSecond,
+      total: progress.total,
+      transferred: progress.transferred,
+    });
+  }
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+  console.log(`[updater] Update v${info.version} downloaded. Installing in 3 seconds...`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-downloaded', {
+      version: info.version,
+      releaseNotes: info.releaseNotes || '',
+    });
+    // Notify the user before restarting
+    mainWindow.webContents.executeJavaScript(`
+      alert('Update v${info.version} downloaded! The app will restart to install it.');
+    `).catch(() => {});
+  }
+  // Auto-install after a short delay
+  setTimeout(() => {
+    autoUpdater.quitAndInstall(false, true);
+  }, 3000);
+});
+
+autoUpdater.on('error', (err) => {
+  console.error('[updater] Error:', err.message);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-error', { error: err.message });
+  }
+});
+
+// ─── IPC Handlers: Auto-Update ───────────────────────────────────
+
+ipcMain.handle('check-for-updates', async () => {
+  return await checkForUpdates(false);
+});
+
+ipcMain.handle('download-update', async () => {
+  try {
+    autoUpdater.downloadUpdate();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('install-update', async () => {
+  try {
+    autoUpdater.quitAndInstall(false, true);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('get-app-version', () => {
+  return { version: app.getVersion() };
 });
 
 // ─── IPC Handlers: Server Config ─────────────────────────────────
@@ -289,6 +419,8 @@ ipcMain.handle('set-backend-url', async (_event, newUrl) => {
   }
   setBackendUrl(newUrl);
   const saved = saveServerConfig(newUrl);
+  // Reconfigure the updater with the new URL
+  configureUpdater(newUrl);
   return { success: true, saved };
 });
 
@@ -379,7 +511,7 @@ ipcMain.handle('check-server-health', async () => {
 // ─── IPC Handlers: Local File Operations ─────────────────────────
 
 ipcMain.handle('get-default-workspace', () => {
-  return getDefaultWorkspacePath().replace(/\\/g, '/');
+  return getDefaultWorkspacePath().replace(/\\\\/g, '/');
 });
 
 ipcMain.handle('list-dir', async (_event, dirPath) => {
