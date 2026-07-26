@@ -143,20 +143,20 @@ app.post('/api/generated/:filename/save-to-workspace', async (c) => {
   }
 });
 
-// Serve the desktop app download (.exe) — prefers portable version for first-time users
+// Serve the desktop app download (.exe)
 const RELEASE_DIR = path.join(process.cwd(), '..', 'frontend', 'release');
 
 app.get('/download', async (c) => {
   try {
+    // Find the latest .exe in the release directory
     const files = await fs.readdir(RELEASE_DIR);
-    // Prefer portable .exe (no install required), fallback to any .exe
-    const portableFiles = files.filter((f) => f.includes('Portable') && f.endsWith('.exe') && !f.endsWith('.exe.blockmap'));
-    const allExe = files.filter((f) => f.endsWith('.exe') && !f.endsWith('.exe.blockmap'));
-    const exeFiles = portableFiles.length > 0 ? portableFiles : allExe;
+    const exeFiles = files.filter((f) => f.endsWith('.exe') && !f.endsWith('.exe.blockmap'));
     if (exeFiles.length === 0) {
+      // No build available yet — return a helpful page or redirect
       return c.redirect('https://github.com/your-repo/releases/latest');
     }
 
+    // Serve the most recent .exe (sort by name which includes version)
     exeFiles.sort().reverse();
     const latest = exeFiles[0];
     const filePath = path.join(RELEASE_DIR, latest);
@@ -170,6 +170,7 @@ app.get('/download', async (c) => {
       },
     });
   } catch {
+    // Release directory doesn't exist yet — show a friendly message
     return c.html(`
       <!DOCTYPE html>
       <html lang="en" class="dark">
@@ -182,6 +183,9 @@ app.get('/download', async (c) => {
           .card { text-align: center; padding: 2rem; max-width: 480px; }
           h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
           p { color: #9ca3af; font-size: 0.875rem; line-height: 1.5; }
+          .btn { display: inline-flex; align-items: center; gap: 0.5rem; margin-top: 1.5rem; padding: 0.75rem 1.5rem; background: linear-gradient(135deg, #7c3aed, #6d28d9); color: white; border-radius: 0.75rem; text-decoration: none; font-size: 0.875rem; font-weight: 500; transition: all 0.2s; }
+          .btn:hover { transform: scale(1.05); }
+          .sub { margin-top: 1rem; font-size: 0.75rem; color: #6b7280; }
         </style>
       </head>
       <body>
