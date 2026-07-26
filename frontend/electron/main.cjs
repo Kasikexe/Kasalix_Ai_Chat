@@ -358,9 +358,9 @@ autoUpdater.on('update-downloaded', (info) => {
       alert('Update v${info.version} downloaded! The app will restart to install it.');
     `).catch(() => {});
   }
-  // Auto-install after a short delay
+  // Auto-install after a short delay — always silent (even if oneClick is disabled)
   setTimeout(() => {
-    autoUpdater.quitAndInstall(false, true);
+    autoUpdater.quitAndInstall(true, true);
   }, 3000);
 });
 
@@ -388,7 +388,7 @@ ipcMain.handle('download-update', async () => {
 
 ipcMain.handle('install-update', async () => {
   try {
-    autoUpdater.quitAndInstall(false, true);
+    autoUpdater.quitAndInstall(true, true);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
