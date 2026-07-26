@@ -19,6 +19,7 @@ export interface ModelAssignments {
   editor: string;
   editor_vision: string;
   search: string;
+  image_generation: string;
 }
 
 export const MODEL_ASSIGNMENT_KEYS: (keyof ModelAssignments)[] = [
@@ -30,6 +31,7 @@ export const MODEL_ASSIGNMENT_KEYS: (keyof ModelAssignments)[] = [
   'editor',
   'editor_vision',
   'search',
+  'image_generation',
 ];
 
 export const MODEL_ASSIGNMENT_LABELS: Record<keyof ModelAssignments, string> = {
@@ -41,6 +43,7 @@ export const MODEL_ASSIGNMENT_LABELS: Record<keyof ModelAssignments, string> = {
   editor: 'Video Editor',
   editor_vision: 'Editor Vision',
   search: 'Web Search',
+  image_generation: 'Image Generation',
 };
 
 export const MODEL_ASSIGNMENT_ICONS: Record<keyof ModelAssignments, string> = {
@@ -52,6 +55,7 @@ export const MODEL_ASSIGNMENT_ICONS: Record<keyof ModelAssignments, string> = {
   editor: '🎬',
   editor_vision: '👁️',
   search: '🌐',
+  image_generation: '🎨',
 };
 
 export interface AppSettings {
@@ -544,6 +548,30 @@ streamChat(
       }))
     );
     return data;
+  },
+
+  // --- Generated Images API ---
+  getGeneratedImageUrl(filename: string): string {
+    return `/api/generated/${filename}`;
+  },
+
+  downloadGeneratedImage(filename: string): void {
+    const a = document.createElement('a');
+    a.href = `/api/generated/${filename}/download`;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  },
+
+  async saveGeneratedImageToWorkspace(filename: string, workspacePath: string): Promise<{ success: boolean; path: string; filename: string }> {
+    return handleResponse(
+      await fetch(`${API_BASE}/generated/${filename}/save-to-workspace`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspacePath }),
+      })
+    );
   },
 
   // --- Memory API ---

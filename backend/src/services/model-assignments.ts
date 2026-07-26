@@ -16,6 +16,7 @@ export interface ModelAssignments {
   editor: string;
   editor_vision: string;
   search: string;
+  image_generation: string;
 }
 
 export const ASSIGNMENT_KEYS: (keyof ModelAssignments)[] = [
@@ -27,6 +28,7 @@ export const ASSIGNMENT_KEYS: (keyof ModelAssignments)[] = [
   'editor',
   'editor_vision',
   'search',
+  'image_generation',
 ];
 
 export const ASSIGNMENT_LABELS: Record<keyof ModelAssignments, string> = {
@@ -38,6 +40,7 @@ export const ASSIGNMENT_LABELS: Record<keyof ModelAssignments, string> = {
   editor: 'Video Editor',
   editor_vision: 'Editor Vision',
   search: 'Web Search',
+  image_generation: 'Image Generation',
 };
 
 export const ASSIGNMENT_ICONS: Record<keyof ModelAssignments, string> = {
@@ -49,6 +52,7 @@ export const ASSIGNMENT_ICONS: Record<keyof ModelAssignments, string> = {
   editor: '🎬',
   editor_vision: '👁️',
   search: '🌐',
+  image_generation: '🎨',
 };
 
 const DEFAULTS: ModelAssignments = {
@@ -60,6 +64,7 @@ const DEFAULTS: ModelAssignments = {
   editor: 'qwen2.5:3b',
   editor_vision: 'qwen2.5vl:3b',
   search: 'qwen2.5:3b',
+  image_generation: 'x/flux2-klein',
 };
 
 /** Env-var names for legacy backward compatibility */
@@ -72,6 +77,7 @@ const ENV_MAP: Record<keyof ModelAssignments, string> = {
   editor: 'EDITOR_MODEL',
   editor_vision: 'EDITOR_VISION_MODEL',
   search: 'SEARCH_MODEL',
+  image_generation: 'IMAGE_GENERATION_MODEL',
 };
 
 /**

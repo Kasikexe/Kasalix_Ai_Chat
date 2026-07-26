@@ -70,5 +70,6 @@ export interface ModelAssignments {
   editor: string;
   editor_vision: string;
   search: string;
+  image_generation: string;
 }
 

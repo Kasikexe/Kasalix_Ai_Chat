@@ -4,6 +4,7 @@ import { streamChat } from './ollama';
 import { getMemory } from './memory';
 import { getModelAssignment } from './model-assignments';
 import { getWebContext } from './search';
+import { generateImage } from './image';
 import type { ConversationMode, Message } from '../types';
 
 // Global default for thinking mode. Can be overridden per-request.
@@ -31,7 +32,9 @@ interface DetectedIntent {
   hasImage: boolean;
   wantsCode: boolean;
   wantsFileInfo: boolean;
+  wantsImage: boolean;
   imageDataUrl?: string;
+  imagePrompt?: string;
 }
 
 // IGNORE_DIRS from files route — skip these when listing for the AI
@@ -76,11 +79,28 @@ async function listWorkspaceFiles(wsPath: string): Promise<string> {
 function detectIntent(messages: Message[], mode?: ConversationMode): DetectedIntent {
   const last = messages[messages.length - 1];
   if (!last || last.role !== 'user') {
-    return { hasImage: false, wantsCode: false, wantsFileInfo: false };
+    return { hasImage: false, wantsCode: false, wantsFileInfo: false, wantsImage: false };
   }
 
   const content = last.content.toLowerCase();
   const hasImage = content.includes('[image:data:image');
+
+  // Detect if user wants image generation
+  const imagePhrases = [
+    'generate an image', 'generate a picture', 'generate a photo',
+    'create an image', 'create a picture', 'create a photo',
+    'make an image', 'make a picture', 'make a photo',
+    'draw', 'paint', 'render an image', 'render a picture',
+    'image of', 'picture of', 'generate me',
+    'create me', 'make me', 'generate art',
+    'ai image', 'generate image', 'generate picture',
+  ];
+  const wantsImage = !content.includes('[image:') && imagePhrases.some((phrase) => content.includes(phrase));
+
+  // Extract the image prompt (text without any [image:...] tags)
+  const imagePrompt = wantsImage
+    ? last.content.replace(/\[image:[^\]]+\]/g, '').trim()
+    : undefined;
 
   // Detect if user is asking about files/directory contents
   const fileQueryPhrases = [
@@ -139,7 +159,7 @@ function detectIntent(messages: Message[], mode?: ConversationMode): DetectedInt
   const match = last.content.match(/\[image:(data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+))\]/);
   if (match) imageDataUrl = match[1];
 
-  return { hasImage, wantsCode, wantsFileInfo, imageDataUrl };
+  return { hasImage, wantsCode, wantsFileInfo, wantsImage, imageDataUrl, imagePrompt };
 }
 
 // Internal stage: runs the model without streaming output to user
@@ -236,7 +256,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   // Determine thinking mode: request override > env default
   const think = thinkingEnabled !== undefined ? thinkingEnabled : THINKING_ENABLED;
 
-  console.log(`[pipeline] Intent: hasImage=${intent.hasImage}, wantsCode=${intent.wantsCode}, wantsFileInfo=${intent.wantsFileInfo}, think=${think}`);
+  console.log(`[pipeline] Intent: hasImage=${intent.hasImage}, wantsCode=${intent.wantsCode}, wantsFileInfo=${intent.wantsFileInfo}, wantsImage=${intent.wantsImage}, think=${think}`);
 
   // If user asks about files (or planning mode is on), read the actual directory listing and inject it
   let fileListing = '';
@@ -252,7 +272,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
 
   // Web search context — performed before the chat if search is enabled
   let webContext: string | null = null;
-  if (searchEnabled && !intent.hasImage && !intent.wantsCode) {
+  if (searchEnabled && !intent.hasImage && !intent.wantsCode && !intent.wantsImage) {
     const lastUserMsg = messages.filter((m) => m.role === 'user').pop();
     if (lastUserMsg) {
       onStage('search:web');
@@ -274,7 +294,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   };
 
   // Simple chat — no pipeline needed (injects agent awareness in agent mode)
-  if (!intent.hasImage && !intent.wantsCode) {
+  if (!intent.hasImage && !intent.wantsCode && !intent.wantsImage) {
     onStage('chat:thinking');
     if (mode === 'agent') {
       const fileInfo = fileListing
@@ -333,6 +353,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   let imageDescription = '';
   let planOutput = '';
   let codeOutput = '';
+  let generatedImageFilename: string | undefined;
 
   // STAGE 1: Vision analysis (INTERNAL — user doesn't see this)
   if (intent.hasImage && intent.imageDataUrl) {
@@ -413,7 +434,32 @@ Output ONLY the plan — no introductory text, no conclusion, no code blocks.`,
     }
   }
 
-  // STAGE 3: Code generation (INTERNAL — user sees the final summary)
+  // STAGE 3: Image generation (VISIBLE — when user wants an image)
+  if (intent.wantsImage && intent.imagePrompt) {
+    const userText = intent.imagePrompt;
+
+    const imageModel = await getModelAssignment('image_generation');
+
+    // Try to generate image
+    try {
+      onStage('image:generating');
+
+      // We run this as a visible stage that sends status updates
+      // but the actual image data is returned via the done event
+      console.log(`[pipeline] Generating image with model: ${imageModel}`);
+
+      const result = await generateImage(userText, imageModel, signal);
+      generatedImageFilename = result.filename;
+
+      console.log(`[pipeline] Image generated: ${result.filename}`);
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') throw e;
+      console.error('[pipeline] Image generation failed:', e);
+      // Don't abort — continue with code generation or final response
+    }
+  }
+
+  // STAGE 4: Code generation (INTERNAL — user sees the final summary)
   if (intent.wantsCode) {
     if (!fileListing) onStage('reading:workspace');
 
@@ -484,6 +530,11 @@ After the code blocks, write a 1-2 sentence technical summary.${planInstructions
   // STAGE 4: Final response (VISIBLE to user)
   onStage('summary:writing');
 
+  // Build the generated image tag to include in the final response
+  const imageTag = generatedImageFilename
+    ? `\n\n[generated_image:${generatedImageFilename}]`
+    : '';
+
   let finalMessages: Message[];
 
   if (codeOutput) {
@@ -530,6 +581,23 @@ Your job: Write a brief, friendly response (3-5 sentences) that:
         content: finalSystemPrompt,
       },
     ];
+  } else if (generatedImageFilename) {
+    // Image generation only (no code)
+    const userText = intent.imagePrompt || messages[messages.length - 1].content
+      .replace(/\[image:[^\]]+\]/g, '').trim();
+
+    finalMessages = [
+      {
+        role: 'system',
+        content: `You are a friendly assistant. The user asked you to generate an image.
+
+Their request: "${userText}"
+
+The image was generated successfully.
+
+Your job: Write a brief, friendly response (2-3 sentences) describing what was generated. Mention any notable details about the image. Be enthusiastic but concise.`,
+      },
+    ];
   } else if (imageDescription) {
     // Image only, no code request
     finalMessages = [
@@ -547,5 +615,13 @@ Your job: Write a brief, friendly response (2-3 sentences) that describes what's
     finalMessages = messages;
   }
 
-  return await runVisibleStage('final', model, finalMessages, think, onChunk, signal, { temperature, top_p, max_tokens });
+  // Run the final visible stage
+  let finalOutput = await runVisibleStage('final', model, finalMessages, think, onChunk, signal, { temperature, top_p, max_tokens });
+
+  // Programmatically append the generated image tag (reliable — not left to AI discretion)
+  if (generatedImageFilename) {
+    finalOutput += `\n\n[generated_image:${generatedImageFilename}]`;
+  }
+
+  return finalOutput;
 }

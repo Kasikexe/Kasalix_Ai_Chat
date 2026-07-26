@@ -83,6 +83,7 @@ settings.put('/', async (c) => {
       ...(body.modelAssignments !== undefined
         ? { modelAssignments: body.modelAssignments }
         : {}),
+
       updatedAt: Date.now(),
     };
     await saveSettings(next);

@@ -64,28 +64,24 @@ export function ModelAssignmentModal({ open, onClose, models, assignments, onSav
   // Suggest best model for each category based on name heuristics
   const suggestForCategory = (key: ModelAssignmentKey): string | null => {
     const name = key;
-    // For vision categories, prefer vision models
     if (name === 'vision' || name === 'editor_vision') {
       const vision = models.find((m) =>
         m.name.toLowerCase().includes('vl') || m.name.toLowerCase().includes('vision') || m.name.toLowerCase().includes('llava')
       );
       if (vision) return vision.name;
     }
-    // For code, prefer coder models
     if (name === 'code') {
       const coder = models.find((m) =>
         m.name.toLowerCase().includes('coder') || m.name.toLowerCase().includes('deepseek-coder')
       );
       if (coder) return coder.name;
     }
-    // For thinking, prefer qwen3 or deepseek-r1
     if (name === 'chat_thinking') {
       const thinking = models.find((m) =>
         m.name.toLowerCase().includes('qwen3') || m.name.toLowerCase().includes('deepseek-r1') || m.name.toLowerCase().includes('qwq')
       );
       if (thinking) return thinking.name;
     }
-    // For extraction & editor, prefer smaller models
     if (name === 'extraction' || name === 'editor') {
       const small = [...models]
         .filter((m) => m.details?.parameter_size)
@@ -97,8 +93,6 @@ export function ModelAssignmentModal({ open, onClose, models, assignments, onSav
     }
     return null;
   };
-
-  const apiAssignments = (local as unknown) as Record<string, string>;
 
   return (
     <div
@@ -152,7 +146,6 @@ export function ModelAssignmentModal({ open, onClose, models, assignments, onSav
                   )}
                 </div>
 
-                {/* Model selection grid */}
                 <div className="flex flex-wrap gap-1.5">
                   {models.length === 0 ? (
                     <p className="text-xs text-gray-500 italic">No models installed.</p>

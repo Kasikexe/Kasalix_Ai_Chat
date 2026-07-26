@@ -11,6 +11,7 @@ const DEFAULT_ASSIGNMENTS: ModelAssignments = {
   editor: 'qwen2.5:3b',
   editor_vision: 'qwen2.5vl:3b',
   search: 'qwen2.5:3b',
+  image_generation: 'x/flux2-klein',
 };
 
 export type ModelAssignmentKey = keyof ModelAssignments;

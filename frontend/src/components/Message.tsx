@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
-import { Check, Copy, Download, User, Bot, FileCode, RefreshCw, Pencil, X, Save, FilePlus2, Trash2, GitBranch, Code2, FileText, Layers } from 'lucide-react';
+import { Check, Copy, Download, User, Bot, FileCode, RefreshCw, Pencil, X, Save, FilePlus2, Trash2, GitBranch, Code2, FileText, Layers, ImageIcon, ZoomIn } from 'lucide-react';
 import type { Message as MessageType } from '../types';
 
 const languageExtensions: Record<string, string> = {
@@ -311,6 +311,7 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [showRaw, setShowRaw] = useState(false);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const isUser = message.role === 'user';
   const stageLabel = getStageLabel(stage);
   const { toast } = useToast();
@@ -338,8 +339,11 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
     setEditing(false);
   };
 
-  // Strip the [image:...] tag from display
-  const displayContent = message.content.replace(/\[image:[^\]]+\]/g, '').trim();
+  // Strip the [image:...] tag from display and convert [generated_image:...] to markdown images
+  const displayContent = message.content
+    .replace(/\[image:[^\]]+\]/g, '')
+    .replace(/\[generated_image:([^\]]+)\]/g, '![Generated image](/api/generated/$1)')
+    .trim();
 
   // Extract applicable files for "Apply All" button
   const applicableFiles = useMemo(
@@ -361,6 +365,66 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
         return <CodeBlock className={codeChild.props?.className} onApplyCode={onApplyCode} onDeleteFile={onDeleteFile}>{codeChild.props?.children}</CodeBlock>;
       }
       return <pre>{children}</pre>;
+    },
+    img: ({ src, alt }: { src?: string; alt?: string }) => {
+      if (!src) return null;
+      const isGenerated = src.startsWith('/api/generated/');
+      const filename = isGenerated ? src.split('/').pop() || '' : '';
+
+      const handleDownload = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (filename) {
+          const a = document.createElement('a');
+          a.href = `/api/generated/${filename}/download`;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }
+      };
+
+      return (
+        <div className="relative group my-3">
+          <button
+            onClick={() => setLightboxImage(src)}
+            className="block w-full"
+            title={alt || 'View full size'}
+          >
+            <div className="relative overflow-hidden rounded-xl border border-gray-700/50 bg-gray-900/50">
+              <img
+                src={src}
+                alt={alt || 'Generated image'}
+                className="w-full max-h-[300px] object-contain cursor-pointer transition-all duration-200 group-hover:scale-[1.02] group-hover:brightness-110"
+                loading="lazy"
+              />
+              {/* Hover overlay */}
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all duration-200 flex items-center justify-center">
+                <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/50 backdrop-blur-sm px-3 py-1.5 rounded-lg flex items-center gap-2 text-white text-sm">
+                  <ZoomIn size={16} />
+                  <span>View full size</span>
+                </div>
+              </div>
+              {/* Badge for generated images */}
+              {isGenerated && (
+                <div className="absolute top-2 left-2 px-2 py-0.5 bg-purple-600/80 backdrop-blur-sm rounded-full text-[10px] font-medium text-white flex items-center gap-1">
+                  <ImageIcon size={10} />
+                  Generated
+                </div>
+              )}
+              {/* Download button on thumbnail */}
+              {isGenerated && filename && (
+                <button
+                  onClick={handleDownload}
+                  className="absolute top-2 right-2 p-1.5 bg-gray-900/70 hover:bg-gray-800 backdrop-blur-sm rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-200 text-white hover:text-emerald-400 active:scale-90"
+                  title="Download image"
+                >
+                  <Download size={14} />
+                </button>
+              )}
+            </div>
+          </button>
+        </div>
+      );
     },
   }), [onApplyCode]);
 
@@ -562,6 +626,47 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
         )}
       </div>
       </div>
+
+      {/* Image lightbox modal */}
+      {lightboxImage && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center animate-fade-in"
+          onClick={() => setLightboxImage(null)}
+          onKeyDown={(e) => { if (e.key === 'Escape') setLightboxImage(null); }}
+          tabIndex={-1}
+          ref={(el) => { if (el) el.focus(); }}
+        >
+          <button
+            className="absolute top-4 right-4 p-2 bg-gray-800/80 hover:bg-gray-700 rounded-full text-white transition-colors z-10"
+            onClick={() => setLightboxImage(null)}
+            title="Close"
+          >
+            <X size={24} />
+          </button>
+          <button
+            className="absolute bottom-6 left-1/2 -translate-x-1/2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded-xl text-white text-sm font-medium transition-all duration-200 flex items-center gap-2 shadow-lg shadow-emerald-900/30 active:scale-95"
+            onClick={() => {
+              const filename = lightboxImage.split('/').pop() || 'generated-image';
+              const a = document.createElement('a');
+              a.href = `/api/generated/${filename}/download`;
+              a.download = filename;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+            }}
+            title="Download image"
+          >
+            <Download size={16} />
+            <span>Save to folder</span>
+          </button>
+          <img
+            src={lightboxImage}
+            alt="Full size"
+            className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 });
