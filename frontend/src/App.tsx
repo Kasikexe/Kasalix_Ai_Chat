@@ -4,6 +4,7 @@ import { Header } from './components/Header';
 import { ChatView } from './components/ChatView';
 import { AgentWorkspace } from './components/AgentWorkspace';
 import { VideoEditor } from './components/VideoEditor';
+import { ServerDownOverlay } from './components/ServerDownOverlay';
 import { ModelAssignmentModal } from './components/ModelAssignmentModal';
 import { UserSettingsModal } from './components/UserSettingsModal';
 import { PasswordPrompt } from './components/PasswordPrompt';
@@ -150,6 +151,48 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
     else setPasswordOpen(true);
   };
 
+  // Wrap authenticate to auto-open the model modal after successful login
+  const handleAuthenticate = async (password: string): Promise<boolean> => {
+    const ok = await authenticate(password);
+    if (ok) {
+      setPasswordOpen(false);
+      setModelAssignOpen(true);
+    }
+    return ok;
+  };
+
+  // Refresh conversations when the window regains focus (helps Electron on startup)
+  useEffect(() => {
+    const onFocus = () => refresh();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refresh]);
+
+  // On mount in Electron: auto-detect the backend server on the network
+  useEffect(() => {
+    (async () => {
+      const isElectron = !!(window as any).electronAPI?.isElectron;
+      if (!isElectron) return;
+
+      try {
+        // Check if we already have a saved config
+        const current = await (window as any).electronAPI.getBackendUrl();
+        if (current?.hasSavedConfig) return; // Already configured
+
+        // Auto-scan the subnet for the backend server
+        const scanResult = await (window as any).electronAPI.scanSubnet();
+        if (scanResult?.found && scanResult?.url) {
+          // Save it automatically — no user interaction needed
+          await (window as any).electronAPI.setBackendUrl(scanResult.url);
+          // Reload so the proxy uses the new URL
+          window.location.reload();
+        }
+      } catch (err) {
+        console.warn('[App] Auto-detect failed:', err);
+      }
+    })();
+  }, []);
+
   const handleNewChat = async () => {
     const conv = await create(model, undefined, mode);
     setActiveId(conv.id);
@@ -167,8 +210,9 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
   };
 
   const handleModeChange = (newMode: ConversationMode) => {
-    // Prevent switching to Agent/Editor on mobile
-    if (isMobile && (newMode === 'agent' || newMode === 'editor')) return;
+    // Agent & Editor modes are only available in the desktop app
+    const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
+    if (!isElectron && (newMode === 'agent' || newMode === 'editor')) return;
     setMode(newMode);
     setActiveId(null);
   };
@@ -346,6 +390,11 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
         onRefreshMemory={refreshMemory}
       />
 
+      {/* Server down overlay — shows only when running in Electron and server is offline */}
+      <ServerDownOverlay
+        isElectron={!!(window as any).electronAPI?.isElectron}
+      />
+
       <ModelAssignmentModal
         open={modelAssignOpen}
         onClose={() => setModelAssignOpen(false)}
@@ -357,7 +406,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
       <PasswordPrompt
         open={passwordOpen}
         onClose={() => setPasswordOpen(false)}
-        onSubmit={authenticate}
+        onSubmit={handleAuthenticate}
       />
     </div>
   );

@@ -4,13 +4,32 @@ import { api } from '../services/api';
 import type { FileEntry } from '../types';
 
 interface Props {
-  defaultBasePath: string;
+  defaultBasePath?: string;
   onSelect: (path: string, name: string) => void;
   onClose?: () => void;
 }
 
-export function WorkspaceSetup({ defaultBasePath, onSelect, onClose }: Props) {
-  const [basePath, setBasePath] = useState(defaultBasePath);
+export function WorkspaceSetup({ defaultBasePath: propDefault, onSelect, onClose }: Props) {
+  const [resolvedDefault, setResolvedDefault] = useState(propDefault || 'C:\\Projects');
+  const [basePath, setBasePath] = useState(resolvedDefault);
+
+  // Resolve the default path — use Electron's getDefaultWorkspacePath if available
+  useEffect(() => {
+    (async () => {
+      if (propDefault) {
+        setResolvedDefault(propDefault);
+        setBasePath(propDefault);
+        return;
+      }
+      try {
+        const electronPath = await (window as any).electronAPI?.getDefaultWorkspace?.();
+        if (electronPath) {
+          setResolvedDefault(electronPath);
+          setBasePath(electronPath);
+        }
+      } catch {}
+    })();
+  }, [propDefault]);
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -67,13 +86,13 @@ export function WorkspaceSetup({ defaultBasePath, onSelect, onClose }: Props) {
     if (prev.length > 0) {
       setBasePath(prev[prev.length - 1].path);
     } else {
-      setBasePath(defaultBasePath);
+      setBasePath(resolvedDefault);
     }
   };
 
   const handleGoHome = () => {
     setBrowsingDirs([]);
-    setBasePath(defaultBasePath);
+    setBasePath(resolvedDefault);
   };
 
   const handlePickFolder = (entry: FileEntry) => {
@@ -91,7 +110,7 @@ export function WorkspaceSetup({ defaultBasePath, onSelect, onClose }: Props) {
   };
 
   const dirPathStack = [
-    { name: 'Projects', path: defaultBasePath },
+    { name: 'Projects', path: resolvedDefault },
     ...browsingDirs,
   ];
 

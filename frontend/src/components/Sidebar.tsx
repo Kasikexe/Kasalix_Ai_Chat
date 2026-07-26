@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { MessageSquare, Plus, Trash2, Edit2, X, Check, Menu, Wrench, Search, Film, FolderOpen, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { MessageSquare, Plus, Trash2, Edit2, X, Check, Menu, Wrench, Search, Film, FolderOpen, ChevronDown, ChevronRight, AlertTriangle, Download } from 'lucide-react';
 import type { Conversation, ConversationMode } from '../types';
 import type { UserProfile } from '../types';
 import { UserBadge } from './UserBadge';
@@ -53,6 +53,9 @@ export function Sidebar({
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
   const isMobile = useIsMobile();
+  // Agent & Editor modes are disabled on the web — only available in the desktop app
+  const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
+  const isWebBlocked = !isElectron;
 
   // Extract project name from workspace path
   const getProjectName = (wsPath?: string): string => {
@@ -193,16 +196,16 @@ export function Sidebar({
             Chat
           </button>
           <button
-            onClick={() => !isMobile && onModeChange('agent')}
-            disabled={isMobile}
+            onClick={() => !isWebBlocked && onModeChange('agent')}
+            disabled={isWebBlocked}
             className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all relative ${
               mode === 'agent'
                 ? 'bg-purple-600 text-white shadow-sm'
-                : isMobile
+                : isWebBlocked
                   ? 'text-gray-600 cursor-not-allowed opacity-50'
                   : 'text-gray-400 hover:text-gray-200'
             }`}
-            title={isMobile ? 'Agent mode is not available on mobile devices' : 'Agent mode'}
+            title={isWebBlocked ? 'Available in the desktop app — download below' : 'Agent mode'}
           >
             <Wrench size={14} />
             Agent
@@ -211,16 +214,16 @@ export function Sidebar({
             </span>
           </button>
           <button
-            onClick={() => !isMobile && onModeChange('editor')}
-            disabled={isMobile}
+            onClick={() => !isWebBlocked && onModeChange('editor')}
+            disabled={isWebBlocked}
             className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all relative ${
               mode === 'editor'
                 ? 'bg-red-600 text-white shadow-sm'
-                : isMobile
+                : isWebBlocked
                   ? 'text-gray-600 cursor-not-allowed opacity-50'
                   : 'text-gray-400 hover:text-gray-200'
             }`}
-            title={isMobile ? 'Editor mode is not available on mobile devices' : 'Editor mode'}
+            title={isWebBlocked ? 'Available in the desktop app — download below' : 'Editor mode'}
           >
             <Film size={14} />
             Editor
@@ -232,14 +235,14 @@ export function Sidebar({
 
         <button
           onClick={onCreate}
-          className="m-3 flex items-center gap-2 px-3 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors border border-gray-700 text-sm"
+          className="mx-3 mt-2 flex items-center gap-2 px-3 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors border border-gray-700 text-sm"
         >
           <Plus size={16} />
           <span>{mode === 'agent' ? 'New agent session' : mode === 'editor' ? 'New project' : 'New chat'}</span>
         </button>
 
         {/* Search */}
-        <div className="mx-3 mb-2 relative">
+        <div className="mx-3 mt-2 mb-2 relative">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
           <input
             type="text"
@@ -531,6 +534,30 @@ export function Sidebar({
             );
           })()}
         </div>
+
+        {/* Desktop app download banner — hidden on mobile (no .exe downloads on phones) */}
+        {isWebBlocked && !isMobile && (
+          <div className="mx-3 mb-2 p-3 bg-gradient-to-r from-purple-900/40 to-violet-900/40 border border-purple-700/30 rounded-xl">
+            <div className="flex items-start gap-2.5">
+              <div className="p-1.5 bg-purple-600/20 rounded-lg flex-shrink-0 mt-0.5">
+                <Download size={14} className="text-purple-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-purple-200">Desktop App</p>
+                <p className="text-[10px] text-purple-400/70 mt-0.5 leading-relaxed">
+                  Agent &amp; Editor modes are available in the desktop version.
+                </p>
+                <button
+                  onClick={() => window.open('/download', '_blank')}
+                  className="mt-1.5 text-[10px] font-medium text-purple-300 hover:text-purple-200 bg-purple-600/20 hover:bg-purple-600/30 px-2.5 py-1 rounded-lg transition-all inline-flex items-center gap-1"
+                >
+                  <Download size={10} />
+                  Download .exe
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <UserBadge profile={user} onSwitch={onSwitchUser} onSettings={onUserSettings} />
       </aside>

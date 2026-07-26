@@ -1,12 +1,17 @@
 {
   "name": "ai-chat-frontend",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "electron:dev": "vite build && cross-env NODE_ENV=development electron .",
+    "build:electron": "vite build && electron-builder --win --config",
+    "build:electron:portable": "vite build && electron-builder --win portable --config",
+    "configure-build": "node scripts/configure-build.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -22,9 +27,52 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
     "autoprefixer": "^10.4.20",
+    "cross-env": "^7.0.3",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
     "typescript": "^5.6.3",
     "vite": "^5.4.10"
-  }
+  },
+  "build": {
+    "appId": "com.aichat.desktop",
+    "productName": "AI Chat",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "sign": false,
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "AI Chat"
+    },
+    "portable": {
+      "artifactName": "AI-Chat-Portable-${version}.exe"
+    }
+  },
+  "description": "AI Chat Desktop Application"
 }

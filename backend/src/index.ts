@@ -14,12 +14,21 @@ import filesRoutes from './routes/files';
 import editorRoutes from './routes/editor';
 import memoryRoutes from './routes/memory';
 import { errorHandler, generateId } from './utils/helpers';
+import { registerAllTools } from './services/tools/register';
+import { getAllTools, executeTool } from './services/tools/index';
+
+// Register built-in tools
+registerAllTools();
 
 const app = new Hono();
 
 app.use('*', logger());
 app.use('*', cors({
-  origin: ['https://localhost:5173', 'http://localhost:3000'],
+  origin: (origin) => {
+    // Allow any origin — this is a local-only AI chat app, not a public service.
+    // Restricting CORS breaks the Electron proxy which connects from 127.0.0.1.
+    return origin || '*';
+  },
   allowHeaders: ['Content-Type', 'Authorization', 'X-User-Id'],
   exposeHeaders: ['X-User-Id'],
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -134,6 +143,76 @@ app.post('/api/generated/:filename/save-to-workspace', async (c) => {
   }
 });
 
+// Serve the desktop app download (.exe)
+const RELEASE_DIR = path.join(process.cwd(), '..', 'frontend', 'release');
+
+app.get('/download', async (c) => {
+  try {
+    // Find the latest .exe in the release directory
+    const files = await fs.readdir(RELEASE_DIR);
+    const exeFiles = files.filter((f) => f.endsWith('.exe') && !f.endsWith('.exe.blockmap'));
+    if (exeFiles.length === 0) {
+      // No build available yet — return a helpful page or redirect
+      return c.redirect('https://github.com/your-repo/releases/latest');
+    }
+
+    // Serve the most recent .exe (sort by name which includes version)
+    exeFiles.sort().reverse();
+    const latest = exeFiles[0];
+    const filePath = path.join(RELEASE_DIR, latest);
+    const data = await fs.readFile(filePath);
+
+    return new Response(data, {
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="${latest}"`,
+        'Content-Length': String(data.length),
+      },
+    });
+  } catch {
+    // Release directory doesn't exist yet — show a friendly message
+    return c.html(`
+      <!DOCTYPE html>
+      <html lang="en" class="dark">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Download AI Chat</title>
+        <style>
+          body { background: #030712; color: #e5e7eb; font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+          .card { text-align: center; padding: 2rem; max-width: 480px; }
+          h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
+          p { color: #9ca3af; font-size: 0.875rem; line-height: 1.5; }
+          .btn { display: inline-flex; align-items: center; gap: 0.5rem; margin-top: 1.5rem; padding: 0.75rem 1.5rem; background: linear-gradient(135deg, #7c3aed, #6d28d9); color: white; border-radius: 0.75rem; text-decoration: none; font-size: 0.875rem; font-weight: 500; transition: all 0.2s; }
+          .btn:hover { transform: scale(1.05); }
+          .sub { margin-top: 1rem; font-size: 0.75rem; color: #6b7280; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h1>Download AI Chat Desktop App</h1>
+          <p>The desktop app is not yet built. Run <code>build_electron.bat</code> in the frontend directory to create the .exe, then it will be available here.</p>
+          <a href="/" class="btn">Back to Chat</a>
+        </div>
+      </body>
+      </html>
+    `, 200, { 'Content-Type': 'text/html' });
+  }
+});
+
+// ─── Tools API ────────────────────────────────────────────
+app.get('/api/tools', (c) => {
+  const tools = getAllTools();
+  return c.json({ tools });
+});
+
+app.post('/api/tools/execute', async (c) => {
+  const { toolId, params, userInput } = await c.req.json();
+  if (!toolId) return c.json({ error: 'toolId is required' }, 400);
+  const result = await executeTool(toolId, params || {}, { userInput: userInput || '' });
+  return c.json(result);
+});
+
 app.get('/', (c) => c.json({ message: 'AI Chat API', version: '1.0.0' }));
 app.get('/api/health', (c) => c.json({ status: 'ok' }));
 
@@ -147,12 +226,13 @@ if (useHttps) {
   serve({
     fetch: app.fetch,
     port,
-    createServer, // use https.createServer instead of http.createServer
+    createServer,
     serverOptions: {
       cert: readFileSync(certPath).toString(),
       key: readFileSync(keyPath).toString(),
     },
   }, (info) => {
+    // Node.js defaults to 0.0.0.0 (all interfaces) when no host is given
     console.log(`🔒 Backend running on https://localhost:${info.port}`);
   });
 } else {

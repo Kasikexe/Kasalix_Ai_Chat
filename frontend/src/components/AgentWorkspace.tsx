@@ -384,7 +384,7 @@ export function AgentWorkspace({ conversation, onCreateNew, model, thinkingEnabl
       {/* Workspace setup dialog */}
       {showSetup && (
         <WorkspaceSetup
-          defaultBasePath="C:\Users\filik\OneDrive\Dokumenty\AiChat"
+          defaultBasePath={undefined}
           onSelect={handleWorkspaceSelect}
           onClose={() => setShowSetup(false)}
         />

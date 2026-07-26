@@ -5,6 +5,7 @@ import { getMemory } from './memory';
 import { getModelAssignment } from './model-assignments';
 import { getWebContext } from './search';
 import { generateImage } from './image';
+import { executeTool, detectTool } from './tools/index';
 import type { ConversationMode, Message } from '../types';
 
 // Global default for thinking mode. Can be overridden per-request.
@@ -33,6 +34,9 @@ interface DetectedIntent {
   wantsCode: boolean;
   wantsFileInfo: boolean;
   wantsImage: boolean;
+  wantsTool: boolean;
+  toolId?: string;
+  toolParams?: Record<string, unknown>;
   imageDataUrl?: string;
   imagePrompt?: string;
 }
@@ -76,14 +80,20 @@ async function listWorkspaceFiles(wsPath: string): Promise<string> {
   }
 }
 
-function detectIntent(messages: Message[], mode?: ConversationMode): DetectedIntent {
+async function detectIntent(messages: Message[], mode?: ConversationMode): Promise<DetectedIntent> {
   const last = messages[messages.length - 1];
   if (!last || last.role !== 'user') {
-    return { hasImage: false, wantsCode: false, wantsFileInfo: false, wantsImage: false };
+    return { hasImage: false, wantsCode: false, wantsFileInfo: false, wantsImage: false, wantsTool: false };
   }
 
   const content = last.content.toLowerCase();
   const hasImage = content.includes('[image:data:image');
+
+  // Detect if user wants to use a tool (async — uses dynamic import)
+  const toolMatch = await detectTool(last.content);
+  const wantsTool = !!toolMatch;
+  const toolId = toolMatch?.toolId;
+  const toolParams = toolMatch?.params;
 
   // Detect if user wants image generation
   const imagePhrases = [
@@ -159,7 +169,7 @@ function detectIntent(messages: Message[], mode?: ConversationMode): DetectedInt
   const match = last.content.match(/\[image:(data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+))\]/);
   if (match) imageDataUrl = match[1];
 
-  return { hasImage, wantsCode, wantsFileInfo, wantsImage, imageDataUrl, imagePrompt };
+  return { hasImage, wantsCode, wantsFileInfo, wantsImage, wantsTool, toolId, toolParams, imageDataUrl, imagePrompt };
 }
 
 // Internal stage: runs the model without streaming output to user
@@ -251,12 +261,12 @@ async function buildMemoryContext(userId?: string): Promise<string | null> {
 
 export async function runPipeline(opts: PipelineOptions): Promise<string> {
   const { model, messages, mode, workspacePath, signal, onStage, onChunk, thinkingEnabled, userId, userName, searchEnabled, planningEnabled, temperature, top_p, max_tokens } = opts;
-  const intent = detectIntent(messages, mode);
+  const intent = await detectIntent(messages, mode);
 
   // Determine thinking mode: request override > env default
   const think = thinkingEnabled !== undefined ? thinkingEnabled : THINKING_ENABLED;
 
-  console.log(`[pipeline] Intent: hasImage=${intent.hasImage}, wantsCode=${intent.wantsCode}, wantsFileInfo=${intent.wantsFileInfo}, wantsImage=${intent.wantsImage}, think=${think}`);
+  console.log(`[pipeline] Intent: hasImage=${intent.hasImage}, wantsCode=${intent.wantsCode}, wantsFileInfo=${intent.wantsFileInfo}, wantsImage=${intent.wantsImage}, wantsTool=${intent.wantsTool}, think=${think}`);
 
   // If user asks about files (or planning mode is on), read the actual directory listing and inject it
   let fileListing = '';
@@ -293,8 +303,34 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
     return result;
   };
 
+  // Tool output variables — declared here so both the TOOL STAGE and simple chat can use them
+  let toolOutput: string | undefined;
+  let toolStageHandled = false;
+
+  // TOOL STAGE: If the user wants to use a tool, execute it and inject result
+  if (intent.wantsTool && intent.toolId) {
+    onStage('tool:executing');
+    const lastMsg = messages[messages.length - 1];
+    const userInput = lastMsg.content;
+    try {
+      const result = await executeTool(intent.toolId, intent.toolParams || {}, { userInput });
+      toolOutput = result.output;
+      toolStageHandled = true;
+      console.log(`[pipeline] Tool "${intent.toolId}" result: ${result.output.substring(0, 100)}`);
+    } catch (e) {
+      console.error(`[pipeline] Tool "${intent.toolId}" failed:`, e);
+      toolOutput = `Sorry, the ${intent.toolId} tool encountered an error.`;
+      toolStageHandled = true;
+    }
+  }
+
   // Simple chat — no pipeline needed (injects agent awareness in agent mode)
   if (!intent.hasImage && !intent.wantsCode && !intent.wantsImage) {
+    // If we have tool output, inject it into the conversation (skip AI for tools)
+    if (toolStageHandled && toolOutput) {
+      // Return the tool result directly — no need to run AI on simple conversions
+      return toolOutput;
+    }
     onStage('chat:thinking');
     if (mode === 'agent') {
       const fileInfo = fileListing

@@ -2,6 +2,16 @@ import type { Conversation, ConversationMode, Message, OllamaModel, FileEntry, M
 
 const API_BASE = '/api';
 
+// ─── Electron Detection ───────────────────────────────────
+const isElectron = !!(window as any).electronAPI?.isElectron;
+
+/** Call Electron IPC for file operations when in the desktop app */
+function electronFileOp(op: string, ...args: any[]): Promise<any> {
+  const api = (window as any).electronAPI;
+  if (!api || !api[op]) throw new Error(`Electron API not available for ${op}`);
+  return api[op](...args);
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text();
@@ -275,13 +285,18 @@ export const api = {
     }
   },
 
+  /** List files in a directory — uses local IPC in Electron, backend API on web */
   async getFiles(dirPath: string): Promise<{ entries: FileEntry[] }> {
+    if (isElectron) {
+      return electronFileOp('listDir', dirPath);
+    }
     const data = await handleResponse<{ entries: FileEntry[] }>(
       await fetch(`${API_BASE}/files?path=${encodeURIComponent(dirPath)}`, authedFetch(`${API_BASE}/files`))
     );
     return data;
   },
 
+  /** Read file content — uses local IPC in Electron, backend API on web */
   async getFileContent(filePath: string): Promise<{
     content: string | null;
     language: string | null;
@@ -289,12 +304,39 @@ export const api = {
     truncated: boolean;
     binary: boolean;
   }> {
+    if (isElectron) {
+      const result = await electronFileOp('readFile', filePath);
+      // Normalize: if IPC returned an error, treat as file doesn't exist
+      const normalized = {
+        content: result.content ?? null,
+        binary: result.binary ?? false,
+        size: result.size ?? 0,
+        truncated: result.truncated ?? false,
+        language: result.language ?? null,
+      };
+      // Add language detection from file extension
+      if (!normalized.language && !normalized.binary && normalized.content !== null) {
+        const ext = filePath.split('.').pop()?.toLowerCase();
+        const langMap: Record<string, string> = {
+          ts: 'typescript', tsx: 'tsx', js: 'javascript', jsx: 'jsx',
+          json: 'json', md: 'markdown', css: 'css', scss: 'scss',
+          html: 'html', py: 'python', go: 'go', rs: 'rust',
+          sh: 'bash', yaml: 'yaml', yml: 'yaml', xml: 'xml',
+        };
+        normalized.language = ext ? langMap[ext] || null : null;
+      }
+      return normalized;
+    }
     return handleResponse(
       await fetch(`${API_BASE}/files/content?path=${encodeURIComponent(filePath)}`, authedFetch(`${API_BASE}/files`))
     );
   },
 
+  /** Delete a file — uses local IPC in Electron, backend API on web */
   async deleteFile(filePath: string): Promise<{ success: boolean; path: string }> {
+    if (isElectron) {
+      return electronFileOp('deleteFile', filePath);
+    }
     return handleResponse(
       await fetch(`${API_BASE}/files/delete?path=${encodeURIComponent(filePath)}`, authedFetch(`${API_BASE}/files/delete`, {
         method: 'DELETE',
@@ -302,7 +344,11 @@ export const api = {
     );
   },
 
+  /** Write content to a file — uses local IPC in Electron, backend API on web */
   async writeFile(filePath: string, content: string): Promise<{ success: boolean; path: string; isNew: boolean; size: number }> {
+    if (isElectron) {
+      return electronFileOp('writeFile', filePath, content);
+    }
     return handleResponse(
       await fetch(`${API_BASE}/files/write`, authedFetch(`${API_BASE}/files/write`, {
         method: 'PUT',

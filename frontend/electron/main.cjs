@@ -1,0 +1,431 @@
+const { app, BrowserWindow, ipcMain } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const http = require('http');
+const https = require('https');
+const { startServer, setBackendUrl, getBackendUrl } = require('./server.cjs');
+
+// The default URL of the backend AI server
+const DEFAULT_BACKEND_URL = process.env.BACKEND_URL || 'https://localhost:3001';
+
+// Path to the saved server config file (persists in user data)
+const CONFIG_FILE = 'server-config.json';
+
+let mainWindow = null;
+let server = null;
+
+// ─── Server Config ───────────────────────────────────────────────
+
+function readServerConfig() {
+  try {
+    const configPath = path.join(app.getPath('userData'), CONFIG_FILE);
+    if (fs.existsSync(configPath)) {
+      const data = fs.readFileSync(configPath, 'utf-8');
+      const config = JSON.parse(data);
+      if (config.backendUrl) return config;
+    }
+  } catch (err) {
+    console.warn('[main] Failed to read server config:', err.message);
+  }
+  return null;
+}
+
+function saveServerConfig(url) {
+  try {
+    const configPath = path.join(app.getPath('userData'), CONFIG_FILE);
+    const config = { backendUrl: url, savedAt: Date.now() };
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+    console.log(`[main] Saved server config: ${url}`);
+    return true;
+  } catch (err) {
+    console.error('[main] Failed to save server config:', err.message);
+    return false;
+  }
+}
+
+// ─── Subnet Scanning ─────────────────────────────────────────────
+
+/** Try to connect to a single IP on port 3001 (both HTTP and HTTPS) */
+function tryConnect(ip, timeoutMs) {
+  return new Promise((resolve) => {
+    let resolved = false;
+    const done = (result) => {
+      if (!resolved) { resolved = true; resolve(result); }
+    };
+
+    // Try HTTPS first, then HTTP
+    tryUrl(`https://${ip}:3001/api/health`, timeoutMs).then((ok) => {
+      if (ok) return done(`https://${ip}:3001`);
+      tryUrl(`http://${ip}:3001/api/health`, timeoutMs).then((ok2) => {
+        done(ok2 ? `http://${ip}:3001` : null);
+      });
+    });
+  });
+}
+
+function tryUrl(urlStr, timeoutMs) {
+  return new Promise((resolve) => {
+    try {
+      const urlObj = new URL(urlStr);
+      const transport = urlObj.protocol === 'https:' ? https : http;
+      const options = {
+        hostname: urlObj.hostname,
+        port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+        path: urlObj.pathname,
+        method: 'GET',
+        rejectUnauthorized: false,
+        timeout: timeoutMs,
+      };
+      const req = transport.request(options, (res) => {
+        resolve(res.statusCode >= 200 && res.statusCode < 400);
+        res.resume();
+      });
+      req.on('error', () => resolve(false));
+      req.on('timeout', () => { req.destroy(); resolve(false); });
+      req.end();
+    } catch { resolve(false); }
+  });
+}
+
+/** Scan the subnet for any device responding on port 3001 */
+async function scanSubnet() {
+  const interfaces = os.networkInterfaces();
+  const seen = new Set();
+  const scanTargets = [];
+
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      if (
+        iface.family === 'IPv4' && !iface.internal &&
+        !name.toLowerCase().includes('docker') &&
+        !name.toLowerCase().includes('virtual') &&
+        !name.toLowerCase().includes('vmware') &&
+        !name.toLowerCase().includes('vbox')
+      ) {
+        // Use only /24 subnets (first 3 octets) for practical scanning
+        const parts = iface.address.split('.');
+        const subnet = `${parts[0]}.${parts[1]}.${parts[2]}`;
+        const ownIp = iface.address;
+        for (let i = 1; i <= 254; i++) {
+          const ip = `${subnet}.${i}`;
+          if (ip !== ownIp && !seen.has(ip)) {
+            seen.add(ip);
+            scanTargets.push(ip);
+          }
+        }
+      }
+    }
+  }
+
+  if (scanTargets.length === 0) return null;
+
+  // Scan in parallel batches of 50, 300ms timeout per request
+  const BATCH_SIZE = 50;
+  const TIMEOUT = 300;
+
+  for (let i = 0; i < scanTargets.length; i += BATCH_SIZE) {
+    const batch = scanTargets.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(batch.map((ip) => tryConnect(ip, TIMEOUT)));
+    const found = results.find(Boolean);
+    if (found) return found;
+  }
+
+  return null;
+}
+
+// ─── Local File Operations ───────────────────────────────────────
+
+/** Get the default workspace path: Documents/AiChat */
+function getDefaultWorkspacePath() {
+  const docs = app.getPath('documents');
+  const aiChatDir = path.join(docs, 'AiChat');
+  try {
+    fs.mkdirSync(aiChatDir, { recursive: true });
+  } catch {}
+  return aiChatDir;
+}
+
+/** List directory contents */
+function listDir(dirPath) {
+  const resolved = path.resolve(dirPath);
+  const entries = fs.readdirSync(resolved, { withFileTypes: true });
+  const result = entries
+    .filter((e) => !e.name.startsWith('.'))
+    .map((e) => {
+      const fullPath = path.join(resolved, e.name);
+      let size;
+      if (e.isFile()) {
+        try { size = fs.statSync(fullPath).size; } catch {}
+      }
+      return {
+        name: e.name,
+        path: fullPath.replace(/\\/g, '/'),
+        type: e.isDirectory() ? 'directory' : 'file',
+        size,
+      };
+    });
+  // Sort: directories first, then files alphabetically
+  result.sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return { entries: result };
+}
+
+/** Read a file's content */
+function readFileContent(filePath) {
+  const resolved = path.resolve(filePath);
+  const stat = fs.statSync(resolved);
+  if (!stat.isFile()) return { error: 'Not a file' };
+
+  const MAX_SIZE = 1024 * 1024;
+  const truncated = stat.size > MAX_SIZE;
+  const buffer = fs.readFileSync(resolved, { flag: 'r' });
+
+  // Check if binary
+  const sampleSize = Math.min(buffer.length, 8192);
+  let binary = false;
+  for (let i = 0; i < sampleSize; i++) {
+    if (buffer[i] === 0) { binary = true; break; }
+  }
+
+  if (binary) return { content: null, binary: true, size: stat.size, truncated: false };
+
+  const content = truncated
+    ? buffer.subarray(0, MAX_SIZE).toString('utf-8')
+    : buffer.toString('utf-8');
+
+  return { content, binary: false, size: stat.size, truncated };
+}
+
+/** Write content to a file */
+function writeFileContent(filePath, content) {
+  const resolved = path.resolve(filePath);
+  // Read old content for diff
+  let oldContent = null;
+  try { oldContent = fs.readFileSync(resolved, 'utf-8'); } catch {}
+  // Ensure parent dir exists
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  fs.writeFileSync(resolved, content, 'utf-8');
+  return { success: true, path: resolved, isNew: oldContent === null, size: Buffer.byteLength(content, 'utf-8') };
+}
+
+/** Delete a file or directory */
+function deleteFileOrDir(filePath) {
+  const resolved = path.resolve(filePath);
+  const stat = fs.statSync(resolved);
+  if (stat.isDirectory()) {
+    fs.rmSync(resolved, { recursive: true });
+  } else {
+    fs.unlinkSync(resolved);
+  }
+  return { success: true, path: resolved };
+}
+
+// ─── App Startup ─────────────────────────────────────────────────
+
+app.whenReady().then(async () => {
+  // Determine backend URL: saved config > env var > default
+  const savedConfig = readServerConfig();
+  let backendUrl = savedConfig ? savedConfig.backendUrl : DEFAULT_BACKEND_URL;
+
+  console.log(`[main] Backend URL: ${backendUrl}`);
+
+  // Start a local static file server that also proxies /api to the backend
+  const distDir = path.join(__dirname, '..', 'dist');
+  const result = await startServer(distDir, backendUrl);
+  server = result.server;
+  const port = result.port;
+
+  mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 860,
+    minWidth: 800,
+    minHeight: 600,
+    title: 'AI Chat',
+    backgroundColor: '#030712',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  // Load the locally-served frontend
+  mainWindow.loadURL(`http://localhost:${port}`);
+
+  // Show window when ready (avoids white flash)
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+  });
+
+  // Hide menu bar
+  mainWindow.setMenuBarVisibility(false);
+
+  if (process.env.NODE_ENV === 'development') {
+    mainWindow.webContents.openDevTools();
+  }
+});
+
+// ─── IPC Handlers: Server Config ─────────────────────────────────
+
+ipcMain.handle('get-backend-url', () => {
+  return { url: getBackendUrl(), hasSavedConfig: readServerConfig() !== null };
+});
+
+ipcMain.handle('set-backend-url', async (_event, newUrl) => {
+  if (!newUrl || typeof newUrl !== 'string') {
+    return { success: false, error: 'Invalid URL' };
+  }
+  try {
+    const urlObj = new URL(newUrl);
+    if (!['http:', 'https:'].includes(urlObj.protocol)) {
+      return { success: false, error: 'URL must start with http:// or https://' };
+    }
+  } catch {
+    return { success: false, error: 'Invalid URL format' };
+  }
+  setBackendUrl(newUrl);
+  const saved = saveServerConfig(newUrl);
+  return { success: true, saved };
+});
+
+// ─── IPC Handlers: Network Detection ─────────────────────────────
+
+ipcMain.handle('detect-ips', () => {
+  const interfaces = os.networkInterfaces();
+  const ips = [];
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      if (
+        iface.family === 'IPv4' && !iface.internal &&
+        !name.toLowerCase().includes('docker') &&
+        !name.toLowerCase().includes('virtual') &&
+        !name.toLowerCase().includes('vmware') &&
+        !name.toLowerCase().includes('vbox')
+      ) {
+        ips.push({ address: iface.address, netmask: iface.netmask, interface: name });
+      }
+    }
+  }
+  return ips;
+});
+
+ipcMain.handle('scan-subnet', async () => {
+  try {
+    const result = await scanSubnet();
+    return { found: result !== null, url: result };
+  } catch (err) {
+    return { found: false, error: err.message };
+  }
+});
+
+ipcMain.handle('test-server-url', async (_event, testUrl) => {
+  try {
+    const urlObj = new URL(testUrl);
+    const transport = urlObj.protocol === 'https:' ? https : http;
+    const options = {
+      hostname: urlObj.hostname,
+      port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+      path: urlObj.pathname,
+      method: 'GET',
+      rejectUnauthorized: false,
+      timeout: 5000,
+    };
+    const result = await new Promise((resolve) => {
+      const req = transport.request(options, (res) => {
+        resolve({ online: res.statusCode >= 200 && res.statusCode < 400 });
+        res.resume();
+      });
+      req.on('error', (err) => resolve({ online: false, error: err.message }));
+      req.on('timeout', () => { req.destroy(); resolve({ online: false, error: 'Connection timed out' }); });
+      req.end();
+    });
+    return result;
+  } catch (err) {
+    return { online: false, error: err.message };
+  }
+});
+
+ipcMain.handle('check-server-health', async () => {
+  try {
+    const urlObj = new URL(`${getBackendUrl()}/api/health`);
+    const transport = urlObj.protocol === 'https:' ? https : http;
+    const options = {
+      hostname: urlObj.hostname,
+      port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+      path: urlObj.pathname,
+      method: 'GET',
+      rejectUnauthorized: false,
+      timeout: 3000,
+    };
+    const result = await new Promise((resolve) => {
+      const req = transport.request(options, (res) => {
+        resolve({ online: res.statusCode >= 200 && res.statusCode < 400 });
+        res.resume();
+      });
+      req.on('error', () => resolve({ online: false }));
+      req.on('timeout', () => { req.destroy(); resolve({ online: false }); });
+      req.end();
+    });
+    return result;
+  } catch {
+    return { online: false };
+  }
+});
+
+// ─── IPC Handlers: Local File Operations ─────────────────────────
+
+ipcMain.handle('get-default-workspace', () => {
+  return getDefaultWorkspacePath().replace(/\\/g, '/');
+});
+
+ipcMain.handle('list-dir', async (_event, dirPath) => {
+  try {
+    return listDir(dirPath);
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('read-file', async (_event, filePath) => {
+  try {
+    return readFileContent(filePath);
+  } catch (err) {
+    if (err.code === 'ENOENT') return { error: 'File does not exist' };
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('write-file', async (_event, filePath, content) => {
+  try {
+    return writeFileContent(filePath, content);
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('delete-file', async (_event, filePath) => {
+  try {
+    return deleteFileOrDir(filePath);
+  } catch (err) {
+    if (err.code === 'ENOENT') return { error: 'File does not exist' };
+    return { error: err.message };
+  }
+});
+
+// ─── Lifecycle ───────────────────────────────────────────────────
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) app.emit('ready');
+});
+
+app.on('before-quit', () => {
+  if (server) { server.close(); server = null; }
+});
