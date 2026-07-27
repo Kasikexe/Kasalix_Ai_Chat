@@ -1,11 +1,13 @@
 import { useState, useCallback, useEffect } from 'react';
-import { ChevronRight, ChevronDown, File, Folder, FileCode, FileJson, FileImage, FileText, FileType, Plus, Check, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, File, Folder, FileCode, FileJson, FileImage, FileText, FileType, Plus, Check, X, FolderOpen, RefreshCw } from 'lucide-react';
 import { api } from '../services/api';
 import type { FileEntry } from '../types';
 
 interface Props {
   rootPath: string;
   onFileSelect?: (file: FileEntry) => void;
+  /** Called when user wants to browse a local folder as the workspace */
+  onBrowseFolder?: () => void;
 }
 
 function getFileIcon(name: string, type: 'file' | 'directory') {
@@ -136,7 +138,7 @@ function DirectoryNode({ name, path, depth, onFileSelect }: {
   );
 }
 
-export function FileTree({ rootPath, onFileSelect }: Props) {
+export function FileTree({ rootPath, onFileSelect, onBrowseFolder }: Props) {
   const [entries, setEntries] = useState<FileEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -176,15 +178,29 @@ export function FileTree({ rootPath, onFileSelect }: Props) {
   }
 
   if (error) {
+    const isE = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
     return (
-      <div className="px-3 py-4 text-center">
-        <p className="text-xs text-red-400 mb-2">{error}</p>
-        <button
-          onClick={loadRoot}
-          className="text-xs text-blue-400 hover:text-blue-300 underline"
-        >
-          Retry
-        </button>
+      <div className="px-3 py-6 text-center">
+        <FolderOpen size={24} className="mx-auto text-gray-600 mb-3" />
+        <p className="text-xs text-gray-400 mb-3">Could not load files from this path.</p>
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={loadRoot}
+            className="flex items-center justify-center gap-1.5 px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-xs text-gray-300 transition-colors mx-auto"
+          >
+            <RefreshCw size={12} />
+            Retry
+          </button>
+          {isE && onBrowseFolder && (
+            <button
+              onClick={onBrowseFolder}
+              className="flex items-center justify-center gap-1.5 px-3 py-2 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-700/40 rounded-lg text-xs text-purple-300 transition-colors mx-auto"
+            >
+              <FolderOpen size={12} />
+              Browse Local Folder
+            </button>
+          )}
+        </div>
       </div>
     );
   }

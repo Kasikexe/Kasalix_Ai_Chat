@@ -4,9 +4,12 @@ import {
   LogOut, Pencil, CheckCircle, Shield, Sun, Moon,
   Database, Plus, Trash2, Edit3, BookOpen, RefreshCw, Quote,
   Thermometer, Gauge, AlignLeft, Sparkles, Sliders,
+  ArrowUpCircle, Download, Package,
 } from 'lucide-react';
 import type { UserProfile, MemoryData } from '../types';
 import { useToast } from '../hooks/useToast';
+
+const AUTO_UPDATE_KEY = 'ai-chat:autoUpdate';
 
 const COLORS = [
   '#ef4444', '#f97316', '#eab308', '#22c55e',
@@ -90,6 +93,13 @@ export function UserSettingsModal({
   const [autoTitle, setAutoTitle] = useState(() => localStorage.getItem('ai-chat:autoTitle') !== 'false');
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // App version (Electron only)
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+
+  // Auto-update state
+  const [autoUpdate, setAutoUpdate] = useState(() => localStorage.getItem(AUTO_UPDATE_KEY) !== 'false');
+
   // System prompt state
   const [systemPrompt, setSystemPrompt] = useState<string>('');
   const [systemPromptSaved, setSystemPromptSaved] = useState(false);
@@ -122,6 +132,16 @@ export function UserSettingsModal({
       setActiveTab('profile');
       // Refresh memory data from backend when modal opens
       onRefreshMemory?.();
+      // Fetch app version from Electron main process
+      const isE = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
+      if (isE) {
+        (async () => {
+          try {
+            const result = await (window as any).electronAPI.getAppVersion();
+            setAppVersion(result?.version || null);
+          } catch { setAppVersion(null); }
+        })();
+      }
     }
   }, [open, profile, onRefreshMemory]);
 
@@ -421,6 +441,62 @@ export function UserSettingsModal({
           {/* ==================== PREFERENCES TAB ==================== */}
           {activeTab === 'preferences' && (
             <div key="tab-preferences" className="space-y-5 animate-fade-in">
+              {/* Auto-Update toggle (Electron only) */}
+              {typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron && (
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-sm font-medium text-gray-300">
+                    <ArrowUpCircle size={16} className="text-emerald-400" />
+                    Auto-Update
+                  </label>
+                  <div
+                    className={`flex items-center justify-between px-4 py-3 rounded-xl cursor-pointer transition-all duration-200 ${
+                      autoUpdate
+                        ? 'bg-emerald-900/20 border border-emerald-800/40'
+                        : 'bg-gray-800/50 border border-gray-800 hover:bg-gray-800'
+                    }`}
+                    onClick={async () => {
+                      const next = !autoUpdate;
+                      setAutoUpdate(next);
+                      localStorage.setItem(AUTO_UPDATE_KEY, String(next));
+                      // Also persist to the main process via IPC
+                      try {
+                        const api = (window as any).electronAPI;
+                        if (api?.setUpdatePreference) {
+                          await api.setUpdatePreference(next);
+                        }
+                      } catch {}
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`p-1.5 rounded-lg ${autoUpdate ? 'bg-emerald-700/30' : 'bg-gray-700/50'}`}>
+                        <ArrowUpCircle size={18} className={autoUpdate ? 'text-emerald-400' : 'text-gray-400'} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-white">
+                          {autoUpdate ? 'Enabled' : 'Disabled'}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {autoUpdate
+                            ? 'Automatically check for updates on startup'
+                            : 'No update checks until re-enabled'}
+                        </p>
+                      </div>
+                    </div>
+                    <div
+                      className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
+                        autoUpdate ? 'bg-emerald-600' : 'bg-gray-700'
+                      }`}
+                    >
+                      <div
+                        className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
+                          autoUpdate ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Thinking mode */}
               <div className="space-y-3">
                 <label className="flex items-center gap-2 text-sm font-medium text-gray-300">
@@ -944,6 +1020,17 @@ export function UserSettingsModal({
                   Account
                 </label>
 
+                {/* App version (Electron only) */}
+                {appVersion && (
+                  <div className="px-4 py-3 bg-gray-800/30 border border-gray-800 rounded-xl space-y-1">
+                    <p className="text-xs text-gray-500">App Version</p>
+                    <p className="text-sm font-mono text-white flex items-center gap-2">
+                      <Package size={14} className="text-purple-400" />
+                      v{appVersion}
+                    </p>
+                  </div>
+                )}
+
                 {/* User info card */}
                 <div className="px-4 py-4 bg-gray-800/30 border border-gray-800 rounded-xl space-y-3">
                   <div className="flex items-center justify-between">
@@ -981,6 +1068,60 @@ export function UserSettingsModal({
                   <p className="text-sm text-white">Local (this device only)</p>
                 </div>
               </div>
+
+              {/* Check for Updates (Electron only) */}
+              {typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron && (
+                <>
+                  <div className="border-t border-gray-800 pt-3" />
+                  <button
+                    onClick={async () => {
+                      setCheckingUpdates(true);
+                      try {
+                        const electronApi = (window as any).electronAPI;
+                        const result = await electronApi.checkForUpdates();
+                        if (result?.available) {
+                          toast('success', `Update v${result.version} available! Check the banner at the top.`);
+                        } else if (result?.error) {
+                          // Show the actual error instead of hiding it
+                          const errMsg = result.error.length > 80 ? result.error.slice(0, 80) + '...' : result.error;
+                          toast('error', `Update check failed: ${errMsg}`);
+                        } else if (result?.latestVersion && result.latestVersion !== appVersion) {
+                          // Server has a different version but comparison didn't match — show it anyway
+                          toast('info', `Server has v${result.latestVersion} (currently on v${appVersion}). Try building a new version on the server.`);
+                        } else if (result?.latestVersion) {
+                          toast('info', `Already up to date (v${result.currentVersion || appVersion}). Server also has v${result.latestVersion}.`);
+                        } else {
+                          toast('info', `You're up to date (v${appVersion || '?'}).`);
+                        }
+                      } catch (e) {
+                        toast('error', 'Update check failed. Could not reach the backend server.');
+                      }
+                      setCheckingUpdates(false);
+                    }}
+                    disabled={checkingUpdates}
+                    className="w-full flex items-center gap-3 px-4 py-3 bg-emerald-900/10 border border-emerald-900/30 hover:bg-emerald-900/20 hover:border-emerald-800/50 rounded-xl transition-all duration-200 group disabled:opacity-50"
+                  >
+                    <div className="p-1.5 bg-emerald-900/30 rounded-lg group-hover:bg-emerald-900/40 transition-colors">
+                      {checkingUpdates ? (
+                        <RefreshCw size={16} className="text-emerald-400 animate-spin" />
+                      ) : (
+                        <Download size={16} className="text-emerald-400" />
+                      )}
+                    </div>
+                    <div className="text-left flex-1">
+                      <p className="text-sm font-medium text-emerald-300 group-hover:text-emerald-200 transition-colors">
+                        {checkingUpdates ? 'Checking...' : 'Check for Updates'}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {checkingUpdates
+                          ? 'Contacting server...'
+                          : appVersion ? `Currently on v${appVersion}` : 'See if a new version is available'}
+                      </p>
+                    </div>
+                    <Download size={16} className="text-emerald-500/50 group-hover:text-emerald-400 transition-colors" />
+                  </button>
+                </>
+              )}
 
               {/* Switch user */}
               <div className="border-t border-gray-800 pt-3" />

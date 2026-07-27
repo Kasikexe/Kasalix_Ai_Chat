@@ -3,6 +3,11 @@
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const { app, BrowserWindow, ipcMain } = require('electron');
+
+// Chromium command-line switch: ignore cert errors for ALL Chromium network requests
+// (auto-updater, net.fetch, net.request in any session, etc.)
+// Must be called before app.whenReady() — at module scope is fine.
+app.commandLine.appendSwitch('ignore-certificate-errors');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -20,10 +25,56 @@ const CONFIG_FILE = 'server-config.json';
 let mainWindow = null;
 let server = null;
 
-// ─── Certificate Handling (self-signed certs) ─────────────────────
-// Ensure the auto-updater and other net requests trust our self-signed cert
+// ─── Update Preference File ──────────────────────────────────────
+const UPDATE_CONFIG_FILE = 'update-config.json';
+
+function readUpdatePreference() {
+  try {
+    const configPath = path.join(app.getPath('userData'), UPDATE_CONFIG_FILE);
+    if (fs.existsSync(configPath)) {
+      const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      if (typeof data.enabled === 'boolean') return data.enabled;
+    }
+  } catch (err) {
+    console.warn('[main] Failed to read update config:', err.message);
+  }
+  return true; // Default: enabled
+}
+
+function saveUpdatePreference(enabled) {
+  try {
+    const configPath = path.join(app.getPath('userData'), UPDATE_CONFIG_FILE);
+    fs.writeFileSync(configPath, JSON.stringify({ enabled, updatedAt: Date.now() }, null, 2), 'utf-8');
+    console.log(`[main] Update preference saved: ${enabled}`);
+    return true;
+  } catch (err) {
+    console.error('[main] Failed to save update config:', err.message);
+    return false;
+  }
+}
+// session.setCertificateVerifyProc handles ALL Chromium network requests
+// (auto-updater, net.fetch, net.request, etc.) — unlike certificate-error
+// which only covers BrowserWindow/webContents loads.
+const { session } = require('electron');
+app.whenReady().then(() => {
+  session.defaultSession.setCertificateVerifyProc((request, callback) => {
+    const hostname = request.hostname;
+    if (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname.startsWith('192.168.') ||
+      hostname.startsWith('10.') ||
+      hostname.startsWith('172.16.')
+    ) {
+      callback(0); // Trust — 0 means valid
+    } else {
+      callback(-2); // Default behavior (ERR_FAILED)
+    }
+  });
+});
+
+// Fallback: also handle certificate-error for BrowserWindow loads
 app.on('certificate-error', (event, _webContents, url, _error, _certificate, callback) => {
-  // Allow our own backend URLs (localhost + any local network IP)
   try {
     const parsed = new URL(url);
     const hostname = parsed.hostname;
@@ -35,11 +86,10 @@ app.on('certificate-error', (event, _webContents, url, _error, _certificate, cal
       hostname.startsWith('172.16.')
     ) {
       event.preventDefault();
-      callback(true); // Trust the certificate
+      callback(true);
       return;
     }
   } catch {}
-  // For all other URLs, use default behavior
   callback(false);
 });
 
@@ -49,16 +99,19 @@ app.on('certificate-error', (event, _webContents, url, _error, _certificate, cal
 autoUpdater.autoDownload = false;
 autoUpdater.allowPrerelease = true;
 
-/** Configure the updater to fetch updates through the local HTTP proxy */
-function configureUpdater(port) {
+/** Configure the updater to fetch updates from the backend server (network-accessible) */
+function configureUpdater(backendUrl) {
   try {
-    const feedUrl = `http://localhost:${port}/update`;
+    // Use the backend URL as the feed URL — this is accessible from any PC on the
+    // network because the backend serves latest.yml and .exe files at its root.
+    // The publish.url in latest.yml is set to empty so the updater resolves paths
+    // RELATIVE to the feed URL (i.e., https://backend:3001/AI-Chat-Setup-1.5.0.exe).
     autoUpdater.setFeedURL({
       provider: 'generic',
-      url: feedUrl,
+      url: backendUrl,
       channel: 'latest',
     });
-    console.log(`[updater] Feed URL configured: ${feedUrl}`);
+    console.log(`[updater] Feed URL configured: ${backendUrl}/latest.yml`);
   } catch (err) {
     console.error('[updater] Failed to configure feed URL:', err.message);
   }
@@ -73,19 +126,51 @@ async function checkForUpdates(showSilent = true) {
       const latest = result.updateInfo.version;
       console.log(`[updater] Current: ${current}, Latest: ${latest}`);
 
+          // Always check critical status
+      let critical = false;
+      try {
+        const backendUrl = getBackendUrl();
+        const httpMod = backendUrl.startsWith('https') ? https : http;
+        const urlObj = new URL(`${backendUrl}/api/build/critical`);
+        const critResult = await new Promise((resolve) => {
+          const req = httpMod.request(
+            { hostname: urlObj.hostname, port: urlObj.port, path: urlObj.pathname, method: 'GET', rejectUnauthorized: false, timeout: 3000 },
+            (res) => {
+              let data = '';
+              res.on('data', (chunk) => { data += chunk; });
+              res.on('end', () => {
+                try { resolve(JSON.parse(data)); } catch { resolve({ critical: false }); }
+              });
+            }
+          );
+          req.on('error', () => resolve({ critical: false }));
+          req.on('timeout', () => { req.destroy(); resolve({ critical: false }); });
+          req.end();
+        });
+        critical = critResult.critical === true && critResult.version === latest;
+      } catch { /* non-critical: fallback */ }
+
       if (current !== latest) {
+        console.log(`[updater] Update critical: ${critical}`);
+
         // Notify the renderer about the update
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('update-available', {
             version: latest,
             currentVersion: current,
             releaseNotes: result.updateInfo.releaseNotes || '',
+            critical,
           });
         }
-        return { available: true, version: latest, currentVersion: current };
+        return { available: true, version: latest, currentVersion: current, critical };
       }
+
+      // Version matches — still return the latest version so the UI can show what's available
+      console.log(`[updater] Already up to date (v${current}). Server latest: v${latest}`);
+      return { available: false, latestVersion: latest, currentVersion: current };
     }
-    return { available: false };
+    // No update info returned at all
+    return { available: false, error: 'Could not read update information from server' };
   } catch (err) {
     // Silent check failures are expected (server might not have update files yet)
     if (!showSilent) {
@@ -314,12 +399,26 @@ app.whenReady().then(async () => {
 
   // Start a local static file server that also proxies /api to the backend
   const distDir = path.join(__dirname, '..', 'dist');
-  const result = await startServer(distDir, backendUrl);
+  // Calculate the release directory — when packaged, __dirname is inside app.asar,
+  // but the release folder is at the app root (same level as app.asar, NOT inside it)
+  const isPackaged = app.isPackaged;
+  let releaseDir;
+  if (isPackaged) {
+    // Packaged: app executable is at C:\Program Files\AI Chat\AI Chat.exe
+    // release dir is C:\Program Files\AI Chat\release
+    releaseDir = path.join(path.dirname(app.getPath('exe')), 'release');
+  } else {
+    // Development: release dir is at frontend/release
+    releaseDir = path.join(__dirname, '..', 'release');
+  }
+  console.log(`[main] Release directory: ${releaseDir}`);
+  const result = await startServer(distDir, backendUrl, releaseDir);
   server = result.server;
   const port = result.port;
 
-  // Configure the auto-updater to use the local HTTP proxy (no SSL issues)
-  configureUpdater(port);
+  // Configure the auto-updater to fetch from the backend server (network-accessible)
+  // The backend serves latest.yml and .exe files at its root routes
+  configureUpdater(backendUrl);
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -342,12 +441,37 @@ app.whenReady().then(async () => {
   // Show window when ready (avoids white flash)
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-    // Check for updates silently after the window is shown
-    setTimeout(() => {
-      checkForUpdates(true).catch((err) => {
-        console.warn('[updater] Initial check failed:', err.message);
-      });
-    }, 5000); // Wait 5 seconds to let the app settle
+    // Check for updates silently after the window is shown (if enabled)
+    const updateEnabled = readUpdatePreference();
+    if (updateEnabled) {
+      setTimeout(async () => {
+        // First check if backend is reachable — no point trying updates if it's down
+        try {
+          const backendUrl = getBackendUrl();
+          const httpMod = backendUrl.startsWith('https') ? https : http;
+          const urlObj = new URL(`${backendUrl}/api/health`);
+          const healthy = await new Promise((resolve) => {
+            const req = httpMod.request(
+              { hostname: urlObj.hostname, port: urlObj.port, path: urlObj.pathname, method: 'GET', rejectUnauthorized: false, timeout: 3000 },
+              (res) => { res.resume(); resolve(res.statusCode >= 200 && res.statusCode < 400); }
+            );
+            req.on('error', () => resolve(false));
+            req.on('timeout', () => { req.destroy(); resolve(false); });
+            req.end();
+          });
+          if (!healthy) {
+            console.log('[updater] Backend unreachable, skipping update check');
+            return;
+          }
+        } catch { /* skip health check on error */ }
+
+        checkForUpdates(true).catch((err) => {
+          console.warn('[updater] Initial check failed:', err.message);
+        });
+      }, 5000); // Wait 5 seconds to let the app settle
+    } else {
+      console.log('[updater] Auto-update disabled by user preference');
+    }
   });
 
   // Hide menu bar
@@ -383,6 +507,20 @@ autoUpdater.on('update-downloaded', (info) => {
 
 autoUpdater.on('error', (err) => {
   console.error('[updater] Error:', err.message);
+  // Suppress network/cert errors when the backend is unreachable
+  const isNetworkError = err.message && (
+    err.message.includes('ERR_CERT_AUTHORITY_INVALID') ||
+    err.message.includes('ERR_CONNECTION_REFUSED') ||
+    err.message.includes('ERR_CONNECTION_RESET') ||
+    err.message.includes('ERR_NAME_NOT_RESOLVED') ||
+    err.message.includes('ENOTFOUND') ||
+    err.message.includes('ECONNREFUSED') ||
+    err.message.includes('ETIMEDOUT')
+  );
+  if (isNetworkError) {
+    console.log('[updater] Network error suppressed — backend may be offline');
+    return;
+  }
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-error', { error: err.message });
   }
@@ -416,6 +554,18 @@ ipcMain.handle('get-app-version', () => {
   return { version: app.getVersion() };
 });
 
+// ─── IPC Handlers: Update Preference ────────────────────────────
+
+ipcMain.handle('get-update-preference', () => {
+  return { enabled: readUpdatePreference() };
+});
+
+ipcMain.handle('set-update-preference', (_event, enabled) => {
+  if (typeof enabled !== 'boolean') return { success: false, error: 'enabled must be boolean' };
+  const saved = saveUpdatePreference(enabled);
+  return { success: true, saved };
+});
+
 // ─── IPC Handlers: Server Config ─────────────────────────────────
 
 ipcMain.handle('get-backend-url', () => {
@@ -436,7 +586,8 @@ ipcMain.handle('set-backend-url', async (_event, newUrl) => {
   }
   setBackendUrl(newUrl);
   const saved = saveServerConfig(newUrl);
-  // Updater uses local proxy, no need to reconfigure feed URL
+  // Re-configure the auto-updater with the new backend URL
+  configureUpdater(newUrl);
   return { success: true, saved };
 });
 
@@ -561,6 +712,26 @@ ipcMain.handle('delete-file', async (_event, filePath) => {
   } catch (err) {
     if (err.code === 'ENOENT') return { error: 'File does not exist' };
     return { error: err.message };
+  }
+});
+
+// ─── IPC Handlers: Folder Dialog ────────────────────────────────
+
+ipcMain.handle('open-folder-dialog', async () => {
+  const { dialog } = require('electron');
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+      title: 'Select Workspace Folder',
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true };
+    }
+    const selectedPath = result.filePaths[0].replace(/\\/g, '/');
+    const name = selectedPath.split('/').filter(Boolean).pop() || 'Workspace';
+    return { canceled: false, path: selectedPath, name };
+  } catch (err) {
+    return { canceled: true, error: err.message };
   }
 });
 

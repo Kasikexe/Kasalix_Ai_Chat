@@ -1,9 +1,9 @@
 {
-  "version": "1.4.1",
+  "version": "1.5.11",
   "productName": "AI Chat",
   "appId": "com.aichat.desktop",
   "iconPath": "",
-  "description": "AI Chat Desktop Application",
+  "description": "- Logs Title\n- Resizable Panels in Agent Mode\n- TODOs Panel in Agent Mode ",
   "author": "Kasik",
-  "lastBuild": 1785148993306
+  "lastBuild": 1785162440377
 }

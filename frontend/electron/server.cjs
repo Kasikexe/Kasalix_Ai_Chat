@@ -6,14 +6,16 @@ const { URL } = require('url');
 
 /** Module-level backend URL — can be updated at runtime via setBackendUrl() */
 let currentBackendUrl = 'https://localhost:3001';
-const RELEASE_DIR = path.join(__dirname, '..', 'release');
+let RELEASE_DIR = path.join(__dirname, '..', 'release');
 
 /**
  * Start a local HTTP server that:
  * 1. Serves static files from the specified directory
  * 2. Proxies /api/* requests to a backend server (supports HTTP + HTTPS)
+ * 3. Serves /update/* files from the release directory (for auto-updates)
  */
-function startServer(staticDir, backendUrl) {
+function startServer(staticDir, backendUrl, releaseDir) {
+  if (releaseDir) RELEASE_DIR = releaseDir;
   currentBackendUrl = backendUrl;
   return new Promise((resolve, reject) => {
     const mimeTypes = {

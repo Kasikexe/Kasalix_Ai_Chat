@@ -223,6 +223,46 @@ app.get('/download', async (c) => {
   }
 });
 
+// ─── Terminal API ──────────────────────────────────────────────
+// POST /api/terminal — execute a shell command in the workspace directory
+app.post('/api/terminal', async (c) => {
+  try {
+    const { command, cwd } = await c.req.json();
+    if (!command || typeof command !== 'string') {
+      return c.json({ error: 'command is required' }, 400);
+    }
+
+    // Security: resolve and restrict command to workspace (or any parent)
+    const safeCwd = cwd ? path.resolve(cwd) : process.cwd();
+
+    // Run the command with a timeout
+    const result = await execAsync(command, {
+      cwd: safeCwd,
+      timeout: 60000,
+      shell: true,
+      windowsHide: true,
+      maxBuffer: 10 * 1024 * 1024, // 10MB
+    });
+
+    return c.json({
+      success: true,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      code: 0,
+    });
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; code?: number; killed?: boolean; message?: string };
+    return c.json({
+      success: false,
+      stdout: err.stdout || '',
+      stderr: err.stderr || '',
+      code: err.code ?? 1,
+      killed: err.killed ?? false,
+      timeout: err.killed ?? false,
+    });
+  }
+});
+
 // ─── Auto-Update Server ────────────────────────────────────────
 // Serves latest.yml and installer files for the Electron auto-updater
 const UPDATE_DIR = path.join(process.cwd(), '..', 'frontend', 'release');
@@ -277,6 +317,43 @@ app.post('/api/tools/execute', async (c) => {
   if (!toolId) return c.json({ error: 'toolId is required' }, 400);
   const result = await executeTool(toolId, params || {}, { userInput: userInput || '' });
   return c.json(result);
+});
+
+// ─── Critical Update Status ────────────────────────────────────
+const CRITICAL_UPDATE_FILE = path.join(process.cwd(), 'data', 'update-critical.json');
+
+async function readCriticalStatus(): Promise<{ version: string; critical: boolean } | null> {
+  try {
+    return JSON.parse(await fs.readFile(CRITICAL_UPDATE_FILE, 'utf-8'));
+  } catch { return null; }
+}
+
+async function writeCriticalStatus(version: string, critical: boolean): Promise<void> {
+  await fs.mkdir(path.dirname(CRITICAL_UPDATE_FILE), { recursive: true });
+  await fs.writeFile(CRITICAL_UPDATE_FILE, JSON.stringify({ version, critical, updatedAt: Date.now() }, null, 2), 'utf-8');
+}
+
+// GET /api/build/critical — returns whether the latest build version is critical
+app.get('/api/build/critical', async (c) => {
+  const status = await readCriticalStatus();
+  return c.json({ version: status?.version || null, critical: status?.critical || false });
+});
+
+// PUT /api/build/critical — sets the critical flag for a version (admin only)
+app.put('/api/build/critical', async (c) => {
+  if (!c.get('auth').authenticated) {
+    return c.json({ error: 'Not authenticated' }, 401);
+  }
+  try {
+    const { version, critical } = await c.req.json();
+    if (!version || typeof version !== 'string') {
+      return c.json({ error: 'version is required' }, 400);
+    }
+    await writeCriticalStatus(version, critical === true);
+    return c.json({ success: true, version, critical: critical === true });
+  } catch {
+    return c.json({ error: 'Invalid request body' }, 400);
+  }
 });
 
 // ─── Build Config Endpoints ──────────────────────────────────

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Package, ArrowUp, Loader, Save, FolderOpen, Calendar, User, FileText, Hash, ImageIcon } from 'lucide-react';
+import { X, Package, ArrowUp, Loader, Save, FolderOpen, Calendar, User, FileText, Hash, ImageIcon, AlertTriangle, Send } from 'lucide-react';
 import { api } from '../services/api';
 
 interface BuildConfig {
@@ -22,7 +22,11 @@ interface BuildConfigModalProps {
     description: string;
     author: string;
     appId: string;
+    critical?: boolean;
+    releaseTitle?: string;
   }) => void;
+  /** Pre-fill the description field with draft changelog content */
+  draftDescription?: string;
 }
 
 const DEFAULT_CONFIG: BuildConfig = {
@@ -35,9 +39,11 @@ const DEFAULT_CONFIG: BuildConfig = {
   lastBuild: null,
 };
 
-export function BuildConfigModal({ isOpen, onClose, onStartBuild }: BuildConfigModalProps) {
+export function BuildConfigModal({ isOpen, onClose, onStartBuild, draftDescription }: BuildConfigModalProps) {
   const [config, setConfig] = useState<BuildConfig>(DEFAULT_CONFIG);
+  const [releaseTitle, setReleaseTitle] = useState('');
   const [loading, setLoading] = useState(true);
+  const [critical, setCritical] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
@@ -45,15 +51,25 @@ export function BuildConfigModal({ isOpen, onClose, onStartBuild }: BuildConfigM
   useEffect(() => {
     if (isOpen) {
       setLoading(true);
+      setReleaseTitle('');
+      // Load critical status
+      api.getCriticalUpdate()
+        .then((data) => setCritical(data.critical))
+        .catch(() => setCritical(false));
       api.getBuildConfig()
         .then((data) => {
-          setConfig({ ...DEFAULT_CONFIG, ...data.config });
+          const loaded = { ...DEFAULT_CONFIG, ...data.config };
+          // If draftDescription is provided (from Publish Release), pre-fill description
+          if (draftDescription !== undefined && draftDescription.trim()) {
+            loaded.description = draftDescription;
+          }
+          setConfig(loaded);
         })
         .catch(() => setConfig(DEFAULT_CONFIG))
         .finally(() => setLoading(false));
       setDirty(false);
     }
-  }, [isOpen]);
+  }, [isOpen, draftDescription]);
 
   const update = (partial: Partial<BuildConfig>) => {
     setConfig((prev) => ({ ...prev, ...partial }));
@@ -85,6 +101,10 @@ export function BuildConfigModal({ isOpen, onClose, onStartBuild }: BuildConfigM
       const { lastBuild, ...saveData } = config;
       await api.saveBuildConfig(saveData);
     } catch {}
+    // Save critical flag to backend
+    try {
+      await api.setCriticalUpdate(config.version, critical);
+    } catch {}
     onStartBuild({
       version: config.version,
       productName: config.productName,
@@ -92,6 +112,8 @@ export function BuildConfigModal({ isOpen, onClose, onStartBuild }: BuildConfigM
       description: config.description,
       author: config.author,
       appId: config.appId,
+      critical,
+      releaseTitle: releaseTitle.trim() || undefined,
     });
   };
 
@@ -158,6 +180,20 @@ export function BuildConfigModal({ isOpen, onClose, onStartBuild }: BuildConfigM
                   onChange={(e) => update({ version: e.target.value })}
                   placeholder="e.g. 2.4.1"
                   className="w-full bg-gray-800/80 text-sm text-gray-200 placeholder-gray-600 rounded-lg px-3 py-2 border border-gray-700 outline-none focus:border-purple-700 transition-colors font-mono"
+                />
+              </div>
+
+              {/* ── Release Title ───────────────────────────── */}
+              <div>
+                <label className="flex items-center gap-1.5 text-[10px] text-gray-500 font-medium uppercase tracking-wider mb-1.5">
+                  <Send size={10} />
+                  Release Title
+                </label>
+                <input
+                  type="text" value={releaseTitle}
+                  onChange={(e) => setReleaseTitle(e.target.value)}
+                  placeholder="e.g. Bug Fixes and Performance Improvements"
+                  className="w-full bg-gray-800/80 text-sm text-gray-200 placeholder-gray-600 rounded-lg px-3 py-2 border border-gray-700 outline-none focus:border-purple-700 transition-colors"
                 />
               </div>
 
@@ -229,6 +265,37 @@ export function BuildConfigModal({ isOpen, onClose, onStartBuild }: BuildConfigM
                   placeholder="com.aichat.desktop"
                   className="w-full bg-gray-800/80 text-sm text-gray-200 placeholder-gray-600 rounded-lg px-3 py-2 border border-gray-700 outline-none focus:border-purple-700 transition-colors font-mono text-[11px]"
                 />
+              </div>
+
+              {/* ── Critical Update Toggle ─────────────────── */}
+              <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-red-900/10 border border-red-800/30">
+                <div className="flex items-center gap-3">
+                  <div className={`p-1.5 rounded-lg ${critical ? 'bg-red-700/30' : 'bg-gray-700/50'}`}>
+                    <AlertTriangle size={16} className={critical ? 'text-red-400' : 'text-gray-500'} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-white">
+                      {critical ? '🚨 Critical Update' : 'Mark as Critical'}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {critical
+                        ? 'Users with auto-update OFF will still be notified'
+                        : 'Only users with auto-update ON will see this update'}
+                    </p>
+                  </div>
+                </div>
+                <div
+                  onClick={() => setCritical(!critical)}
+                  className={`relative w-11 h-6 rounded-full cursor-pointer transition-colors duration-200 ${
+                    critical ? 'bg-red-600' : 'bg-gray-700'
+                  }`}
+                >
+                  <div
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
+                      critical ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </div>
               </div>
 
               {/* ── Last Build ─────────────────────────────── */}

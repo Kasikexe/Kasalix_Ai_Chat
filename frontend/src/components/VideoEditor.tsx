@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Play, Pause, Scissors, Plus, Trash2, Film, MessageSquare, Send, Square, Maximize, Minimize, Volume2, Volume1, VolumeX, ChevronRight, Upload, RefreshCw, ExternalLink, PlayCircle, Download } from 'lucide-react';
+import { ServerDownInline } from './ServerDownInline';
+import { useServerStatus } from '../hooks/useServerStatus';
 import { api } from '../services/api';
 import type { Conversation } from '../types';
 
@@ -49,6 +51,7 @@ interface VideoEditorProps {
 }
 
 export function VideoEditor({ conversation, onNewVideoProject }: VideoEditorProps) {
+  const { online } = useServerStatus();
   const [videoPath, setVideoPath] = useState<string | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
@@ -759,7 +762,14 @@ export function VideoEditor({ conversation, onNewVideoProject }: VideoEditorProp
             </div>
           )}
           <div ref={chatRef} className="flex-1 overflow-y-auto p-3 space-y-3">
-            {chatMessages.map((msg, i) => (
+            {!online && chatMessages.filter(m => m.role === 'user').length === 0 && !streaming ? (
+              <ServerDownInline
+                compact
+                message="AI editing is unavailable while the server is offline. The video preview still works."
+                onRetry={() => window.location.reload()}
+              />
+            ) : (
+              chatMessages.map((msg, i) => (
               <div key={i} className={`flex flex-col gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                 <div className={`flex gap-2 max-w-full ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold ${
@@ -809,7 +819,7 @@ export function VideoEditor({ conversation, onNewVideoProject }: VideoEditorProp
                   </div>
                 )}
               </div>
-            ))}
+              )))}
           </div>
           <div className="p-2 border-t border-gray-800">
             <div className="flex items-center gap-1.5 bg-gray-800 rounded-lg border border-gray-700 p-1">

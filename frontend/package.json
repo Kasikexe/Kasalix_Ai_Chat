@@ -1,7 +1,7 @@
 {
   "name": "ai-chat-frontend",
   "private": true,
-  "version": "1.4.1",
+  "version": "1.5.11",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -70,10 +70,10 @@
     },
     "publish": {
       "provider": "generic",
-      "url": "https://localhost:3001",
+      "url": "",
       "channel": "latest"
     }
   },
-  "description": "AI Chat Desktop Application",
+  "description": "- Logs Title\n- Resizable Panels in Agent Mode\n- TODOs Panel in Agent Mode ",
   "author": "Kasik"
 }

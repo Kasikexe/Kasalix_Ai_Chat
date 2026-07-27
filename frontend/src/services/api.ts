@@ -619,6 +619,12 @@ streamChat(
     );
   },
 
+  // --- Folder Dialog (Electron only) ---
+  async openFolderDialog(): Promise<{ canceled: boolean; path?: string; name?: string; error?: string }> {
+    if (!isElectron) return { canceled: true, error: 'Not available in browser' };
+    return electronFileOp('openFolderDialog');
+  },
+
   // --- Planned Features API ---
   async getPlannedFeatures(): Promise<{ features: any[] }> {
     return handleResponse<{ features: any[] }>(
@@ -650,6 +656,23 @@ streamChat(
     return handleResponse<{ success: boolean }>(
       await fetch(`${API_BASE}/planned/${encodeURIComponent(id)}`, authedFetch(`${API_BASE}/planned/${encodeURIComponent(id)}`, {
         method: 'DELETE',
+      }))
+    );
+  },
+
+  // --- Build Critical Update API ---
+  async getCriticalUpdate(): Promise<{ version: string | null; critical: boolean }> {
+    return handleResponse(
+      await fetch(`${API_BASE}/build/critical`, authedFetch(`${API_BASE}/build/critical`))
+    );
+  },
+
+  async setCriticalUpdate(version: string, critical: boolean): Promise<{ success: boolean; version: string; critical: boolean }> {
+    return handleResponse(
+      await fetch(`${API_BASE}/build/critical`, authedFetch(`${API_BASE}/build/critical`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version, critical }),
       }))
     );
   },
@@ -823,6 +846,27 @@ streamChat(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ version, title, type }),
+      }))
+    );
+  },
+
+  // --- Terminal API ---
+  async executeTerminal(
+    command: string,
+    cwd?: string
+  ): Promise<{
+    success: boolean;
+    stdout: string;
+    stderr: string;
+    code: number;
+    killed?: boolean;
+    timeout?: boolean;
+  }> {
+    return handleResponse(
+      await fetch(`${API_BASE}/terminal`, authedFetch(`${API_BASE}/terminal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command, cwd }),
       }))
     );
   },

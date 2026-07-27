@@ -105,6 +105,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [mode, setMode] = useState<ConversationMode>('chat');
   const [viewTab, setViewTab] = useState<'chat' | 'agent' | 'editor' | 'logs' | 'planned'>('chat');
+  const [offlineWorkspace, setOfflineWorkspace] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchActive, setSearchActive] = useState(false);
 
@@ -295,6 +296,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
               <AgentWorkspace
                 key={activeConv?.id || 'new'}
                 conversation={activeConv}
+                offlineWorkspace={offlineWorkspace}
                 onCreateNew={handleNewChat}                model={model}
                 thinkingEnabled={thinkingEnabled}
                 onMessageSent={() => { refresh(); refreshMemory(); }}
@@ -399,6 +401,17 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
       {/* Server down overlay — shows only when running in Electron and server is offline */}
       <ServerDownOverlay
         isElectron={!!(window as any).electronAPI?.isElectron}
+        onBrowseFolder={async () => {
+          try {
+            const result = await (window as any).electronAPI.openFolderDialog();
+            if (!result.canceled && result.path) {
+              setOfflineWorkspace(result.path);
+              handleModeChange('agent');
+            }
+          } catch (e) {
+            console.error('Browse folder failed:', e);
+          }
+        }}
       />
 
       <ModelAssignmentModal

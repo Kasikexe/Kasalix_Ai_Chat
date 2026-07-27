@@ -30,11 +30,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('update-error', handler);
   },
 
+  // ─── Update Preference ──────────────────────
+  getUpdatePreference: () => ipcRenderer.invoke('get-update-preference'),
+  setUpdatePreference: (enabled) => ipcRenderer.invoke('set-update-preference', enabled),
+
   // ─── Server Config ──────────────────────────
   getBackendUrl: () => ipcRenderer.invoke('get-backend-url'),
   setBackendUrl: (url) => ipcRenderer.invoke('set-backend-url', url),
   checkServerHealth: () => ipcRenderer.invoke('check-server-health'),
   testServerUrl: (url) => ipcRenderer.invoke('test-server-url', url),
+
+  // ─── Folder Dialog ───────────────────────────
+  openFolderDialog: () => ipcRenderer.invoke('open-folder-dialog'),
 
   // ─── Network Detection ──────────────────────
   detectIPs: () => ipcRenderer.invoke('detect-ips'),

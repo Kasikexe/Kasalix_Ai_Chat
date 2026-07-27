@@ -62,12 +62,7 @@ export function ChangelogView({ isAdmin = false }: { isAdmin?: boolean }) {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Publish dialog state
-  const [showPublish, setShowPublish] = useState(false);
-  const [pubVersion, setPubVersion] = useState('');
-  const [pubTitle, setPubTitle] = useState('');
-  const [pubType, setPubType] = useState<'major' | 'minor' | 'patch'>('patch');
-  const [publishing, setPublishing] = useState(false);
+  // Publish is now handled via BuildConfigModal — dialog state removed
 
   const fetchChangelog = useCallback(async () => {
     setLoading(true);
@@ -116,38 +111,7 @@ export function ChangelogView({ isAdmin = false }: { isAdmin?: boolean }) {
     saveTimerRef.current = setTimeout(() => saveDraft(value), 1500);
   };
 
-  // Publish draft as release
-  const handlePublish = async () => {
-    if (!pubVersion.trim() || !pubTitle.trim()) return;
-    setPublishing(true);
-    setBuildResult(null);
-    try {
-      await api.publishChangelogDraft(pubVersion.trim(), pubTitle.trim(), pubType);
-      setShowPublish(false);
-      setPubVersion('');
-      setPubTitle('');
-      setPubType('patch');
-      setDraft('');
-      setDraftSavedAt(0);
-      await fetchChangelog();
-
-      // Auto-build after publishing — pass the version for package.json update
-      setBuilding(true);
-      setBuildStage('');
-      setBuildOutput('');
-      try {
-        const result = await api.triggerBuild(pubVersion.trim(), {
-          onStage: (stage) => setBuildStage(stage),
-          onChunk: (chunk) => setBuildOutput((prev) => prev + chunk),
-        });
-        setBuildResult({ success: result.success, output: result.output, error: result.error });
-      } catch (e) {
-        setBuildResult({ success: false, error: e instanceof Error ? e.message : 'Build request failed' });
-      }
-      setBuilding(false);
-    } catch {}
-    setPublishing(false);
-  };
+  // Draft is now published via BuildConfigModal — removed separate publish handler
 
   const handleDelete = async (version: string) => {
     try {
@@ -169,8 +133,23 @@ export function ChangelogView({ isAdmin = false }: { isAdmin?: boolean }) {
     description: string;
     author: string;
     appId: string;
+    releaseTitle?: string;
   }) => {
     setShowConfig(false);
+
+    // If there's a draft, publish it first (using the config version)
+    if (draft.trim()) {
+      try {
+        const pubTitle = buildConfig.releaseTitle?.trim() || buildConfig.productName;
+        await api.publishChangelogDraft(buildConfig.version, pubTitle, 'patch');
+        setDraft('');
+        setDraftSavedAt(0);
+        await fetchChangelog();
+      } catch (e) {
+        console.error('Failed to publish draft:', e);
+      }
+    }
+
     setBuilding(true);
     setBuildStage('');
     setBuildOutput('');
@@ -226,6 +205,7 @@ export function ChangelogView({ isAdmin = false }: { isAdmin?: boolean }) {
         isOpen={showConfig}
         onClose={() => setShowConfig(false)}
         onStartBuild={handleStartBuild}
+        draftDescription={draft}
       />
 
       {/* Build progress modal */}
@@ -270,7 +250,7 @@ export function ChangelogView({ isAdmin = false }: { isAdmin?: boolean }) {
                 <div className="flex items-center gap-1.5">
                   {draft.trim() && (
                     <button
-                      onClick={() => setShowPublish(true)}
+                      onClick={() => setShowConfig(true)}
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white transition-all shadow-lg shadow-purple-600/20 active:scale-95"
                     >
                       <Send size={12} />
@@ -310,71 +290,6 @@ export function ChangelogView({ isAdmin = false }: { isAdmin?: boolean }) {
                   </div>
                 </>
               )}
-            </div>
-          </div>
-        )}
-
-        {/* Publish dialog */}
-        {showPublish && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-            onClick={(e) => { if (e.target === e.currentTarget) setShowPublish(false); }}
-          >
-            <div className="w-full max-w-md bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl animate-fade-in p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <Send size={16} className="text-purple-400" />
-                  <h3 className="text-sm font-semibold text-white">Publish Release</h3>
-                </div>
-                <button onClick={() => setShowPublish(false)} className="p-1 hover:bg-gray-800 rounded text-gray-400">
-                  <X size={16} />
-                </button>
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    <label className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">Version</label>
-                    <input type="text" value={pubVersion} onChange={(e) => setPubVersion(e.target.value)}
-                      placeholder="e.g. 2.4.1"
-                      className="w-full mt-1 bg-gray-800 text-sm text-gray-200 placeholder-gray-600 rounded-lg px-3 py-2 border border-gray-700 outline-none focus:border-purple-700 transition-colors font-mono"
-                    />
-                  </div>
-                  <div className="w-28">
-                    <label className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">Type</label>
-                    <select value={pubType} onChange={(e) => setPubType(e.target.value as any)}
-                      className="w-full mt-1 bg-gray-800 text-sm text-gray-200 rounded-lg px-3 py-2 border border-gray-700 outline-none focus:border-purple-700 transition-colors"
-                    >
-                      <option value="major">🌟 Major</option>
-                      <option value="minor">📦 Minor</option>
-                      <option value="patch">🔧 Patch</option>
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  <label className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">Title</label>
-                  <input type="text" value={pubTitle} onChange={(e) => setPubTitle(e.target.value)}
-                    placeholder="e.g. Bug Fixes and Improvements"
-                    className="w-full mt-1 bg-gray-800 text-sm text-gray-200 placeholder-gray-600 rounded-lg px-3 py-2 border border-gray-700 outline-none focus:border-purple-700 transition-colors"
-                  />
-                </div>
-
-                {/* Preview of what will be published */}
-                {draft.trim() && (
-                  <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
-                    <p className="text-[9px] text-gray-500 uppercase tracking-wider font-medium mb-1.5">Draft Preview</p>
-                    <div className="text-xs text-gray-400 leading-relaxed line-clamp-4 whitespace-pre-wrap">
-                      {draft}
-                    </div>
-                  </div>
-                )}
-
-                <button onClick={handlePublish} disabled={publishing || !pubVersion.trim() || !pubTitle.trim()}
-                  className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white text-xs font-medium rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-purple-600/20 active:scale-[0.98]"
-                >
-                  {publishing ? <Loader size={14} className="animate-spin" /> : <Send size={14} />}
-                  {publishing ? 'Publishing & Building...' : 'Publish & Build'}
-                </button>
-              </div>
             </div>
           </div>
         )}
