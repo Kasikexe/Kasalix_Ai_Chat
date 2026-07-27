@@ -4,9 +4,12 @@ import { Header } from './components/Header';
 import { ChatView } from './components/ChatView';
 import { AgentWorkspace } from './components/AgentWorkspace';
 import { VideoEditor } from './components/VideoEditor';
+import { ChangelogView } from './components/ChangelogView';
+import { PlannedView } from './components/PlannedView';
 import { ServerDownOverlay } from './components/ServerDownOverlay';
 import { ModelAssignmentModal } from './components/ModelAssignmentModal';
 import { UserSettingsModal } from './components/UserSettingsModal';
+import { UpdateBanner } from './components/UpdateBanner';
 import { PasswordPrompt } from './components/PasswordPrompt';
 import { UserSetup } from './components/UserSetup';
 import { ToastProvider } from './hooks/useToast';
@@ -101,6 +104,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
   const [userSettingsOpen, setUserSettingsOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [mode, setMode] = useState<ConversationMode>('chat');
+  const [viewTab, setViewTab] = useState<'chat' | 'agent' | 'editor' | 'logs' | 'planned'>('chat');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchActive, setSearchActive] = useState(false);
 
@@ -129,15 +133,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
     api.getModels().then(setAllModels).catch(() => {});
   }, []);
 
-  // Web search toggle
-  const SEARCH_KEY = 'ai-chat:searchEnabled';
-  const [searchEnabled, setSearchEnabled] = useState<boolean>(() => {
-    try { return localStorage.getItem(SEARCH_KEY) === 'true'; }
-    catch { return false; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem(SEARCH_KEY, String(searchEnabled)); } catch {}
-  }, [searchEnabled]);
+  // Web search is always enabled (no toggle needed)
 
   const isMobile = useIsMobile();
 
@@ -209,11 +205,16 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
     if (activeId === id) setActiveId(null);
   };
 
-  const handleModeChange = (newMode: ConversationMode) => {
+  const handleModeChange = (newMode: ConversationMode | 'logs' | 'planned') => {
+    if (newMode === 'logs' || newMode === 'planned') {
+      setViewTab(newMode);
+      return;
+    }
     // Agent & Editor modes are only available in the desktop app
     const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
     if (!isElectron && (newMode === 'agent' || newMode === 'editor')) return;
     setMode(newMode);
+    setViewTab(newMode);
     setActiveId(null);
   };
 
@@ -277,17 +278,20 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
           isAdmin={isAuthed}
           thinkingEnabled={thinkingEnabled}
           onToggleThinking={onToggleThinking}
-          searchEnabled={searchEnabled}
-          onToggleSearch={() => setSearchEnabled(s => !s)}
           conversation={activeConv}
+          hideThinking={mode === 'agent'}
         />
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
           {/* Smooth mode transition wrapper */}
           <div
-            key={mode}
+            key={viewTab}
             className="flex-1 flex flex-col min-h-0 animate-mode-fade-in"
           >
-            {mode === 'agent' ? (
+            {viewTab === 'logs' ? (
+              <ChangelogView isAdmin={isAuthed} />
+            ) : viewTab === 'planned' ? (
+              <PlannedView isAdmin={isAuthed} />
+            ) : mode === 'agent' ? (
               <AgentWorkspace
                 key={activeConv?.id || 'new'}
                 conversation={activeConv}
@@ -331,7 +335,6 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
                     conversationId={activeConv?.id}
                     model={model}
                 thinkingEnabled={thinkingEnabled}
-                searchEnabled={searchEnabled}
                 onMessageSent={() => { refresh(); refreshMemory(); }}
                 onConversationCreated={setActiveId}
                 searchQuery={searchActive ? searchQuery : undefined}
@@ -389,6 +392,9 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
         onResetMemory={resetMemory}
         onRefreshMemory={refreshMemory}
       />
+
+      {/* Update notification banner — shows in Electron when new version is available */}
+      <UpdateBanner />
 
       {/* Server down overlay — shows only when running in Electron and server is offline */}
       <ServerDownOverlay

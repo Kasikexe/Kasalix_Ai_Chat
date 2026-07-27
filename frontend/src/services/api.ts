@@ -387,7 +387,6 @@ streamChat(
   signal?: AbortSignal,
   mode?: ConversationMode,
   workspacePath?: string,
-  searchEnabled?: boolean,
   temperature?: number,
   top_p?: number,
   max_tokens?: number,
@@ -405,7 +404,7 @@ streamChat(
         mode,
         workspacePath,
         thinkingEnabled: localStorage.getItem('ai-chat:thinkingEnabled') === 'true',
-        searchEnabled: searchEnabled === true,
+        searchEnabled: true,
         temperature,
         top_p,
         max_tokens,
@@ -617,6 +616,214 @@ streamChat(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspacePath }),
       })
+    );
+  },
+
+  // --- Planned Features API ---
+  async getPlannedFeatures(): Promise<{ features: any[] }> {
+    return handleResponse<{ features: any[] }>(
+      await fetch(`${API_BASE}/planned`, authedFetch(`${API_BASE}/planned`))
+    );
+  },
+
+  async addPlannedFeature(feature: { title: string; description: string; status?: string; icon?: string }): Promise<{ feature: any }> {
+    return handleResponse<{ feature: any }>(
+      await fetch(`${API_BASE}/planned`, authedFetch(`${API_BASE}/planned`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(feature),
+      }))
+    );
+  },
+
+  async updatePlannedFeature(id: string, updates: { title?: string; description?: string; status?: string; icon?: string; order?: number }): Promise<{ feature: any }> {
+    return handleResponse<{ feature: any }>(
+      await fetch(`${API_BASE}/planned/${encodeURIComponent(id)}`, authedFetch(`${API_BASE}/planned/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      }))
+    );
+  },
+
+  async deletePlannedFeature(id: string): Promise<{ success: boolean }> {
+    return handleResponse<{ success: boolean }>(
+      await fetch(`${API_BASE}/planned/${encodeURIComponent(id)}`, authedFetch(`${API_BASE}/planned/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }))
+    );
+  },
+
+  // --- Build Config API ---
+  async getBuildConfig(): Promise<{
+    config: {
+      version: string;
+      productName: string;
+      appId: string;
+      iconPath: string;
+      description: string;
+      author: string;
+      lastBuild: number | null;
+    };
+  }> {
+    return handleResponse(
+      await fetch(`${API_BASE}/build/config`, authedFetch(`${API_BASE}/build/config`))
+    );
+  },
+
+  async saveBuildConfig(config: Record<string, any>): Promise<{ config: any }> {
+    return handleResponse(
+      await fetch(`${API_BASE}/build/config`, authedFetch(`${API_BASE}/build/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      }))
+    );
+  },
+
+  // --- Build Trigger API (SSE streaming) ---
+  triggerBuild(
+    version?: string,
+    callbacks?: {
+      onStage?: (stage: string) => void;
+      onChunk?: (content: string) => void;
+    },
+    extraConfig?: {
+      productName?: string;
+      iconPath?: string;
+      description?: string;
+      author?: string;
+      appId?: string;
+    }
+  ): Promise<{ success: boolean; output?: string; error?: string; version?: string }> {
+    return (async () => {
+      const body: Record<string, any> = {};
+      if (version) body.version = version;
+      if (extraConfig) {
+        if (extraConfig.productName) body.productName = extraConfig.productName;
+        if (extraConfig.iconPath !== undefined) body.iconPath = extraConfig.iconPath;
+        if (extraConfig.description) body.description = extraConfig.description;
+        if (extraConfig.author !== undefined) body.author = extraConfig.author;
+        if (extraConfig.appId) body.appId = extraConfig.appId;
+      }
+      const res = await fetch(`${API_BASE}/build`, authedFetch(`${API_BASE}/build`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }));
+
+      if (!res.ok || !res.body) {
+        const text = await res.text().catch(() => '');
+        throw new Error(text || `Build request failed: ${res.statusText}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let output = '';
+
+      return new Promise((resolve, reject) => {
+        (async () => {
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const events = buffer.split('\n\n');
+              buffer = events.pop() || '';
+
+              for (const evt of events) {
+                const line = evt.trim();
+                if (!line.startsWith('data:')) continue;
+                const payload = line.slice(5).trim();
+                if (!payload) continue;
+                try {
+                  const parsed = JSON.parse(payload);
+                  switch (parsed.type) {
+                    case 'stage':
+                      callbacks?.onStage?.(parsed.stage);
+                      break;
+                    case 'chunk':
+                      output += parsed.content;
+                      callbacks?.onChunk?.(parsed.content);
+                      break;
+                    case 'done':
+                      resolve({
+                        success: parsed.success,
+                        output: parsed.output || output,
+                        version: parsed.version,
+                      });
+                      return;
+                    case 'error':
+                      reject(new Error(parsed.error || 'Build failed'));
+                      return;
+                  }
+                } catch (e) {
+                  console.error('Build SSE parse error:', e);
+                }
+              }
+            }
+            // Stream ended without done/error
+            resolve({ success: true, output });
+          } catch (e) {
+            reject(e);
+          } finally {
+            reader.releaseLock();
+          }
+        })();
+      });
+    })();
+  },
+
+  // --- Changelog API ---
+  async getChangelog(): Promise<{ entries: any[] }> {
+    return handleResponse<{ entries: any[] }>(
+      await fetch(`${API_BASE}/changelog`, authedFetch(`${API_BASE}/changelog`))
+    );
+  },
+
+  async addChangelogEntry(entry: { version: string; title: string; description: string; type: string }): Promise<{ entry: any }> {
+    return handleResponse<{ entry: any }>(
+      await fetch(`${API_BASE}/changelog`, authedFetch(`${API_BASE}/changelog`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(entry),
+      }))
+    );
+  },
+
+  async deleteChangelogEntry(version: string): Promise<{ success: boolean }> {
+    return handleResponse<{ success: boolean }>(
+      await fetch(`${API_BASE}/changelog/${encodeURIComponent(version)}`, authedFetch(`${API_BASE}/changelog/${encodeURIComponent(version)}`, {
+        method: 'DELETE',
+      }))
+    );
+  },
+
+  // --- Changelog Draft API ---
+  async getChangelogDraft(): Promise<{ draft: { description: string; autoSavedAt: number } }> {
+    return handleResponse(
+      await fetch(`${API_BASE}/changelog/draft`, authedFetch(`${API_BASE}/changelog/draft`))
+    );
+  },
+
+  async saveChangelogDraft(description: string): Promise<{ draft: { description: string; autoSavedAt: number } }> {
+    return handleResponse(
+      await fetch(`${API_BASE}/changelog/draft`, authedFetch(`${API_BASE}/changelog/draft`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description }),
+      }))
+    );
+  },
+
+  async publishChangelogDraft(version: string, title: string, type: string): Promise<{ entry: any }> {
+    return handleResponse(
+      await fetch(`${API_BASE}/changelog/draft/publish`, authedFetch(`${API_BASE}/changelog/draft/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version, title, type }),
+      }))
     );
   },
 

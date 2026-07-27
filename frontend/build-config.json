@@ -1,9 +1,9 @@
 {
-  "version": "1.2.0",
+  "version": "1.4.1",
   "productName": "AI Chat",
   "appId": "com.aichat.desktop",
   "iconPath": "",
   "description": "AI Chat Desktop Application",
-  "author": "",
-  "lastBuild": 1785092348694
+  "author": "Kasik",
+  "lastBuild": 1785148993306
 }

@@ -1,3 +1,7 @@
+// Disable SSL verification for self-signed certs (local dev server)
+// Needed so the auto-updater can fetch latest.yml and the installer .exe
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -16,24 +20,45 @@ const CONFIG_FILE = 'server-config.json';
 let mainWindow = null;
 let server = null;
 
+// ─── Certificate Handling (self-signed certs) ─────────────────────
+// Ensure the auto-updater and other net requests trust our self-signed cert
+app.on('certificate-error', (event, _webContents, url, _error, _certificate, callback) => {
+  // Allow our own backend URLs (localhost + any local network IP)
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname;
+    if (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname.startsWith('192.168.') ||
+      hostname.startsWith('10.') ||
+      hostname.startsWith('172.16.')
+    ) {
+      event.preventDefault();
+      callback(true); // Trust the certificate
+      return;
+    }
+  } catch {}
+  // For all other URLs, use default behavior
+  callback(false);
+});
+
 // ─── Auto-Updater ───────────────────────────────────────────────
 
-// Auto-download enabled — updates download silently in the background
-autoUpdater.autoDownload = true;
+// Don't auto-download — we notify the user and let them choose
+autoUpdater.autoDownload = false;
 autoUpdater.allowPrerelease = true;
 
-/** Configure the updater feed URL based on the current backend URL */
-function configureUpdater(backendUrl) {
+/** Configure the updater to fetch updates through the local HTTP proxy */
+function configureUpdater(port) {
   try {
-    const url = new URL(backendUrl);
-    // electron-updater expects a generic provider URL
-    // Point it to the backend server which serves the update files
+    const feedUrl = `http://localhost:${port}/update`;
     autoUpdater.setFeedURL({
       provider: 'generic',
-      url: `${url.protocol}//${url.host}`,
+      url: feedUrl,
       channel: 'latest',
     });
-    console.log(`[updater] Feed URL configured: ${url.protocol}//${url.host}`);
+    console.log(`[updater] Feed URL configured: ${feedUrl}`);
   } catch (err) {
     console.error('[updater] Failed to configure feed URL:', err.message);
   }
@@ -287,14 +312,14 @@ app.whenReady().then(async () => {
 
   console.log(`[main] Backend URL: ${backendUrl}`);
 
-  // Configure the auto-updater to use the backend as update server
-  configureUpdater(backendUrl);
-
   // Start a local static file server that also proxies /api to the backend
   const distDir = path.join(__dirname, '..', 'dist');
   const result = await startServer(distDir, backendUrl);
   server = result.server;
   const port = result.port;
+
+  // Configure the auto-updater to use the local HTTP proxy (no SSL issues)
+  configureUpdater(port);
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -347,21 +372,13 @@ autoUpdater.on('download-progress', (progress) => {
 });
 
 autoUpdater.on('update-downloaded', (info) => {
-  console.log(`[updater] Update v${info.version} downloaded. Installing in 3 seconds...`);
+  console.log(`[updater] Update v${info.version} downloaded and ready to install.`);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-downloaded', {
       version: info.version,
       releaseNotes: info.releaseNotes || '',
     });
-    // Notify the user before restarting
-    mainWindow.webContents.executeJavaScript(`
-      alert('Update v${info.version} downloaded! The app will restart to install it.');
-    `).catch(() => {});
   }
-  // Auto-install after a short delay
-  setTimeout(() => {
-    autoUpdater.quitAndInstall(false, true);
-  }, 3000);
 });
 
 autoUpdater.on('error', (err) => {
@@ -419,8 +436,7 @@ ipcMain.handle('set-backend-url', async (_event, newUrl) => {
   }
   setBackendUrl(newUrl);
   const saved = saveServerConfig(newUrl);
-  // Reconfigure the updater with the new URL
-  configureUpdater(newUrl);
+  // Updater uses local proxy, no need to reconfigure feed URL
   return { success: true, saved };
 });
 

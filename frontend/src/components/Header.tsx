@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Menu, Brain, Download, Sparkles, Lock, Globe } from 'lucide-react';
+import { Menu, Brain, Download, Sparkles, Lock } from 'lucide-react';
 import type { Conversation } from '../types';
 
 interface HeaderProps {
@@ -8,13 +8,12 @@ interface HeaderProps {
   isAdmin: boolean;
   thinkingEnabled: boolean;
   onToggleThinking: () => void;
-  searchEnabled: boolean;
-  onToggleSearch: () => void;
   conversation?: Conversation | null;
+  hideThinking?: boolean;
 }
 
 export function Header({
-  onMenuClick, onAdminClick, isAdmin, thinkingEnabled, onToggleThinking, searchEnabled, onToggleSearch, conversation
+  onMenuClick, onAdminClick, isAdmin, thinkingEnabled, onToggleThinking, conversation, hideThinking
 }: HeaderProps) {
   const [exportOpen, setExportOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
@@ -128,44 +127,23 @@ export function Header({
           </div>
         )}
 
-        {/* Thinking mode toggle */}
-        <button
-          onClick={onToggleThinking}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-            thinkingEnabled
-              ? 'bg-purple-900/40 text-purple-300 border border-purple-700'
-              : 'bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700'
-          }`}
-          title={thinkingEnabled ? 'Thinking mode ON (slower, smarter)' : 'Thinking mode OFF (faster, direct)'}
-        >
-          <Brain size={14} />
-          <span className="hidden sm:inline">
-            {thinkingEnabled ? 'Thinking' : 'Fast'}
-          </span>
-        </button>
-
-        {/* Web Search toggle */}
-        <button
-          onClick={onToggleSearch}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-            searchEnabled
-              ? 'bg-sky-900/40 text-sky-300 border border-sky-700'
-              : 'bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700'
-          }`}
-          title={
-            searchEnabled
-              ? 'Web Search ON — AI searches the internet for answers'
-              : 'Web Search OFF — AI uses its own knowledge'
-          }
-        >
-          <Globe size={14} />
-          <span className="hidden sm:inline">
-            {searchEnabled ? 'Search' : 'Web'}
-          </span>
-          {searchEnabled && (
-            <span className="flex-shrink-0 w-1.5 h-1.5 bg-sky-400 rounded-full animate-pulse" />
-          )}
-        </button>
+        {/* Thinking mode toggle — hidden in agent mode */}
+        {!hideThinking && (
+          <button
+            onClick={onToggleThinking}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              thinkingEnabled
+                ? 'bg-purple-900/40 text-purple-300 border border-purple-700'
+                : 'bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700'
+            }`}
+            title={thinkingEnabled ? 'Thinking mode ON (slower, smarter)' : 'Thinking mode OFF (faster, direct)'}
+          >
+            <Brain size={14} />
+            <span className="hidden sm:inline">
+              {thinkingEnabled ? 'Thinking' : 'Fast'}
+            </span>
+          </button>
+        )}
 
         <button
           onClick={onAdminClick}

@@ -35,7 +35,6 @@ export function AgentWorkspace({ conversation, onCreateNew, model, thinkingEnabl
     'agent',
     workspacePath,
     undefined,
-    undefined,
     planningEnabled
   );
   const [showSetup, setShowSetup] = useState(!conversation?.workspacePath);

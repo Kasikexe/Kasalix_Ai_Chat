@@ -1,7 +1,7 @@
 {
   "name": "ai-chat-frontend",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.4.1",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -10,7 +10,6 @@
     "preview": "vite preview",
     "electron:dev": "vite build && cross-env NODE_ENV=development electron .",
     "build:electron": "vite build && electron-builder --win --config",
-    "build:electron:portable": "vite build && electron-builder --win portable --config",
     "configure-build": "node scripts/configure-build.mjs"
   },
   "dependencies": {
@@ -54,26 +53,20 @@
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
         }
       ],
       "sign": false,
       "signAndEditExecutable": false
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "oneClick": true,
+      "perMachine": true,
+      "allowElevation": true,
+      "guid": "com-aichat-desktop",
       "createDesktopShortcut": true,
       "shortcutName": "AI Chat",
-      "artifactName": "AI-Chat-Setup-${version}.exe"
-    },
-    "portable": {
-      "artifactName": "AI-Chat-Portable-${version}.exe"
+      "artifactName": "AI-Chat-Setup-${version}.exe",
+      "runAfterFinish": true
     },
     "publish": {
       "provider": "generic",
@@ -81,5 +74,6 @@
       "channel": "latest"
     }
   },
-  "description": "AI Chat Desktop Application"
+  "description": "AI Chat Desktop Application",
+  "author": "Kasik"
 }

@@ -34,7 +34,6 @@ export function useChat(
   thinkingEnabled = false,
   mode: ConversationMode = 'chat',
   workspacePath?: string,
-  searchEnabled = false,
   onConversationUpdate?: (id: string, updates: Partial<{ title: string }>) => void,
   planningEnabled = false
 ) {
@@ -69,8 +68,6 @@ export function useChat(
   modeRef.current = mode;
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
-  const searchEnabledRef = useRef(searchEnabled);
-  searchEnabledRef.current = searchEnabled;
   const planningEnabledRef = useRef(planningEnabled);
   planningEnabledRef.current = planningEnabled;
 
@@ -178,7 +175,6 @@ export function useChat(
         controller.signal,
         modeRef.current,
         workspacePathRef.current,
-        searchEnabledRef.current,
         settings.temperature,
         settings.top_p,
         settings.max_tokens,

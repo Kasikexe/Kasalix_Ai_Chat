@@ -9,7 +9,6 @@ interface Props {
   conversationId?: string;
   model: string;
   thinkingEnabled?: boolean;
-  searchEnabled?: boolean;
   onMessageSent: () => void;
   onConversationCreated: (id: string) => void;
   searchQuery?: string;
@@ -21,11 +20,11 @@ interface Props {
 }
 
 export function ChatView({
-  initialMessages, conversationId, model, thinkingEnabled = false, searchEnabled = false, onMessageSent, onConversationCreated,
+  initialMessages, conversationId, model, thinkingEnabled = false, onMessageSent, onConversationCreated,
   searchQuery, onSearchChange, onSearchNext, onSearchPrev, onForkConversation, onConversationUpdate,
 }: Props) {
   const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, conversationId: convId, currentStage, liveDuration } = useChat(
-    model, initialMessages, conversationId, thinkingEnabled, 'chat', undefined, searchEnabled, onConversationUpdate
+    model, initialMessages, conversationId, thinkingEnabled, 'chat', undefined, onConversationUpdate
   );
 
   // Multi-message selection state

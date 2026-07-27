@@ -6,6 +6,7 @@ const { URL } = require('url');
 
 /** Module-level backend URL — can be updated at runtime via setBackendUrl() */
 let currentBackendUrl = 'https://localhost:3001';
+const RELEASE_DIR = path.join(__dirname, '..', 'release');
 
 /**
  * Start a local HTTP server that:
@@ -45,6 +46,32 @@ function startServer(staticDir, backendUrl) {
       if (req.method === 'OPTIONS') {
         res.writeHead(204);
         res.end();
+        return;
+      }
+
+      // Serve update files from the release directory (for auto-updates)
+      if (pathname.startsWith('/update/')) {
+        const updateFile = pathname.replace('/update/', '');
+        // Prevent path traversal
+        if (updateFile.includes('..') || updateFile.includes('\\')) {
+          res.writeHead(400);
+          res.end('Invalid path');
+          return;
+        }
+        const filePath = path.join(RELEASE_DIR, updateFile);
+        try {
+          const data = await fs.promises.readFile(filePath);
+          const ext = path.extname(filePath).toLowerCase();
+          const contentType =
+            ext === '.yml' || ext === '.yaml' ? 'text/yaml' :
+            ext === '.exe' ? 'application/octet-stream' :
+            'application/octet-stream';
+          res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'no-cache' });
+          res.end(data);
+        } catch {
+          res.writeHead(404);
+          res.end('Not Found');
+        }
         return;
       }
 

@@ -13,9 +13,15 @@ import settingsRoutes from './routes/settings';
 import filesRoutes from './routes/files';
 import editorRoutes from './routes/editor';
 import memoryRoutes from './routes/memory';
+import changelogRoutes from './routes/changelog';
+import plannedRoutes from './routes/planned';
 import { errorHandler, generateId } from './utils/helpers';
 import { registerAllTools } from './services/tools/register';
 import { getAllTools, executeTool } from './services/tools/index';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 // Register built-in tools
 registerAllTools();
@@ -43,11 +49,26 @@ app.use('*', async (c, next) => {
   await next();
 });
 
-// Settings auth: gated by admin password
+// Admin auth: gated by admin password — applies to settings AND changelog admin endpoints
 app.use('/api/settings/*', async (c, next) => {
   const authCookie = c.req.header('Cookie');
   const isAuthed = authCookie?.includes('settings_auth=1') || false;
   c.set('auth', { authenticated: isAuthed });
+  await next();
+});
+app.use('/api/planned/*', async (c, next) => {
+  const authCookie = c.req.header('Cookie');
+  c.set('auth', { authenticated: authCookie?.includes('settings_auth=1') || false });
+  await next();
+});
+app.use('/api/changelog/*', async (c, next) => {
+  const authCookie = c.req.header('Cookie');
+  c.set('auth', { authenticated: authCookie?.includes('settings_auth=1') || false });
+  await next();
+});
+app.use('/api/build/*', async (c, next) => {
+  const authCookie = c.req.header('Cookie');
+  c.set('auth', { authenticated: authCookie?.includes('settings_auth=1') || false });
   await next();
 });
 
@@ -60,6 +81,8 @@ app.route('/api/settings', settingsRoutes);
 app.route('/api/files', filesRoutes);
 app.route('/api/editor', editorRoutes);
 app.route('/api/memory', memoryRoutes);
+app.route('/api/changelog', changelogRoutes);
+app.route('/api/planned', plannedRoutes);
 
 // Serve generated images
 const GENERATED_DIR = path.join(process.cwd(), 'generated_images');
@@ -148,24 +171,24 @@ const RELEASE_DIR = path.join(process.cwd(), '..', 'frontend', 'release');
 
 app.get('/download', async (c) => {
   try {
-    // Find the latest .exe in the release directory
     const files = await fs.readdir(RELEASE_DIR);
-    const exeFiles = files.filter((f) => f.endsWith('.exe') && !f.endsWith('.exe.blockmap'));
-    if (exeFiles.length === 0) {
-      // No build available yet — return a helpful page or redirect
+    // Find the latest Setup installer
+    const setupFiles = files
+      .filter((f) => f.includes('Setup') && f.endsWith('.exe') && !f.endsWith('.exe.blockmap'))
+      .sort().reverse();
+    
+    const exeToServe = setupFiles.length > 0 ? setupFiles[0] : null;
+    if (!exeToServe) {
       return c.redirect('https://github.com/your-repo/releases/latest');
     }
-
-    // Serve the most recent .exe (sort by name which includes version)
-    exeFiles.sort().reverse();
-    const latest = exeFiles[0];
-    const filePath = path.join(RELEASE_DIR, latest);
+    
+    const filePath = path.join(RELEASE_DIR, exeToServe);
     const data = await fs.readFile(filePath);
 
     return new Response(data, {
       headers: {
         'Content-Type': 'application/octet-stream',
-        'Content-Disposition': `attachment; filename="${latest}"`,
+        'Content-Disposition': `attachment; filename="${exeToServe}"`,
         'Content-Length': String(data.length),
       },
     });
@@ -254,6 +277,280 @@ app.post('/api/tools/execute', async (c) => {
   if (!toolId) return c.json({ error: 'toolId is required' }, 400);
   const result = await executeTool(toolId, params || {}, { userInput: userInput || '' });
   return c.json(result);
+});
+
+// ─── Build Config Endpoints ──────────────────────────────────
+// GET /api/build/config — returns current build config from build-config.json
+app.get('/api/build/config', async (c) => {
+  if (!c.get('auth').authenticated) {
+    return c.json({ error: 'Not authenticated' }, 401);
+  }
+  const cfgPath = path.join(path.resolve(process.cwd(), '..', 'frontend'), 'build-config.json');
+  try {
+    const cfg = JSON.parse(await fs.readFile(cfgPath, 'utf-8'));
+    return c.json({ config: cfg });
+  } catch {
+    // Return defaults
+    return c.json({
+      config: {
+        version: '1.0.0',
+        productName: 'AI Chat',
+        appId: 'com.aichat.desktop',
+        iconPath: '',
+        description: 'AI Chat Desktop Application',
+        author: '',
+        lastBuild: null,
+      },
+    });
+  }
+});
+
+// PUT /api/build/config — saves updated build config to build-config.json
+app.put('/api/build/config', async (c) => {
+  if (!c.get('auth').authenticated) {
+    return c.json({ error: 'Not authenticated' }, 401);
+  }
+  const frontendDir = path.resolve(process.cwd(), '..', 'frontend');
+  const cfgPath = path.join(frontendDir, 'build-config.json');
+  try {
+    const body = await c.req.json();
+    const current = await fs.readFile(cfgPath, 'utf-8').then(JSON.parse).catch(() => ({}));
+    const updated = { ...current, ...body, lastBuild: current.lastBuild || null };
+    await fs.writeFile(cfgPath, JSON.stringify(updated, null, 2), 'utf-8');
+    return c.json({ config: updated });
+  } catch (e) {
+    return c.json({ error: 'Failed to save build config' }, 500);
+  }
+});
+
+// ─── Build Trigger (SSE) ─────────────────────────────────────
+// POST /api/build — triggers the Electron build (admin only)
+// Accepts { version, productName, iconPath, description, author } to update config before building
+// Returns SSE stream with real-time progress: stage, chunk, done/error events
+app.post('/api/build', async (c) => {
+  if (!c.get('auth').authenticated) {
+    return c.json({ error: 'Not authenticated' }, 401);
+  }
+
+  const frontendDir = path.resolve(process.cwd(), '..', 'frontend');
+  const pm = process.env.PKG_MANAGER === 'bun' ? 'bun' : 'npm';
+
+  // Read optional config from request body
+  let buildVersion: string | undefined;
+  let buildMeta: { productName?: string; iconPath?: string; description?: string; author?: string; appId?: string } = {};
+  try {
+    const body = await c.req.json();
+    buildVersion = body.version;
+    if (body.productName) buildMeta.productName = body.productName;
+    if (body.iconPath !== undefined) buildMeta.iconPath = body.iconPath;
+    if (body.description) buildMeta.description = body.description;
+    if (body.author !== undefined) buildMeta.author = body.author;
+    if (body.appId) buildMeta.appId = body.appId;
+  } catch { /* no body — version unchanged */ }
+
+  const encoder = new TextEncoder();
+  let aborted = false;
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (data: object) => {
+        if (aborted) return;
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+        } catch { /* controller closed */ }
+      };
+
+      const run = async (cmd: string, opts?: { timeout?: number; label?: string }) => {
+        send({ type: 'stage', stage: opts?.label || cmd });
+        try {
+          const result = await execAsync(cmd, {
+            cwd: frontendDir,
+            timeout: opts?.timeout || 120000,
+            shell: 'cmd.exe',
+            windowsHide: true,
+            maxBuffer: 1024 * 1024,
+          });
+          // Send real output as chunks
+          if (result.stdout) {
+            // Split into lines and send each as a chunk for real-time feel
+            const lines = result.stdout.split('\n');
+            for (const line of lines) {
+              if (line.trim()) {
+                send({ type: 'chunk', content: line + '\n' });
+              }
+            }
+          }
+          if (result.stderr) {
+            const lines = result.stderr.split('\n');
+            for (const line of lines) {
+              if (line.trim()) {
+                send({ type: 'chunk', content: line + '\n' });
+              }
+            }
+          }
+          return result;
+        } catch (e) {
+          const err = e as { stdout?: string; stderr?: string; message?: string; killed?: boolean };
+          if (err.stdout) send({ type: 'chunk', content: err.stdout });
+          if (err.stderr) send({ type: 'chunk', content: err.stderr });
+          throw err;
+        }
+      };
+
+      try {
+        console.log(`[build] Starting build in ${frontendDir} with ${pm}...`);
+
+        // ── Step 0: Save config & version ───────────────────
+        const cfgPath = path.join(frontendDir, 'build-config.json');
+        const pkgPath = path.join(frontendDir, 'package.json');
+
+        // Apply config metadata (productName, iconPath, etc.)
+        const hasMeta = Object.keys(buildMeta).length > 0;
+        if (hasMeta) {
+          send({ type: 'stage', stage: 'build:version' });
+          send({ type: 'chunk', content: 'Applying build configuration...\n' });
+
+          // Update build-config.json
+          try {
+            const cfgJson = JSON.parse(await fs.readFile(cfgPath, 'utf-8'));
+            Object.assign(cfgJson, buildMeta);
+            await fs.writeFile(cfgPath, JSON.stringify(cfgJson, null, 2), 'utf-8');
+            send({ type: 'chunk', content: '✓ Updated build-config.json\n' });
+          } catch {}
+
+          // Apply to package.json (productName, appId, description, author)
+          try {
+            const pkgJson = JSON.parse(await fs.readFile(pkgPath, 'utf-8'));
+            if (buildMeta.productName) {
+              pkgJson.build = pkgJson.build || {};
+              pkgJson.build.productName = buildMeta.productName;
+              if (pkgJson.build.nsis) pkgJson.build.nsis.shortcutName = buildMeta.productName;
+            }
+            if (buildMeta.appId) pkgJson.build = pkgJson.build || {};
+            if (buildMeta.appId) pkgJson.build.appId = buildMeta.appId;
+            if (buildMeta.description) pkgJson.description = buildMeta.description;
+            if (buildMeta.author !== undefined) pkgJson.author = buildMeta.author;
+            if (buildMeta.iconPath) {
+              pkgJson.build = pkgJson.build || {};
+              pkgJson.build.win = pkgJson.build.win || {};
+              pkgJson.build.win.icon = path.resolve(frontendDir, buildMeta.iconPath);
+            }
+            await fs.writeFile(pkgPath, JSON.stringify(pkgJson, null, 2), 'utf-8');
+            send({ type: 'chunk', content: '✓ Updated package.json metadata\n' });
+          } catch {}
+        }
+
+        // ── Step 0b: Update version (if provided) ────────────
+        if (buildVersion) {
+          send({ type: 'stage', stage: 'build:version' });
+          send({ type: 'chunk', content: `Updating version to ${buildVersion}...\n` });
+
+          // Update package.json
+          const pkgJson = JSON.parse(await fs.readFile(pkgPath, 'utf-8'));
+          pkgJson.version = buildVersion;
+          await fs.writeFile(pkgPath, JSON.stringify(pkgJson, null, 2), 'utf-8');
+
+          // Verify it was written correctly
+          const verifyPkg = JSON.parse(await fs.readFile(pkgPath, 'utf-8'));
+          if (verifyPkg.version !== buildVersion) {
+            send({ type: 'chunk', content: `⚠️ Version mismatch after write (got ${verifyPkg.version}), retrying...\n` });
+            verifyPkg.version = buildVersion;
+            await fs.writeFile(pkgPath, JSON.stringify(verifyPkg, null, 2), 'utf-8');
+          }
+          send({ type: 'chunk', content: `✓ Updated package.json version → ${buildVersion}\n` });
+
+          // Update build-config.json
+          try {
+            const cfgJson = JSON.parse(await fs.readFile(cfgPath, 'utf-8'));
+            cfgJson.version = buildVersion;
+            cfgJson.lastBuild = Date.now();
+            await fs.writeFile(cfgPath, JSON.stringify(cfgJson, null, 2), 'utf-8');
+            send({ type: 'chunk', content: `✓ Updated build-config.json → ${buildVersion}\n` });
+          } catch {
+            send({ type: 'chunk', content: '⚠️ No build-config.json found, skipping\n' });
+          }
+        } else {
+          // Read current version from package.json if no version was provided
+          try {
+            const pkgJson = JSON.parse(await fs.readFile(pkgPath, 'utf-8'));
+            buildVersion = pkgJson.version;
+            send({ type: 'chunk', content: `Using existing version: ${buildVersion}\n` });
+          } catch {}
+        }
+
+        // ── Step 1: Clean old builds ──────────────────────────
+        send({ type: 'stage', stage: 'build:clean' });
+        send({ type: 'chunk', content: 'Cleaning old builds...\n' });
+        try {
+          await execAsync('rmdir /s /q release 2>nul & echo cleaned', {
+            cwd: frontendDir, shell: 'cmd.exe', windowsHide: true,
+          });
+          send({ type: 'chunk', content: '✓ Old builds cleaned\n' });
+        } catch {
+          send({ type: 'chunk', content: '⚠️ Could not clean release directory\n' });
+        }
+
+        // ── Step 2: Build frontend with Vite ──────────────────
+        send({ type: 'stage', stage: 'build:vite' });
+        const buildOut = await run(`${pm} run build`, { timeout: 120000, label: 'build:vite' });
+        send({ type: 'chunk', content: '\n✓ Frontend build complete\n' });
+
+        // ── Step 3: Package with electron-builder ─────────────
+        // Use --extraMetadata.version to FORCE the version in electron-builder
+        // This overrides the version from package.json at build time
+        send({ type: 'stage', stage: 'build:electron' });
+
+        let pkgOut;
+        if (buildVersion) {
+          // Run electron-builder directly with explicit version override
+          // Using node_modules/.bin path instead of npm run to avoid the vite rebuild
+          // -c.extraMetadata.version overrides package.json fields at build time
+          // (The help text says: electron-builder set package.json property `foo` to -c.extraMetadata.foo=bar)
+          pkgOut = await run(
+            `node_modules\\.bin\\electron-builder.cmd --win --config -c.extraMetadata.version=${buildVersion}`,
+            { timeout: 300000, label: 'build:electron' }
+          );
+        } else {
+          pkgOut = await run(`${pm} run build:electron`, { timeout: 300000, label: 'build:electron' });
+        }
+        send({ type: 'chunk', content: '\n✓ Electron packaging complete\n' });
+
+        // ── Done ──────────────────────────────────────────────
+        console.log('[build] Build completed successfully');
+        send({
+          type: 'done',
+          success: true,
+          output: (buildOut.stdout + '\n' + pkgOut.stdout).slice(-2000) || '',
+          version: buildVersion || undefined,
+        });
+
+      } catch (e) {
+        const error = e as { stdout?: string; stderr?: string; message?: string; killed?: boolean };
+        const cause = error.killed ? 'Build timed out' : (error.message || 'Build failed');
+        console.error('[build] Build failed:', cause);
+        send({
+          type: 'error',
+          error: cause,
+          output: (error.stdout || error.stderr || '').slice(-2000),
+        });
+      } finally {
+        try { controller.close(); } catch { /* already closed */ }
+      }
+    },
+    cancel() {
+      aborted = true;
+      console.log('[build] Client disconnected');
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  });
 });
 
 app.get('/', (c) => c.json({ message: 'AI Chat API', version: '1.0.0' }));

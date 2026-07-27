@@ -237,6 +237,58 @@ async function runVisibleStage(
 }
 
 /**
+ * Detect programming language/framework from user text and search for documentation.
+ * Only runs in agent mode before code generation.
+ */
+const DOCS_QUERY_MAP: Record<string, string[]> = {
+  react: ['react', 'reactjs', 'jsx', 'tsx', 'nextjs', 'next.js'],
+  vue: ['vue', 'vuejs', 'nuxt', 'nuxtjs'],
+  angular: ['angular'],
+  python: ['python', 'django', 'flask', 'fastapi', 'pandas', 'numpy'],
+  javascript: ['javascript', 'js', 'node', 'node.js', 'express', 'npm', 'es6'],
+  typescript: ['typescript', 'ts', 'deno', 'bun'],
+  html: ['html', 'html5', 'css', 'css3', 'tailwind', 'bootstrap'],
+  go: ['go', 'golang'],
+  rust: ['rust', 'cargo'],
+  java: ['java', 'spring', 'maven', 'gradle'],
+  sql: ['sql', 'postgresql', 'mysql', 'sqlite', 'database'],
+  // Add more as needed
+};
+
+async function detectLanguageForDocs(userText: string, fileListing: string): Promise<string | null> {
+  const lower = userText.toLowerCase() + ' ' + fileListing.toLowerCase();
+  
+  // Score each language based on keyword mentions
+  const scores: { lang: string; score: number }[] = [];
+  for (const [lang, keywords] of Object.entries(DOCS_QUERY_MAP)) {
+    let score = 0;
+    for (const kw of keywords) {
+      const regex = new RegExp(`\\b${kw.replace(/[.+^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+      const matches = lower.match(regex);
+      if (matches) score += matches.length * (kw === lang ? 3 : 1);
+    }
+    if (score > 0) scores.push({ lang, score });
+  }
+  
+  scores.sort((a, b) => b.score - a.score);
+  return scores.length > 0 ? scores[0].lang : null;
+}
+
+async function fetchDocsForLanguage(language: string): Promise<string | null> {
+  // Search for documentation about the detected language/framework
+  const query = `${language} documentation best practices 2025 2026`;
+  try {
+    const context = await getWebContext(query);
+    if (context && context.length > 200) {
+      return `[LANGUAGE DOCUMENTATION REFERENCE]\n\nThe user appears to be working with **${language}**. Here is current documentation and best practices retrieved from the web:\n\n${context}`;
+    }
+  } catch (e) {
+    console.error(`[pipeline] Docs lookup failed for ${language}:`, e);
+  }
+  return null;
+}
+
+/**
  * Build a memory context system message to inject personality/memory into the conversation.
  */
 async function buildMemoryContext(userId?: string): Promise<string | null> {
@@ -264,7 +316,8 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   const intent = await detectIntent(messages, mode);
 
   // Determine thinking mode: request override > env default
-  const think = thinkingEnabled !== undefined ? thinkingEnabled : THINKING_ENABLED;
+  // Agent mode always uses fast mode (thinking disabled)
+  const think = mode === 'agent' ? false : (thinkingEnabled !== undefined ? thinkingEnabled : THINKING_ENABLED);
 
   console.log(`[pipeline] Intent: hasImage=${intent.hasImage}, wantsCode=${intent.wantsCode}, wantsFileInfo=${intent.wantsFileInfo}, wantsImage=${intent.wantsImage}, wantsTool=${intent.wantsTool}, think=${think}`);
 
@@ -280,9 +333,9 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   // Build memory context if available
   const memoryContext = await buildMemoryContext(userId);
 
-  // Web search context — performed before the chat if search is enabled
+  // Web search context — automatically performed when appropriate
   let webContext: string | null = null;
-  if (searchEnabled && !intent.hasImage && !intent.wantsCode && !intent.wantsImage) {
+  if (!intent.hasImage && !intent.wantsImage) {
     const lastUserMsg = messages.filter((m) => m.role === 'user').pop();
     if (lastUserMsg) {
       onStage('search:web');
@@ -504,6 +557,20 @@ Output ONLY the plan — no introductory text, no conclusion, no code blocks.`,
       .replace(/\[image:data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+\]/g, '')
       .trim();
 
+    // Agent mode docs lookup: detect language and fetch docs before code gen
+    let docsContext = '';
+    if (mode === 'agent' && userText) {
+      onStage('search:docs');
+      const detectedLang = await detectLanguageForDocs(userText, fileListing);
+      if (detectedLang) {
+        console.log(`[pipeline] Detected language for docs: ${detectedLang}`);
+        const docs = await fetchDocsForLanguage(detectedLang);
+        if (docs) {
+          docsContext = `\n\n---\n\n${docs}`;
+        }
+      }
+    }
+
     const codeContext = imageDescription
       ? `Based on this image analysis:\n\n${imageDescription}\n\nUser request: ${userText}\n\nGenerate the code.`
       : userText;
@@ -523,6 +590,7 @@ Do NOT recreate files that already exist unless the user asks. Update them inste
 All file paths you generate MUST be relative to this directory.
 
 Generate clean, working code in markdown code blocks.
+${docsContext}
 
 IMPORTANT: Start EVERY code block with a comment on the FIRST LINE showing the relative file path, like:
 // index.html
@@ -562,6 +630,8 @@ After the code blocks, write a 1-2 sentence technical summary.${planInstructions
       if (e instanceof Error && e.name === 'AbortError') throw e;
       console.error('[pipeline] Code stage failed:', e);
     }
+
+
   }
 
   // STAGE 4: Final response (VISIBLE to user)
