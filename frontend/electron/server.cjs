@@ -5,7 +5,9 @@ const path = require('path');
 const { URL } = require('url');
 
 /** Module-level backend URL — can be updated at runtime via setBackendUrl() */
-let currentBackendUrl = 'https://localhost:3001';
+// Match the backend mode: HTTPS by default, HTTP when HTTPS=false or --http is used
+const defaultBackendProtocol = process.env.HTTPS !== 'false' ? 'https' : 'http';
+let currentBackendUrl = `${defaultBackendProtocol}://localhost:3001`;
 let RELEASE_DIR = path.join(__dirname, '..', 'release');
 
 /**

@@ -1,6 +1,64 @@
 import type { Conversation, ConversationMode, Message, OllamaModel, FileEntry, MemoryData } from '../types';
 
-const API_BASE = '/api';
+// ─── Server URL Configuration ────────────────────────────
+// On desktop (Electron / browser dev), the Vite proxy handles '/api' -> 'localhost:3001'.
+// On Android (Capacitor), there's no proxy — the app needs the PC's local IP.
+const SERVER_URL_KEY = 'ai-chat:serverUrl';
+
+export function getApiBaseUrl(): string {
+  // Check for a saved custom server URL (used on Android)
+  try {
+    const saved = localStorage.getItem(SERVER_URL_KEY);
+    if (saved) {
+      const url = saved.trim().replace(/\/+$/, ''); // Remove trailing slash
+      return `${url}/api`;
+    }
+  } catch {}
+  // Default: use proxy (works in Electron and Vite dev)
+  return '/api';
+}
+
+export function getSavedServerUrl(): string | null {
+  try {
+    return localStorage.getItem(SERVER_URL_KEY);
+  } catch { return null; }
+}
+
+export function saveServerUrl(url: string): void {
+  localStorage.setItem(SERVER_URL_KEY, url.trim().replace(/\/+$/, ''));
+}
+
+export function clearServerUrl(): void {
+  localStorage.removeItem(SERVER_URL_KEY);
+}
+
+export function isInCapacitor(): boolean {
+  try {
+    // Check for Capacitor runtime (standard)
+    if (typeof (window as any).Capacitor !== 'undefined') {
+      // isNativePlatform might be a function or a boolean depending on version
+      const cap = (window as any).Capacitor;
+      if (typeof cap.isNativePlatform === 'function') {
+        return cap.isNativePlatform() === true;
+      }
+      if (cap.isNative === true) return true;
+    }
+    // Check for Android WebView (Capacitor runs in a WebView)
+    const ua = navigator.userAgent || '';
+    if (ua.includes('Android') && ua.includes('wv')) {
+      return true;
+    }
+    // Check for Capacitor-specific bridge
+    if (typeof (window as any).androidBridge !== 'undefined') return true;
+    if (typeof (window as any).CapacitorCookies !== 'undefined') return true;
+    if (typeof (window as any).CapacitorWebView !== 'undefined') return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+const API_BASE = getApiBaseUrl();
 
 // ─── Electron Detection ───────────────────────────────────
 const isElectron = !!(window as any).electronAPI?.isElectron;
@@ -717,6 +775,7 @@ streamChat(
       description?: string;
       author?: string;
       appId?: string;
+      buildAndroid?: boolean;
     }
   ): Promise<{ success: boolean; output?: string; error?: string; version?: string }> {
     return (async () => {
@@ -728,6 +787,7 @@ streamChat(
         if (extraConfig.description) body.description = extraConfig.description;
         if (extraConfig.author !== undefined) body.author = extraConfig.author;
         if (extraConfig.appId) body.appId = extraConfig.appId;
+        if (extraConfig.buildAndroid === true) body.buildAndroid = true;
       }
       const res = await fetch(`${API_BASE}/build`, authedFetch(`${API_BASE}/build`, {
         method: 'POST',
@@ -867,6 +927,38 @@ streamChat(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command, cwd }),
+      }))
+    );
+  },
+
+  // --- Speed Test API ---
+  async getSpeedTestTests(): Promise<{ id: string; name: string; description: string; category: string }[]> {
+    const data = await handleResponse<{ tests: any[] }>(
+      await fetch(`${API_BASE}/speedtest/tests`, authedFetch(`${API_BASE}/speedtest/tests`))
+    );
+    return data.tests;
+  },
+
+  async runSpeedTests(): Promise<{ result: any }> {
+    return handleResponse<{ result: any }>(
+      await fetch(`${API_BASE}/speedtest/run`, authedFetch(`${API_BASE}/speedtest/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      }))
+    );
+  },
+
+  async getSpeedTestResults(): Promise<{ results: any[] }> {
+    return handleResponse<{ results: any[] }>(
+      await fetch(`${API_BASE}/speedtest/results`, authedFetch(`${API_BASE}/speedtest/results`))
+    );
+  },
+
+  async deleteSpeedTestResult(id: string): Promise<{ success: boolean }> {
+    return handleResponse<{ success: boolean }>(
+      await fetch(`${API_BASE}/speedtest/results/${encodeURIComponent(id)}`, authedFetch(`${API_BASE}/speedtest/results/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
       }))
     );
   },

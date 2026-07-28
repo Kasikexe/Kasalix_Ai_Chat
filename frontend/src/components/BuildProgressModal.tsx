@@ -14,9 +14,10 @@ const STAGE_LABELS: Record<string, string> = {
   'build:clean': 'Cleaning old builds...',
   'build:vite': 'Building frontend with Vite...',
   'build:electron': 'Packaging Electron app...',
+  'build:android': 'Building Android APK...',
 };
 
-const STAGE_ORDER = ['build:version', 'build:clean', 'build:vite', 'build:electron'];
+const STAGE_ORDER = ['build:version', 'build:clean', 'build:vite', 'build:electron', 'build:android'];
 
 export function BuildProgressModal({ isOpen, isBuilding, currentStage, output, result, onClose }: BuildProgressModalProps) {
   if (!isOpen) return null;
@@ -102,7 +103,7 @@ export function BuildProgressModal({ isOpen, isBuilding, currentStage, output, r
                 isDone ? 'bg-gradient-to-r from-red-500 to-rose-500' :
                 'bg-gradient-to-r from-purple-500 to-violet-500'
               }`}
-              style={{ width: isDone ? '100%' : `${Math.min((currentIdx + 1) * 25, 95)}%` }}
+              style={{ width: isDone ? '100%' : `${Math.min(((currentIdx + 1) / STAGE_ORDER.length) * 100, 95)}%` }}
             />
           </div>
 

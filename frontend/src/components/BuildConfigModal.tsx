@@ -24,6 +24,7 @@ interface BuildConfigModalProps {
     appId: string;
     critical?: boolean;
     releaseTitle?: string;
+    buildAndroid?: boolean;
   }) => void;
   /** Pre-fill the description field with draft changelog content */
   draftDescription?: string;
@@ -46,6 +47,7 @@ export function BuildConfigModal({ isOpen, onClose, onStartBuild, draftDescripti
   const [critical, setCritical] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [buildAndroid, setBuildAndroid] = useState(false);
 
   // Load config on open
   useEffect(() => {
@@ -114,6 +116,7 @@ export function BuildConfigModal({ isOpen, onClose, onStartBuild, draftDescripti
       appId: config.appId,
       critical,
       releaseTitle: releaseTitle.trim() || undefined,
+      buildAndroid,
     });
   };
 
@@ -265,6 +268,37 @@ export function BuildConfigModal({ isOpen, onClose, onStartBuild, draftDescripti
                   placeholder="com.aichat.desktop"
                   className="w-full bg-gray-800/80 text-sm text-gray-200 placeholder-gray-600 rounded-lg px-3 py-2 border border-gray-700 outline-none focus:border-purple-700 transition-colors font-mono text-[11px]"
                 />
+              </div>
+
+              {/* ── Build Android APK Toggle ───────────────── */}
+              <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-green-900/10 border border-green-800/30">
+                <div className="flex items-center gap-3">
+                  <div className={`p-1.5 rounded-lg ${buildAndroid ? 'bg-green-700/30' : 'bg-gray-700/50'}`}>
+                    <Package size={16} className={buildAndroid ? 'text-green-400' : 'text-gray-500'} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-white">
+                      {buildAndroid ? '📱 Build Android APK too' : 'Also build Android APK'}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {buildAndroid
+                        ? 'Both .exe and .apk will be built with version ' + config.version
+                        : 'Builds the APK using Gradle (requires Android SDK)'}
+                    </p>
+                  </div>
+                </div>
+                <div
+                  onClick={() => setBuildAndroid(!buildAndroid)}
+                  className={`relative w-11 h-6 rounded-full cursor-pointer transition-colors duration-200 ${
+                    buildAndroid ? 'bg-green-600' : 'bg-gray-700'
+                  }`}
+                >
+                  <div
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
+                      buildAndroid ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </div>
               </div>
 
               {/* ── Critical Update Toggle ─────────────────── */}

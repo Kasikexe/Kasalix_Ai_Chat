@@ -10,14 +10,34 @@ const DEFAULT_MEMORY: MemoryData = {
   updatedAt: 0,
 };
 
+// ─── In-Memory Cache (#4) ──────────────────────────────────
+// Cache memory data per-user for 5 seconds to avoid disk reads on every message
+const MEMORY_CACHE_TTL = 5_000; // 5 seconds
+const memoryCache = new Map<string, { data: MemoryData; timestamp: number }>();
+
+function getCachedMemory(userId: string): MemoryData | null {
+  const entry = memoryCache.get(userId);
+  if (entry && Date.now() - entry.timestamp < MEMORY_CACHE_TTL) {
+    return entry.data;
+  }
+  return null;
+}
+
+function setCachedMemory(userId: string, data: MemoryData): void {
+  memoryCache.set(userId, { data, timestamp: Date.now() });
+}
+
+function invalidateCache(userId: string): void {
+  memoryCache.delete(userId);
+}
+
 // Per-user write queue to prevent race conditions when multiple extractions run concurrently
 const writeQueues = new Map<string, Promise<unknown>>();
 
 async function serializedWrite<T>(userId: string, fn: () => Promise<T>): Promise<T> {
   const prev = (writeQueues.get(userId) || Promise.resolve()) as Promise<unknown>;
-  const next = prev.then(fn, fn); // Run even if previous failed
+  const next = prev.then(fn, fn);
   writeQueues.set(userId, next);
-  // Cleanup after completion
   next.finally(() => {
     if (writeQueues.get(userId) === next) {
       writeQueues.delete(userId);
@@ -31,17 +51,22 @@ async function ensureDir(): Promise<void> {
 }
 
 function memoryFilePath(userId: string): string {
-  // Sanitize userId to prevent directory traversal
   const safe = userId.replace(/[^a-zA-Z0-9_\-]/g, '_');
   return path.join(MEMORY_DIR, `${safe}.json`);
 }
 
 export async function getMemory(userId: string): Promise<MemoryData> {
+  // Check cache first
+  const cached = getCachedMemory(userId);
+  if (cached) return cached;
+
   try {
     await ensureDir();
     const filePath = memoryFilePath(userId);
     const data = await fs.readFile(filePath, 'utf-8');
-    return { ...DEFAULT_MEMORY, ...JSON.parse(data) };
+    const result = { ...DEFAULT_MEMORY, ...JSON.parse(data) };
+    setCachedMemory(userId, result);
+    return result;
   } catch {
     return { ...DEFAULT_MEMORY };
   }
@@ -55,6 +80,8 @@ export async function saveMemory(userId: string, memory: MemoryData): Promise<Me
     updatedAt: Date.now(),
   };
   await fs.writeFile(filePath, JSON.stringify(next, null, 2));
+  invalidateCache(userId); // Invalidate cache on write
+  setCachedMemory(userId, next); // Pre-populate cache
   return next;
 }
 
@@ -76,12 +103,6 @@ export async function updateMemory(
   });
 }
 
-/**
- * Merge extracted memory entries into existing memory.
- * New categories/keys are added. Existing keys are overwritten if the extractor provides a new value.
- * Keys with empty string values are removed (deletion).
- * Uses a per-user write queue to prevent race conditions.
- */
 export async function mergeMemoryEntries(
   userId: string,
   extracted: Record<string, Record<string, string>>
@@ -94,7 +115,6 @@ export async function mergeMemoryEntries(
 
     for (const [category, entries] of Object.entries(extracted)) {
       if (!merged[category]) {
-        // Only create the category if it has non-empty entries
         const nonEmpty = Object.fromEntries(
           Object.entries(entries).filter(([, v]) => v !== '')
         );
@@ -107,14 +127,12 @@ export async function mergeMemoryEntries(
       const categoryEntries = { ...merged[category] };
       for (const [key, value] of Object.entries(entries)) {
         if (value === '') {
-          // Empty value = delete this key
           delete categoryEntries[key];
         } else {
           categoryEntries[key] = value;
         }
       }
 
-      // If category has no entries left, remove it
       if (Object.keys(categoryEntries).length === 0) {
         delete merged[category];
       } else {
@@ -122,7 +140,6 @@ export async function mergeMemoryEntries(
       }
     }
 
-    // Enable memory automatically when entries are added
     const next: MemoryData = {
       ...current,
       enabled: Object.keys(merged).length > 0 ? true : current.enabled,

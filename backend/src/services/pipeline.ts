@@ -48,6 +48,33 @@ const LIST_IGNORE_DIRS = new Set([
   'target', 'vendor', '.venv', 'venv', 'env',
 ]);
 
+/**
+ * Smart heuristic to decide whether a user message actually needs a web search.
+ * Skips greetings, acknowledgments, very short messages, and conversational follow-ups
+ * that are clearly not asking for external/factual information.
+ */
+function needsWebSearch(userMessage: string): boolean {
+  const trimmed = userMessage.trim();
+  if (!trimmed || trimmed.length < 15) return false;
+
+  const lower = trimmed.toLowerCase();
+
+  // Skip pure short acknowledgments and pleasantries
+  const shortAcknowledgments = /^(hi|hello|hey|thanks|thank you|ok|okay|yes|no|yeah|sure|great|nice|cool|good|lol|haha|awesome|perfect|got it|i see|understood|makes sense|indeed|right|of course|bye|goodbye)$/i;
+  if (shortAcknowledgments.test(lower)) return false;
+
+  // Skip conversational follow-ups that don't need external info
+  const conversationalFollowUps = /(tell me more|continue|go on|what else|can you elaborate|can you explain further|that makes sense|good point|i agree|you('| a)re right|fair enough)/i;
+  if (conversationalFollowUps.test(lower)) return false;
+
+  // Search when there's a clear question about external information
+  const isQuestion = lower.includes('?');
+  const startsWithQuestionWord = /^(what|who|where|when|why|how)\b/i.test(lower.trim());
+  const containsFactualNeed = /\b(current|latest|recent|news|update|today'?s|population|weather|price|cost|distance|temperature|forecast|schedule|deadline|release|announcement|election|president|ceo|founder|invented|discovered)\b/i.test(lower);
+
+  return isQuestion || startsWithQuestionWord || containsFactualNeed;
+}
+
 async function listWorkspaceFiles(wsPath: string): Promise<string> {
   try {
     const resolved = path.resolve(wsPath);
@@ -312,7 +339,8 @@ async function buildMemoryContext(userId?: string): Promise<string | null> {
 }
 
 export async function runPipeline(opts: PipelineOptions): Promise<string> {
-  const { model, messages, mode, workspacePath, signal, onStage, onChunk, thinkingEnabled, userId, userName, searchEnabled, planningEnabled, temperature, top_p, max_tokens } = opts;
+  const { model, mode, workspacePath, signal, onStage, onChunk, thinkingEnabled, userId, userName, searchEnabled, planningEnabled, temperature, top_p, max_tokens } = opts;
+  let { messages } = opts;
   const intent = await detectIntent(messages, mode);
 
   // Determine thinking mode: request override > env default
@@ -321,28 +349,47 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
 
   console.log(`[pipeline] Intent: hasImage=${intent.hasImage}, wantsCode=${intent.wantsCode}, wantsFileInfo=${intent.wantsFileInfo}, wantsImage=${intent.wantsImage}, wantsTool=${intent.wantsTool}, think=${think}`);
 
-  // If user asks about files (or planning mode is on), read the actual directory listing and inject it
-  let fileListing = '';
-  const needsFileListing = intent.wantsFileInfo || (intent.wantsCode && planningEnabled);
-  if (needsFileListing && workspacePath) {
-    onStage('reading:workspace');
-    fileListing = await listWorkspaceFiles(workspacePath);
-    console.log(`[pipeline] Workspace file listing: ${fileListing.substring(0, 200)}...`);
+  // ─── Message Truncation (#7) ──────────────────────────────
+  // Keep only the last MAX_HISTORY messages + any system messages to limit context size.
+  // This significantly speeds up model inference for long conversations.
+  const MAX_HISTORY = 30;
+  if (messages.length > MAX_HISTORY) {
+    const originalLen = messages.length;
+    const systemMsgs = messages.filter((m) => m.role === 'system');
+    const recentMsgs = messages.slice(-MAX_HISTORY);
+    messages = [...systemMsgs, ...recentMsgs] as typeof messages;
+    console.log(`[pipeline] Truncated messages from ${originalLen} to ${messages.length} (max ${MAX_HISTORY})`);
   }
 
-  // Build memory context if available
-  const memoryContext = await buildMemoryContext(userId);
+  // ─── Context Gathering (parallelized) ─────────────────────
+  // Run file listing, memory loading, and web search in parallel.
+  // Web search is smart-filtered to only run when the message actually needs external info.
 
-  // Web search context — automatically performed when appropriate
-  let webContext: string | null = null;
-  if (!intent.hasImage && !intent.wantsImage) {
-    const lastUserMsg = messages.filter((m) => m.role === 'user').pop();
-    if (lastUserMsg) {
-      onStage('search:web');
-      webContext = await getWebContext(
-        lastUserMsg.content.replace(/\[image:[^\]]+\]/g, '').trim()
-      );
-    }
+  const lastUserMsg = messages.filter((m) => m.role === 'user').pop();
+  const userText = lastUserMsg
+    ? lastUserMsg.content.replace(/\[image:[^\]]+\]/g, '').trim()
+    : '';
+
+  const needsFileListing = intent.wantsFileInfo || (intent.wantsCode && planningEnabled);
+  const shouldSearch = !intent.hasImage && !intent.wantsImage && userText.length > 0 && needsWebSearch(userText);
+
+  // Send immediate stage feedback so the user sees progress right away
+  if (needsFileListing && workspacePath) onStage('reading:workspace');
+  if (shouldSearch) onStage('search:web');
+
+  // Kick off all independent context-gathering tasks in PARALLEL
+  const [fileListing, memoryContext, webContext] = await Promise.all([
+    needsFileListing && workspacePath ? listWorkspaceFiles(workspacePath).then(result => {
+      console.log(`[pipeline] Workspace file listing: ${result.substring(0, 200)}...`);
+      return result;
+    }) : Promise.resolve(''),
+    buildMemoryContext(userId),
+    shouldSearch ? getWebContext(userText) : Promise.resolve(null),
+  ]);
+
+  // Log whether web search was skipped (useful for tuning the heuristic)
+  if (userText && !shouldSearch && !intent.hasImage && !intent.wantsImage) {
+    console.log(`[pipeline] Skipped web search (heuristic) for: "${userText.substring(0, 60)}..."`);
   }
 
   // Helper function to append memory and web context to system content

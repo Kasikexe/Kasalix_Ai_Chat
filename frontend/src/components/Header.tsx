@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
-import { Menu, Brain, Download, Sparkles, Lock } from 'lucide-react';
+import { Menu, Brain, Download, Sparkles, Lock, Wifi, Smartphone } from 'lucide-react';
 import type { Conversation } from '../types';
+import { isInCapacitor, clearServerUrl, getSavedServerUrl } from '../services/api';
 
 interface HeaderProps {
   onMenuClick: () => void;
   onAdminClick: () => void;
+  onSpeedTestClick?: () => void;
   isAdmin: boolean;
   thinkingEnabled: boolean;
   onToggleThinking: () => void;
@@ -13,7 +15,7 @@ interface HeaderProps {
 }
 
 export function Header({
-  onMenuClick, onAdminClick, isAdmin, thinkingEnabled, onToggleThinking, conversation, hideThinking
+  onMenuClick, onAdminClick, onSpeedTestClick, isAdmin, thinkingEnabled, onToggleThinking, conversation, hideThinking
 }: HeaderProps) {
   const [exportOpen, setExportOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
@@ -142,6 +144,45 @@ export function Header({
             <span className="hidden sm:inline">
               {thinkingEnabled ? 'Thinking' : 'Fast'}
             </span>
+          </button>
+        )}
+
+        {/* Speed Test button — admin only */}
+        {isAdmin && onSpeedTestClick && (
+          <button
+            onClick={onSpeedTestClick}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors bg-emerald-900/30 text-emerald-300 border border-emerald-700/50 hover:bg-emerald-800/40"
+            title="Run performance speed tests"
+          >
+            <span className="text-[11px]">⚡</span>
+            <span className="hidden sm:inline">Speed</span>
+          </button>
+        )}
+
+        {/* Download APK button — visible to everyone (or only on mobile) */}
+        <a
+          href="/download"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors bg-blue-900/30 text-blue-300 border border-blue-700/50 hover:bg-blue-800/40"
+          title="Download the Android APK"
+        >
+          <Smartphone size={14} />
+          <span className="hidden sm:inline">Download</span>
+        </a>
+
+        {/* Change Server button — only in Capacitor (Android) mode */}
+        {isInCapacitor() && getSavedServerUrl() && (
+          <button
+            onClick={() => {
+              clearServerUrl();
+              window.location.reload();
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors bg-amber-900/30 text-amber-300 border border-amber-700/50 hover:bg-amber-800/40"
+            title="Change the server connection"
+          >
+            <Wifi size={14} />
+            <span className="hidden sm:inline">Server</span>
           </button>
         )}
 

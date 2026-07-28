@@ -9,4 +9,5 @@ data/
 certs/
 .vscode/
 .idea/
+.http-mode
 bun.lockb

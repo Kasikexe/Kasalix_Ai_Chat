@@ -17,7 +17,9 @@ const { autoUpdater } = require('electron-updater');
 const { startServer, setBackendUrl, getBackendUrl } = require('./server.cjs');
 
 // The default URL of the backend AI server
-const DEFAULT_BACKEND_URL = process.env.BACKEND_URL || 'https://localhost:3001';
+// Matches the backend mode: HTTPS by default, HTTP when HTTPS=false or --http is used
+const defaultProtocol = process.env.HTTPS !== 'false' ? 'https' : 'http';
+const DEFAULT_BACKEND_URL = process.env.BACKEND_URL || `${defaultProtocol}://localhost:3001`;
 
 // Path to the saved server config file (persists in user data)
 const CONFIG_FILE = 'server-config.json';

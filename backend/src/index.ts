@@ -15,6 +15,7 @@ import editorRoutes from './routes/editor';
 import memoryRoutes from './routes/memory';
 import changelogRoutes from './routes/changelog';
 import plannedRoutes from './routes/planned';
+import speedtestRoutes from './routes/speedtest';
 import { errorHandler, generateId } from './utils/helpers';
 import { registerAllTools } from './services/tools/register';
 import { getAllTools, executeTool } from './services/tools/index';
@@ -71,6 +72,11 @@ app.use('/api/build/*', async (c, next) => {
   c.set('auth', { authenticated: authCookie?.includes('settings_auth=1') || false });
   await next();
 });
+app.use('/api/speedtest/*', async (c, next) => {
+  const authCookie = c.req.header('Cookie');
+  c.set('auth', { authenticated: authCookie?.includes('settings_auth=1') || false });
+  await next();
+});
 
 app.onError(errorHandler);
 
@@ -83,6 +89,7 @@ app.route('/api/editor', editorRoutes);
 app.route('/api/memory', memoryRoutes);
 app.route('/api/changelog', changelogRoutes);
 app.route('/api/planned', plannedRoutes);
+app.route('/api/speedtest', speedtestRoutes);
 
 // Serve generated images
 const GENERATED_DIR = path.join(process.cwd(), 'generated_images');
@@ -166,22 +173,214 @@ app.post('/api/generated/:filename/save-to-workspace', async (c) => {
   }
 });
 
-// Serve the desktop app download (.exe)
+// ─── Download Page ─────────────────────────────────────────────
+// Serves a download page with links to both desktop and Android APK.
 const RELEASE_DIR = path.join(process.cwd(), '..', 'frontend', 'release');
+const ANDROID_APK_DIR = path.join(process.cwd(), '..', 'frontend', 'android', 'app', 'build', 'outputs', 'apk');
 
-app.get('/download', async (c) => {
+/** Readable file size formatting */
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// Serve the download page HTML (with dark theme matching the app)
+async function renderDownloadPage(c: any): Promise<Response> {
+  let hasDesktop = false;
+  let desktopFile = '';
+  let desktopSize = '';
+  let hasAndroid = false;
+  let androidFile = '';
+  let androidSize = '';
+  let version = '';
+
+  // Check for desktop EXE
   try {
     const files = await fs.readdir(RELEASE_DIR);
-    // Find the latest Setup installer
     const setupFiles = files
       .filter((f) => f.includes('Setup') && f.endsWith('.exe') && !f.endsWith('.exe.blockmap'))
       .sort().reverse();
-    
+    if (setupFiles.length > 0) {
+      desktopFile = setupFiles[0];
+      const stat = await fs.stat(path.join(RELEASE_DIR, desktopFile));
+      desktopSize = formatSize(stat.size);
+      hasDesktop = true;
+      // Extract version from filename like "AI-Chat-Setup-1.5.13.exe"
+      const verMatch = desktopFile.match(/([\d.]+)\.exe/);
+      if (verMatch) version = verMatch[1];
+    }
+  } catch {}
+
+  // Check for Android APK (debug or release)
+  const apkPaths = [
+    path.join(ANDROID_APK_DIR, 'release', 'app-release.apk'),
+    path.join(ANDROID_APK_DIR, 'debug', 'app-debug.apk'),
+  ];
+  for (const apkPath of apkPaths) {
+    try {
+      await fs.access(apkPath);
+      androidFile = apkPath.endsWith('app-release.apk') ? 'app-release.apk' : 'app-debug.apk';
+      const stat = await fs.stat(apkPath);
+      androidSize = formatSize(stat.size);
+      hasAndroid = true;
+      break;
+    } catch {}
+  }
+
+  const pageTitle = `Download AI Chat${version ? ` v${version}` : ''}`;
+
+  // Build card HTML for each available platform
+  let cardsHtml = '';
+
+  if (hasDesktop) {
+    cardsHtml += `
+      <a href="/download/desktop" class="card">
+        <div class="card-icon">🖥️</div>
+        <div class="card-content">
+          <div class="card-title">Windows Desktop</div>
+          <div class="card-desc">Native Electron app with full features &middot; ${desktopSize}</div>
+        </div>
+        <div class="card-arrow">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </div>
+      </a>`;
+  }
+
+  if (hasAndroid) {
+    cardsHtml += `
+      <a href="/download/android" class="card">
+        <div class="card-icon">📱</div>
+        <div class="card-content">
+          <div class="card-title">Android APK</div>
+          <div class="card-desc">Mobile app for phones &amp; tablets &middot; ${androidSize}</div>
+        </div>
+        <div class="card-arrow">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </div>
+      </a>`;
+  }
+
+  // No builds available
+  if (!cardsHtml) {
+    cardsHtml = `
+      <div class="card disabled">
+        <div class="card-content" style="text-align: center;">
+          <div class="card-title">No builds available yet</div>
+          <div class="card-desc">Build the desktop app with <code>build_electron.bat</code> or the Android APK with Android Studio, then check back here.</div>
+        </div>
+      </div>`;
+  }
+
+  return c.html(`
+    <!DOCTYPE html>
+    <html lang="en" class="dark">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>${pageTitle}</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          background: #030712;
+          color: #e5e7eb;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 100vh;
+          padding: 1.5rem;
+        }
+        .container { width: 100%; max-width: 440px; }
+        .header {
+          text-align: center;
+          margin-bottom: 2rem;
+        }
+        .logo {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 3.5rem;
+          height: 3.5rem;
+          border-radius: 1rem;
+          background: linear-gradient(135deg, #7c3aed, #2563eb);
+          font-size: 1.5rem;
+          margin-bottom: 1rem;
+          box-shadow: 0 8px 32px rgba(124, 58, 237, 0.2);
+        }
+        h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem; }
+        .subtitle { color: #9ca3af; font-size: 0.875rem; line-height: 1.5; }
+        .cards { display: flex; flex-direction: column; gap: 0.75rem; }
+        .card {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+          padding: 1rem 1.25rem;
+          background: #111827;
+          border: 1px solid #1f2937;
+          border-radius: 1rem;
+          text-decoration: none;
+          color: inherit;
+          transition: all 0.2s;
+          cursor: pointer;
+        }
+        .card:hover {
+          border-color: #374151;
+          background: #1a2332;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        .card.disabled { opacity: 0.5; cursor: default; }
+        .card.disabled:hover { transform: none; border-color: #1f2937; background: #111827; box-shadow: none; }
+        .card-icon { font-size: 1.75rem; flex-shrink: 0; }
+        .card-content { flex: 1; min-width: 0; }
+        .card-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 0.2rem; }
+        .card-desc { color: #9ca3af; font-size: 0.8rem; line-height: 1.4; }
+        .card-desc code { color: #a78bfa; background: #1e1b4b; padding: 0.1rem 0.3rem; border-radius: 0.25rem; font-size: 0.75rem; }
+        .card-arrow { color: #6b7280; flex-shrink: 0; transition: all 0.2s; }
+        .card:hover .card-arrow { color: #a78bfa; transform: translateY(2px); }
+        .footer { text-align: center; margin-top: 2rem; }
+        .back-link { color: #6b7280; font-size: 0.8rem; text-decoration: none; transition: color 0.2s; }
+        .back-link:hover { color: #e5e7eb; }
+        code { font-family: 'Cascadia Code', 'Fira Code', monospace; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <div class="logo">🤖</div>
+          <h1>${pageTitle}</h1>
+          <p class="subtitle">Download the AI Chat app for your device.<br>Connect to your local AI server.</p>
+        </div>
+        <div class="cards">
+          ${cardsHtml}
+        </div>
+        <div class="footer">
+          <a href="/" class="back-link">&larr; Back to Chat</a>
+        </div>
+      </div>
+    </body>
+    </html>
+  `, 200, { 'Content-Type': 'text/html' });
+}
+
+app.get('/download', async (c) => {
+  return renderDownloadPage(c);
+});
+
+// Serve the desktop app download (.exe)
+app.get('/download/desktop', async (c) => {
+  try {
+    const files = await fs.readdir(RELEASE_DIR);
+    const setupFiles = files
+      .filter((f) => f.includes('Setup') && f.endsWith('.exe') && !f.endsWith('.exe.blockmap'))
+      .sort().reverse();
+
     const exeToServe = setupFiles.length > 0 ? setupFiles[0] : null;
     if (!exeToServe) {
-      return c.redirect('https://github.com/your-repo/releases/latest');
+      return renderDownloadPage(c);
     }
-    
+
     const filePath = path.join(RELEASE_DIR, exeToServe);
     const data = await fs.readFile(filePath);
 
@@ -193,34 +392,36 @@ app.get('/download', async (c) => {
       },
     });
   } catch {
-    // Release directory doesn't exist yet — show a friendly message
-    return c.html(`
-      <!DOCTYPE html>
-      <html lang="en" class="dark">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Download AI Chat</title>
-        <style>
-          body { background: #030712; color: #e5e7eb; font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-          .card { text-align: center; padding: 2rem; max-width: 480px; }
-          h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
-          p { color: #9ca3af; font-size: 0.875rem; line-height: 1.5; }
-          .btn { display: inline-flex; align-items: center; gap: 0.5rem; margin-top: 1.5rem; padding: 0.75rem 1.5rem; background: linear-gradient(135deg, #7c3aed, #6d28d9); color: white; border-radius: 0.75rem; text-decoration: none; font-size: 0.875rem; font-weight: 500; transition: all 0.2s; }
-          .btn:hover { transform: scale(1.05); }
-          .sub { margin-top: 1rem; font-size: 0.75rem; color: #6b7280; }
-        </style>
-      </head>
-      <body>
-        <div class="card">
-          <h1>Download AI Chat Desktop App</h1>
-          <p>The desktop app is not yet built. Run <code>build_electron.bat</code> in the frontend directory to create the .exe, then it will be available here.</p>
-          <a href="/" class="btn">Back to Chat</a>
-        </div>
-      </body>
-      </html>
-    `, 200, { 'Content-Type': 'text/html' });
+    return renderDownloadPage(c);
   }
+});
+
+// Serve the Android APK download
+app.get('/download/android', async (c) => {
+  // Try release first, fall back to debug
+  const apkPaths = [
+    { path: path.join(ANDROID_APK_DIR, 'release', 'app-release.apk'), name: 'app-release.apk' },
+    { path: path.join(ANDROID_APK_DIR, 'debug', 'app-debug.apk'), name: 'app-debug.apk' },
+  ];
+
+  for (const { path: apkPath, name } of apkPaths) {
+    try {
+      await fs.access(apkPath);
+      const data = await fs.readFile(apkPath);
+      const stat = await fs.stat(apkPath);
+      console.log(`[download] Serving Android APK: ${apkPath} (${formatSize(stat.size)})`);
+      return new Response(data, {
+        headers: {
+          'Content-Type': 'application/vnd.android.package-archive',
+          'Content-Disposition': `attachment; filename="AiChat-Android.apk"`,
+          'Content-Length': String(data.length),
+        },
+      });
+    } catch {}
+  }
+
+  // No APK found — show download page with info
+  return renderDownloadPage(c);
 });
 
 // ─── Terminal API ──────────────────────────────────────────────
@@ -414,10 +615,12 @@ app.post('/api/build', async (c) => {
 
   // Read optional config from request body
   let buildVersion: string | undefined;
+  let buildAndroid = false;
   let buildMeta: { productName?: string; iconPath?: string; description?: string; author?: string; appId?: string } = {};
   try {
     const body = await c.req.json();
     buildVersion = body.version;
+    buildAndroid = body.buildAndroid === true;
     if (body.productName) buildMeta.productName = body.productName;
     if (body.iconPath !== undefined) buildMeta.iconPath = body.iconPath;
     if (body.description) buildMeta.description = body.description;
@@ -592,12 +795,83 @@ app.post('/api/build', async (c) => {
         }
         send({ type: 'chunk', content: '\n✓ Electron packaging complete\n' });
 
+        // ── Step 4: Build Android APK (optional) ──────────────
+        let androidOut: any = { stdout: '' };
+        if (buildAndroid) {
+          const androidDir = path.join(path.resolve(process.cwd(), '..', 'frontend'), 'android');
+          send({ type: 'stage', stage: 'build:android' });
+          send({ type: 'chunk', content: '\nBuilding Android APK...\n' });
+
+          // Helper to convert exec output to string (Bun returns NonSharedBuffer, Node returns string)
+          const toStr = (v: any): string => typeof v === 'string' ? v : v?.toString() || '';
+
+          // Auto-detect JAVA_HOME for the Gradle build
+          // Capacitor 8 requires Java 21, so we need to find the JDK 21 installation
+          let javaHome = '';
+          try {
+            const javaResult = await execAsync('java -XshowSettings:properties -version 2>&1 | findstr "java.home"', {
+              timeout: 10000, shell: 'cmd.exe', windowsHide: true,
+            });
+            const match = javaResult.stdout.match(/java\.home\s*=\s*(.+)/);
+            if (match) {
+              javaHome = match[1].trim();
+              send({ type: 'chunk', content: `✓ Detected JAVA_HOME: ${javaHome}\n` });
+            }
+          } catch {}
+
+          // First sync the web build to Capacitor
+          const frontendRoot = path.resolve(process.cwd(), '..', 'frontend');
+          try {
+            send({ type: 'chunk', content: 'Syncing web build to Capacitor...\n' });
+            await execAsync('npx cap sync android', {
+              cwd: frontendRoot,
+              timeout: 60000,
+              shell: 'cmd.exe',
+              windowsHide: true,
+            } as any);
+            send({ type: 'chunk', content: '✓ Capacitor sync complete\n' });
+          } catch (e) {
+            const err = e as { stdout?: string; stderr?: string; message?: string };
+            send({ type: 'chunk', content: `⚠️ Capacitor sync issue: ${err.message || 'unknown'}\n` });
+          }
+
+          // Run Gradle build with the detected JAVA_HOME
+          try {
+            send({ type: 'chunk', content: 'Running Gradle assembleDebug...\n' });
+            const gradleEnv = { ...process.env } as Record<string, string>;
+            if (javaHome) gradleEnv.JAVA_HOME = javaHome;
+
+            const gradleResult: any = await execAsync('gradlew.bat assembleDebug', {
+              cwd: androidDir,
+              timeout: 600000, // 10 minutes for Android build
+              shell: 'cmd.exe',
+              windowsHide: true,
+              maxBuffer: 10 * 1024 * 1024,
+              env: gradleEnv,
+            });
+            androidOut = gradleResult;
+            const stdoutStr = toStr(gradleResult.stdout);
+            if (stdoutStr) {
+              const lines = stdoutStr.split('\n');
+              for (const line of lines) {
+                if (line.trim()) send({ type: 'chunk', content: line + '\n' });
+              }
+            }
+            send({ type: 'chunk', content: '\n✓ Android APK build complete!\n' });
+          } catch (e) {
+            const err = e as { stdout?: string; stderr?: string; message?: string; killed?: boolean };
+            if (err.stdout) send({ type: 'chunk', content: toStr(err.stdout) });
+            if (err.stderr) send({ type: 'chunk', content: toStr(err.stderr) });
+            send({ type: 'chunk', content: `\n⚠️ Android build issue: ${err.message || 'unknown'}\n` });
+          }
+        }
+
         // ── Done ──────────────────────────────────────────────
         console.log('[build] Build completed successfully');
         send({
           type: 'done',
           success: true,
-          output: (buildOut.stdout + '\n' + pkgOut.stdout).slice(-2000) || '',
+          output: (buildOut.stdout + '\n' + pkgOut.stdout + '\n' + androidOut.stdout).slice(-2000) || '',
           version: buildVersion || undefined,
         });
 
@@ -634,7 +908,10 @@ app.get('/', (c) => c.json({ message: 'AI Chat API', version: '1.0.0' }));
 app.get('/api/health', (c) => c.json({ status: 'ok' }));
 
 const port = Number(process.env.PORT) || 3001;
-const useHttps = process.env.HTTPS !== 'false';
+
+// HTTPS mode detection (priority: CLI flag > env var > default HTTPS)
+// Pass --http to `bun run dev` via `bun run dev -- --http` to disable HTTPS
+const useHttps = process.argv.includes('--http') ? false : process.env.HTTPS !== 'false';
 
 if (useHttps) {
   const certPath = process.env.SSL_CERT || '../certs/localhost.crt';

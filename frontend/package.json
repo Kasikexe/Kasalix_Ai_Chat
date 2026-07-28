@@ -1,7 +1,7 @@
 {
   "name": "ai-chat-frontend",
   "private": true,
-  "version": "1.5.11",
+  "version": "1.6.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -13,6 +13,9 @@
     "configure-build": "node scripts/configure-build.mjs"
   },
   "dependencies": {
+    "@capacitor/android": "^8.4.2",
+    "@capacitor/cli": "^8.4.2",
+    "@capacitor/core": "^8.4.2",
     "electron-updater": "^6.8.9",
     "highlight.js": "^11.10.0",
     "lucide-react": "^0.453.0",
@@ -74,6 +77,6 @@
       "channel": "latest"
     }
   },
-  "description": "- Logs Title\n- Resizable Panels in Agent Mode\n- TODOs Panel in Agent Mode ",
+  "description": "- Android app",
   "author": "Kasik"
 }

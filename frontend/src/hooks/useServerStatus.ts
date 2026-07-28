@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { getApiBaseUrl } from '../services/api';
 
 interface ServerStatus {
   online: boolean;
@@ -24,7 +25,9 @@ export function useServerStatus() {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000);
-        const res = await fetch('/api/models', { signal: controller.signal });
+        // Use the dynamic API base URL so it works on Android (Capacitor) too
+        const modelsUrl = `${getApiBaseUrl()}/models`;
+        const res = await fetch(modelsUrl, { signal: controller.signal });
         clearTimeout(timeoutId);
         if (cancelled) return;
 

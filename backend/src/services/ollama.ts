@@ -11,13 +11,34 @@ function modelSupportsThinking(modelName: string): boolean {
   return THINKING_MODELS.some((m) => lower.includes(m));
 }
 
+// ─── Model List Cache (#12) ────────────────────────────────
+// Cache model list for 30 seconds to avoid repeated Ollama fetch calls
+const MODEL_CACHE_TTL = 30_000; // 30 seconds
+let modelCache: { data: OllamaModel[]; timestamp: number } | null = null;
+
 export async function getModels(): Promise<OllamaModel[]> {
+  // Return cached models if still fresh
+  if (modelCache && Date.now() - modelCache.timestamp < MODEL_CACHE_TTL) {
+    return modelCache.data;
+  }
+
   const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`);
   if (!res.ok) {
     throw new Error(`Failed to fetch models from Ollama: ${res.statusText}`);
   }
   const data = await res.json();
-  return data.models || [];
+  const models = data.models || [];
+
+  // Update cache
+  modelCache = { data: models, timestamp: Date.now() };
+  return models;
+}
+
+/**
+ * Clear the model list cache (e.g., when a new model is pulled).
+ */
+export function clearModelCache(): void {
+  modelCache = null;
 }
 
 function convertMessagesForOllama(messages: Message[]): any[] {
@@ -159,4 +180,49 @@ export async function streamChat(
   } finally {
     reader.releaseLock();
   }
+}
+
+/**
+ * Non-streaming chat — sends a request and returns the full response at once.
+ * Much faster than streamChat for small responses like title generation (#5).
+ */
+export async function chat(
+  model: string,
+  messages: Message[],
+  options: StreamOptions = {}
+): Promise<string> {
+  const ollamaMessages = convertMessagesForOllama(messages);
+
+  const body: any = {
+    model,
+    messages: ollamaMessages,
+    stream: false,
+  };
+
+  if (options.temperature !== undefined) body.options = { ...body.options, temperature: options.temperature };
+  if (options.top_p !== undefined) body.options = { ...body.options, top_p: options.top_p };
+  if (options.max_tokens !== undefined) body.options = { ...body.options, num_predict: options.max_tokens };
+
+  if (modelSupportsThinking(model)) {
+    body.think = options.think === true;
+  }
+
+  console.log(`[ollama] Non-streaming — model: ${model}, temp: ${options.temperature ?? 'default'}`);
+
+  const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: options.signal,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Ollama error (${res.status}): ${errorText || res.statusText}`);
+  }
+
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+
+  return data.message?.content || '';
 }

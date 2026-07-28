@@ -3,7 +3,7 @@ import { runPipeline } from '../services/pipeline';
 import { addMessage, createConversation, getConversation } from '../services/storage';
 import { getMemory } from '../services/memory';
 import { extractMemoryFromTurn } from '../services/extractor';
-import { streamChat } from '../services/ollama';
+import { chat as ollamaChat, streamChat } from '../services/ollama';
 import type { ConversationMode, Message } from '../types';
 
 const chat = new Hono();
@@ -198,7 +198,8 @@ chat.post('/title', async (c) => {
 
     let title = '';
     try {
-      await streamChat(
+      // Use non-streaming API for speed (#5)
+      title = await ollamaChat(
         model,
         [
           {
@@ -207,9 +208,6 @@ chat.post('/title', async (c) => {
           },
           { role: 'user', content: cleaned },
         ],
-        (chunk) => {
-          title += chunk;
-        },
         { temperature: 0.3, max_tokens: 20 }
       );
     } catch (e) {

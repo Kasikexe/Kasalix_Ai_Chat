@@ -6,6 +6,8 @@ import { AgentWorkspace } from './components/AgentWorkspace';
 import { VideoEditor } from './components/VideoEditor';
 import { ChangelogView } from './components/ChangelogView';
 import { PlannedView } from './components/PlannedView';
+import { SpeedTestView } from './components/SpeedTestView';
+import { ServerConnect } from './components/ServerConnect';
 import { ServerDownOverlay } from './components/ServerDownOverlay';
 import { ModelAssignmentModal } from './components/ModelAssignmentModal';
 import { UserSettingsModal } from './components/UserSettingsModal';
@@ -32,6 +34,7 @@ const THINKING_KEY = 'ai-chat:thinkingEnabled';
 
 function App() {
   const [user, setUser] = useState<UserProfile | null>(() => getUserProfile());
+  const [serverConnected, setServerConnected] = useState(false);
   const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(() => {
     const stored = localStorage.getItem(THINKING_KEY);
     return stored === 'true'; // default OFF for speed
@@ -51,6 +54,10 @@ function App() {
         }}
       />
     );
+  }
+
+  if (!serverConnected) {
+    return <ServerConnect onConnected={() => setServerConnected(true)} />;
   }
 
   return (
@@ -104,7 +111,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
   const [userSettingsOpen, setUserSettingsOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [mode, setMode] = useState<ConversationMode>('chat');
-  const [viewTab, setViewTab] = useState<'chat' | 'agent' | 'editor' | 'logs' | 'planned'>('chat');
+  const [viewTab, setViewTab] = useState<'chat' | 'agent' | 'editor' | 'logs' | 'planned' | 'speedtest'>('chat');
   const [offlineWorkspace, setOfflineWorkspace] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchActive, setSearchActive] = useState(false);
@@ -206,8 +213,8 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
     if (activeId === id) setActiveId(null);
   };
 
-  const handleModeChange = (newMode: ConversationMode | 'logs' | 'planned') => {
-    if (newMode === 'logs' || newMode === 'planned') {
+  const handleModeChange = (newMode: ConversationMode | 'logs' | 'planned' | 'speedtest') => {
+    if (newMode === 'logs' || newMode === 'planned' || newMode === 'speedtest') {
       setViewTab(newMode);
       return;
     }
@@ -276,6 +283,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
         <Header
           onMenuClick={() => setSidebarOpen(true)}
           onAdminClick={handleAdminClick}
+          onSpeedTestClick={() => setViewTab('speedtest')}
           isAdmin={isAuthed}
           thinkingEnabled={thinkingEnabled}
           onToggleThinking={onToggleThinking}
@@ -292,6 +300,8 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
               <ChangelogView isAdmin={isAuthed} />
             ) : viewTab === 'planned' ? (
               <PlannedView isAdmin={isAuthed} />
+            ) : viewTab === 'speedtest' ? (
+              <SpeedTestView isAdmin={isAuthed} />
             ) : mode === 'agent' ? (
               <AgentWorkspace
                 key={activeConv?.id || 'new'}

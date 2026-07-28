@@ -1,6 +1,13 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+// Detect backend protocol using a signal file created by start.bat --http
+// This is reliable because file system operations work across process boundaries
+// (unlike environment variables which don't propagate through `start` cmd)
+var httpSignalFile = join(process.cwd(), '..', '.http-mode');
+var backendProtocol = existsSync(httpSignalFile) ? 'http' : 'https';
+var backendTarget = "".concat(backendProtocol, "://localhost:3001");
 export default defineConfig({
     plugins: [react()],
     server: {
@@ -13,12 +20,12 @@ export default defineConfig({
         },
         proxy: {
             '/api': {
-                target: 'https://localhost:3001',
+                target: backendTarget,
                 changeOrigin: true,
                 secure: false, // allow self-signed certs locally
             },
             '/download': {
-                target: 'https://localhost:3001',
+                target: backendTarget,
                 changeOrigin: true,
                 secure: false,
             },

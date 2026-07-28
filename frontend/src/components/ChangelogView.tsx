@@ -134,6 +134,7 @@ export function ChangelogView({ isAdmin = false }: { isAdmin?: boolean }) {
     author: string;
     appId: string;
     releaseTitle?: string;
+    buildAndroid?: boolean;
   }) => {
     setShowConfig(false);
 
@@ -167,6 +168,7 @@ export function ChangelogView({ isAdmin = false }: { isAdmin?: boolean }) {
           description: buildConfig.description,
           author: buildConfig.author,
           appId: buildConfig.appId,
+          buildAndroid: buildConfig.buildAndroid,
         }
       );
       setBuildResult({ success: result.success, output: result.output, error: result.error });
