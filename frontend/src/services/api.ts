@@ -202,7 +202,28 @@ export function clearUserProfile(): void {
   localStorage.removeItem(USER_KEY);
 }
 
-// Build fetch options with the user ID injected as a cookie
+// Session token management
+const TOKEN_KEY = 'ai-chat:sessionToken';
+
+export function getSessionToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch { return null; }
+}
+
+export function setSessionToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearSessionToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+export function isLoggedIn(): boolean {
+  return !!getSessionToken();
+}
+
+// Build fetch options with the user ID injected + Bearer token for session auth
 function authedFetch(url: string, options: RequestInit = {}): RequestInit {
   const profile = loadProfile();
   const headers = new Headers(options.headers);
@@ -210,6 +231,12 @@ function authedFetch(url: string, options: RequestInit = {}): RequestInit {
 
   if (profile?.id) {
     headers.set('X-User-Id', profile.id);
+  }
+
+  // Add Bearer token for session-based auth
+  const token = getSessionToken();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
   }
 
   return { ...options, headers };
@@ -341,6 +368,89 @@ export const api = {
     } catch {
       return false;
     }
+  },
+
+  // ─── User Authentication ────────────────────────────────
+  async register(username: string, password: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        return { success: false, error: data.error || 'Registration failed' };
+      }
+      const data = await res.json();
+      if (data.token) {
+        setSessionToken(data.token);
+        // Ensure user profile is set
+        if (data.user) {
+          const current = loadProfile();
+          if (!current || current.id !== data.user.id) {
+            saveProfile({ id: data.user.id, name: data.user.username, color: data.user.color });
+          }
+        }
+      }
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: 'Connection failed' };
+    }
+  },
+
+  async login(username: string, password: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        return { success: false, error: data.error || 'Invalid username or password' };
+      }
+      const data = await res.json();
+      if (data.token) {
+        setSessionToken(data.token);
+        if (data.user) {
+          const current = loadProfile();
+          if (!current || current.id !== data.user.id) {
+            saveProfile({ id: data.user.id, name: data.user.username, color: data.user.color });
+          }
+        }
+      }
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: 'Connection failed' };
+    }
+  },
+
+  async checkSession(): Promise<{ authenticated: boolean; user?: UserProfile }> {
+    try {
+      const data = await handleResponse<{ authenticated: boolean; user?: { id: string; username: string; color: string } }>(
+        await fetch(`${API_BASE}/auth/me`, authedFetch(`${API_BASE}/auth/me`))
+      );
+      if (data.authenticated && data.user) {
+        return {
+          authenticated: true,
+          user: { id: data.user.id, name: data.user.username, color: data.user.color },
+        };
+      }
+      return { authenticated: false };
+    } catch {
+      return { authenticated: false };
+    }
+  },
+
+  async logout(): Promise<void> {
+    try {
+      await fetch(`${API_BASE}/auth/logout`, authedFetch(`${API_BASE}/auth/logout`, {
+        method: 'POST',
+      }));
+    } catch { /* ignore */ }
+    clearSessionToken();
+    clearUserProfile();
   },
 
   /** List files in a directory — uses local IPC in Electron, backend API on web */
@@ -718,145 +828,7 @@ streamChat(
     );
   },
 
-  // --- Build Critical Update API ---
-  async getCriticalUpdate(): Promise<{ version: string | null; critical: boolean }> {
-    return handleResponse(
-      await fetch(`${API_BASE}/build/critical`, authedFetch(`${API_BASE}/build/critical`))
-    );
-  },
 
-  async setCriticalUpdate(version: string, critical: boolean): Promise<{ success: boolean; version: string; critical: boolean }> {
-    return handleResponse(
-      await fetch(`${API_BASE}/build/critical`, authedFetch(`${API_BASE}/build/critical`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ version, critical }),
-      }))
-    );
-  },
-
-  // --- Build Config API ---
-  async getBuildConfig(): Promise<{
-    config: {
-      version: string;
-      productName: string;
-      appId: string;
-      iconPath: string;
-      description: string;
-      author: string;
-      lastBuild: number | null;
-    };
-  }> {
-    return handleResponse(
-      await fetch(`${API_BASE}/build/config`, authedFetch(`${API_BASE}/build/config`))
-    );
-  },
-
-  async saveBuildConfig(config: Record<string, any>): Promise<{ config: any }> {
-    return handleResponse(
-      await fetch(`${API_BASE}/build/config`, authedFetch(`${API_BASE}/build/config`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
-      }))
-    );
-  },
-
-  // --- Build Trigger API (SSE streaming) ---
-  triggerBuild(
-    version?: string,
-    callbacks?: {
-      onStage?: (stage: string) => void;
-      onChunk?: (content: string) => void;
-    },
-    extraConfig?: {
-      productName?: string;
-      iconPath?: string;
-      description?: string;
-      author?: string;
-      appId?: string;
-      buildAndroid?: boolean;
-    }
-  ): Promise<{ success: boolean; output?: string; error?: string; version?: string }> {
-    return (async () => {
-      const body: Record<string, any> = {};
-      if (version) body.version = version;
-      if (extraConfig) {
-        if (extraConfig.productName) body.productName = extraConfig.productName;
-        if (extraConfig.iconPath !== undefined) body.iconPath = extraConfig.iconPath;
-        if (extraConfig.description) body.description = extraConfig.description;
-        if (extraConfig.author !== undefined) body.author = extraConfig.author;
-        if (extraConfig.appId) body.appId = extraConfig.appId;
-        if (extraConfig.buildAndroid === true) body.buildAndroid = true;
-      }
-      const res = await fetch(`${API_BASE}/build`, authedFetch(`${API_BASE}/build`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      }));
-
-      if (!res.ok || !res.body) {
-        const text = await res.text().catch(() => '');
-        throw new Error(text || `Build request failed: ${res.statusText}`);
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let output = '';
-
-      return new Promise((resolve, reject) => {
-        (async () => {
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              buffer += decoder.decode(value, { stream: true });
-              const events = buffer.split('\n\n');
-              buffer = events.pop() || '';
-
-              for (const evt of events) {
-                const line = evt.trim();
-                if (!line.startsWith('data:')) continue;
-                const payload = line.slice(5).trim();
-                if (!payload) continue;
-                try {
-                  const parsed = JSON.parse(payload);
-                  switch (parsed.type) {
-                    case 'stage':
-                      callbacks?.onStage?.(parsed.stage);
-                      break;
-                    case 'chunk':
-                      output += parsed.content;
-                      callbacks?.onChunk?.(parsed.content);
-                      break;
-                    case 'done':
-                      resolve({
-                        success: parsed.success,
-                        output: parsed.output || output,
-                        version: parsed.version,
-                      });
-                      return;
-                    case 'error':
-                      reject(new Error(parsed.error || 'Build failed'));
-                      return;
-                  }
-                } catch (e) {
-                  console.error('Build SSE parse error:', e);
-                }
-              }
-            }
-            // Stream ended without done/error
-            resolve({ success: true, output });
-          } catch (e) {
-            reject(e);
-          } finally {
-            reader.releaseLock();
-          }
-        })();
-      });
-    })();
-  },
 
   // --- Changelog API ---
   async getChangelog(): Promise<{ entries: any[] }> {

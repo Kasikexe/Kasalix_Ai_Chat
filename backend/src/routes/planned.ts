@@ -8,8 +8,11 @@ import {
 
 const planned = new Hono();
 
-// GET /api/planned — public, anyone can view
+// GET /api/planned — developer only (requires settings auth)
 planned.get('/', async (c) => {
+  if (!c.get('auth').authenticated) {
+    return c.json({ error: 'Not authenticated' }, 401);
+  }
   const features = await getPlannedFeatures();
   return c.json({ features });
 });

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { logger } from 'hono/logger';
+import { logger as honoLogger } from 'hono/logger';
 import { serve } from '@hono/node-server';
 import { createServer } from 'node:https';
 import { readFileSync } from 'fs';
@@ -21,6 +21,16 @@ import { registerAllTools } from './services/tools/register';
 import { getAllTools, executeTool } from './services/tools/index';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { logger as appLogger } from './services/logger';
+import {
+  registerUser,
+  loginUser,
+  validateSession,
+  destroySession,
+  getCurrentUser,
+  getAllUsers,
+  shutdown as shutdownAuth,
+} from './services/auth';
 
 const execAsync = promisify(exec);
 
@@ -29,7 +39,7 @@ registerAllTools();
 
 const app = new Hono();
 
-app.use('*', logger());
+app.use('*', honoLogger());
 app.use('*', cors({
   origin: (origin) => {
     // Allow any origin — this is a local-only AI chat app, not a public service.
@@ -42,15 +52,37 @@ app.use('*', cors({
   credentials: true,
 }));
 
-// User middleware: trust X-User-Id header from frontend
+// User middleware: trust X-User-Id header from frontend (fallback)
+// Also checks for a Bearer token in the Authorization header (session auth)
 app.use('*', async (c, next) => {
-  const headerId = c.req.header('X-User-Id');
-  const userId = headerId || generateId();
+  // Check for session token first
+  const authHeader = c.req.header('Authorization');
+  let userId: string | undefined;
+
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7);
+    const result = validateSession(token);
+    if (result.valid && result.userId) {
+      userId = result.userId;
+    }
+  }
+
+  // Fall back to X-User-Id header (existing behavior)
+  if (!userId) {
+    const headerId = c.req.header('X-User-Id');
+    userId = headerId || generateId();
+  }
+
   c.set('user', { id: userId });
+  c.set('session', {
+    authenticated: !!authHeader?.startsWith('Bearer ') && !!userId,
+    userId,
+  });
   await next();
 });
 
-// Admin auth: gated by admin password — applies to settings AND changelog admin endpoints
+// ─── Admin auth (unchanged from existing system) ───────────────
+// Uses cookie-based auth for admin-only features (settings, changelog, speedtest)
 app.use('/api/settings/*', async (c, next) => {
   const authCookie = c.req.header('Cookie');
   const isAuthed = authCookie?.includes('settings_auth=1') || false;
@@ -67,16 +99,138 @@ app.use('/api/changelog/*', async (c, next) => {
   c.set('auth', { authenticated: authCookie?.includes('settings_auth=1') || false });
   await next();
 });
-app.use('/api/build/*', async (c, next) => {
-  const authCookie = c.req.header('Cookie');
-  c.set('auth', { authenticated: authCookie?.includes('settings_auth=1') || false });
-  await next();
-});
 app.use('/api/speedtest/*', async (c, next) => {
   const authCookie = c.req.header('Cookie');
   c.set('auth', { authenticated: authCookie?.includes('settings_auth=1') || false });
   await next();
 });
+
+// ─── User session auth (protects user-facing features) ────────
+// These routes require a valid Bearer token in the Authorization header
+const SESSION_PROTECTED = [
+  '/api/chat/*',
+  '/api/conversations/*',
+  '/api/files/*',
+  '/api/editor/*',
+  '/api/memory/*',
+];
+
+app.use('*', async (c, next) => {
+  const path = c.req.path;
+  const isProtected = SESSION_PROTECTED.some((p) => {
+    // Convert glob-like pattern to regex
+    const pattern = new RegExp('^' + p.replace(/\*/g, '.*') + '$');
+    return pattern.test(path);
+  });
+
+  if (isProtected) {
+    const session = c.get('session');
+    if (!session.authenticated) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+  }
+
+  await next();
+});
+
+// Auth routes (public — for registration, login, logout, and session check)
+app.post('/api/auth/register', async (c) => {
+  try {
+    const { username, password } = await c.req.json();
+    if (!username || !password) {
+      return c.json({ error: 'Username and password are required' }, 400);
+    }
+    const result = await registerUser(username, password);
+    if (!result.success) {
+      return c.json({ error: result.error }, 400);
+    }
+    // Auto-login after registration
+    const loginResult = await loginUser(username, password, c.req.header('x-forwarded-for') || 'local');
+    if (!loginResult.success) {
+      return c.json({ error: loginResult.error }, 500);
+    }
+    const profile = await getCurrentUser(loginResult.userId);
+    appLogger.info(`[auth] New user registered: ${username}`);
+    return c.json({
+      token: loginResult.token,
+      user: profile,
+    }, 201);
+  } catch (e) {
+    appLogger.error('[auth] Registration error:', e);
+    return c.json({ error: 'Registration failed' }, 500);
+  }
+});
+
+app.post('/api/auth/login', async (c) => {
+  try {
+    const { username, password } = await c.req.json();
+    if (!username || !password) {
+      return c.json({ error: 'Username and password are required' }, 400);
+    }
+    const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'local';
+    const result = await loginUser(username, password, ip);
+    if (!result.success) {
+      return c.json({ error: result.error }, 401);
+    }
+    const profile = await getCurrentUser(result.userId);
+    return c.json({
+      token: result.token,
+      user: profile,
+    });
+  } catch (e) {
+    appLogger.error('[auth] Login error:', e);
+    return c.json({ error: 'Login failed' }, 500);
+  }
+});
+
+app.post('/api/auth/logout', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (authHeader?.startsWith('Bearer ')) {
+      const token = authHeader.slice(7);
+      destroySession(token);
+    }
+    return c.json({ success: true });
+  } catch (e) {
+    appLogger.error('[auth] Logout error:', e);
+    return c.json({ error: 'Logout failed' }, 500);
+  }
+});
+
+app.get('/api/auth/me', async (c) => {
+  try {
+    const session = c.get('session');
+    if (!session.authenticated || !session.userId) {
+      return c.json({ authenticated: false });
+    }
+    const profile = await getCurrentUser(session.userId);
+    if (!profile) {
+      return c.json({ authenticated: false });
+    }
+    return c.json({ authenticated: true, user: profile });
+  } catch (e) {
+    appLogger.error('[auth] Session check error:', e);
+    return c.json({ authenticated: false });
+  }
+});
+
+// GET /api/auth/users — list all registered users (protected by settings auth)
+app.get('/api/auth/users', async (c) => {
+  const authCookie = c.req.header('Cookie');
+  if (!authCookie?.includes('settings_auth=1')) {
+    return c.json({ error: 'Not authenticated' }, 401);
+  }
+  try {
+    const users = await getAllUsers();
+    return c.json({ users });
+  } catch (e) {
+    appLogger.error('[auth] List users error:', e);
+    return c.json({ error: 'Failed to list users' }, 500);
+  }
+});
+
+// ─── API Tools are publicly accessible for model use ──────────
+// (Tools like calculator, converter, etc. are called by the AI, not the user directly)
 
 app.onError(errorHandler);
 
@@ -158,8 +312,7 @@ app.post('/api/generated/:filename/save-to-workspace', async (c) => {
   try {
     await fs.access(sourcePath);
     await fs.mkdir(resolvedDir, { recursive: true });
-    await fs.copyFile(sourcePath, destPath);
-    console.log(`[image] Saved to workspace: ${destPath}`);
+    await fs.copyFile(sourcePath, destPath);      appLogger.info(`[image] Saved to workspace: ${destPath}`);
     return c.json({
       success: true,
       path: destPath,
@@ -173,276 +326,36 @@ app.post('/api/generated/:filename/save-to-workspace', async (c) => {
   }
 });
 
-// ─── Download Page ─────────────────────────────────────────────
-// Serves a download page with links to both desktop and Android APK.
-const RELEASE_DIR = path.join(process.cwd(), '..', 'frontend', 'release');
-const ANDROID_APK_DIR = path.join(process.cwd(), '..', 'frontend', 'android', 'app', 'build', 'outputs', 'apk');
-
-/** Readable file size formatting */
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-}
-
-// Serve the download page HTML (with dark theme matching the app)
-async function renderDownloadPage(c: any): Promise<Response> {
-  let hasDesktop = false;
-  let desktopFile = '';
-  let desktopSize = '';
-  let hasAndroid = false;
-  let androidFile = '';
-  let androidSize = '';
-  let version = '';
-
-  // Check for desktop EXE
-  try {
-    const files = await fs.readdir(RELEASE_DIR);
-    const setupFiles = files
-      .filter((f) => f.includes('Setup') && f.endsWith('.exe') && !f.endsWith('.exe.blockmap'))
-      .sort().reverse();
-    if (setupFiles.length > 0) {
-      desktopFile = setupFiles[0];
-      const stat = await fs.stat(path.join(RELEASE_DIR, desktopFile));
-      desktopSize = formatSize(stat.size);
-      hasDesktop = true;
-      // Extract version from filename like "AI-Chat-Setup-1.5.13.exe"
-      const verMatch = desktopFile.match(/([\d.]+)\.exe/);
-      if (verMatch) version = verMatch[1];
-    }
-  } catch {}
-
-  // Check for Android APK (debug or release)
-  const apkPaths = [
-    path.join(ANDROID_APK_DIR, 'release', 'app-release.apk'),
-    path.join(ANDROID_APK_DIR, 'debug', 'app-debug.apk'),
-  ];
-  for (const apkPath of apkPaths) {
-    try {
-      await fs.access(apkPath);
-      androidFile = apkPath.endsWith('app-release.apk') ? 'app-release.apk' : 'app-debug.apk';
-      const stat = await fs.stat(apkPath);
-      androidSize = formatSize(stat.size);
-      hasAndroid = true;
-      break;
-    } catch {}
-  }
-
-  const pageTitle = `Download AI Chat${version ? ` v${version}` : ''}`;
-
-  // Build card HTML for each available platform
-  let cardsHtml = '';
-
-  if (hasDesktop) {
-    cardsHtml += `
-      <a href="/download/desktop" class="card">
-        <div class="card-icon">🖥️</div>
-        <div class="card-content">
-          <div class="card-title">Windows Desktop</div>
-          <div class="card-desc">Native Electron app with full features &middot; ${desktopSize}</div>
-        </div>
-        <div class="card-arrow">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        </div>
-      </a>`;
-  }
-
-  if (hasAndroid) {
-    cardsHtml += `
-      <a href="/download/android" class="card">
-        <div class="card-icon">📱</div>
-        <div class="card-content">
-          <div class="card-title">Android APK</div>
-          <div class="card-desc">Mobile app for phones &amp; tablets &middot; ${androidSize}</div>
-        </div>
-        <div class="card-arrow">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        </div>
-      </a>`;
-  }
-
-  // No builds available
-  if (!cardsHtml) {
-    cardsHtml = `
-      <div class="card disabled">
-        <div class="card-content" style="text-align: center;">
-          <div class="card-title">No builds available yet</div>
-          <div class="card-desc">Build the desktop app with <code>build_electron.bat</code> or the Android APK with Android Studio, then check back here.</div>
-        </div>
-      </div>`;
-  }
-
-  return c.html(`
-    <!DOCTYPE html>
-    <html lang="en" class="dark">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${pageTitle}</title>
-      <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-          background: #030712;
-          color: #e5e7eb;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          min-height: 100vh;
-          padding: 1.5rem;
-        }
-        .container { width: 100%; max-width: 440px; }
-        .header {
-          text-align: center;
-          margin-bottom: 2rem;
-        }
-        .logo {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 3.5rem;
-          height: 3.5rem;
-          border-radius: 1rem;
-          background: linear-gradient(135deg, #7c3aed, #2563eb);
-          font-size: 1.5rem;
-          margin-bottom: 1rem;
-          box-shadow: 0 8px 32px rgba(124, 58, 237, 0.2);
-        }
-        h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem; }
-        .subtitle { color: #9ca3af; font-size: 0.875rem; line-height: 1.5; }
-        .cards { display: flex; flex-direction: column; gap: 0.75rem; }
-        .card {
-          display: flex;
-          align-items: center;
-          gap: 1rem;
-          padding: 1rem 1.25rem;
-          background: #111827;
-          border: 1px solid #1f2937;
-          border-radius: 1rem;
-          text-decoration: none;
-          color: inherit;
-          transition: all 0.2s;
-          cursor: pointer;
-        }
-        .card:hover {
-          border-color: #374151;
-          background: #1a2332;
-          transform: translateY(-1px);
-          box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        }
-        .card.disabled { opacity: 0.5; cursor: default; }
-        .card.disabled:hover { transform: none; border-color: #1f2937; background: #111827; box-shadow: none; }
-        .card-icon { font-size: 1.75rem; flex-shrink: 0; }
-        .card-content { flex: 1; min-width: 0; }
-        .card-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 0.2rem; }
-        .card-desc { color: #9ca3af; font-size: 0.8rem; line-height: 1.4; }
-        .card-desc code { color: #a78bfa; background: #1e1b4b; padding: 0.1rem 0.3rem; border-radius: 0.25rem; font-size: 0.75rem; }
-        .card-arrow { color: #6b7280; flex-shrink: 0; transition: all 0.2s; }
-        .card:hover .card-arrow { color: #a78bfa; transform: translateY(2px); }
-        .footer { text-align: center; margin-top: 2rem; }
-        .back-link { color: #6b7280; font-size: 0.8rem; text-decoration: none; transition: color 0.2s; }
-        .back-link:hover { color: #e5e7eb; }
-        code { font-family: 'Cascadia Code', 'Fira Code', monospace; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <div class="logo">🤖</div>
-          <h1>${pageTitle}</h1>
-          <p class="subtitle">Download the AI Chat app for your device.<br>Connect to your local AI server.</p>
-        </div>
-        <div class="cards">
-          ${cardsHtml}
-        </div>
-        <div class="footer">
-          <a href="/" class="back-link">&larr; Back to Chat</a>
-        </div>
-      </div>
-    </body>
-    </html>
-  `, 200, { 'Content-Type': 'text/html' });
-}
-
-app.get('/download', async (c) => {
-  return renderDownloadPage(c);
-});
-
-// Serve the desktop app download (.exe)
-app.get('/download/desktop', async (c) => {
-  try {
-    const files = await fs.readdir(RELEASE_DIR);
-    const setupFiles = files
-      .filter((f) => f.includes('Setup') && f.endsWith('.exe') && !f.endsWith('.exe.blockmap'))
-      .sort().reverse();
-
-    const exeToServe = setupFiles.length > 0 ? setupFiles[0] : null;
-    if (!exeToServe) {
-      return renderDownloadPage(c);
-    }
-
-    const filePath = path.join(RELEASE_DIR, exeToServe);
-    const data = await fs.readFile(filePath);
-
-    return new Response(data, {
-      headers: {
-        'Content-Type': 'application/octet-stream',
-        'Content-Disposition': `attachment; filename="${exeToServe}"`,
-        'Content-Length': String(data.length),
-      },
-    });
-  } catch {
-    return renderDownloadPage(c);
-  }
-});
-
-// Serve the Android APK download
-app.get('/download/android', async (c) => {
-  // Try release first, fall back to debug
-  const apkPaths = [
-    { path: path.join(ANDROID_APK_DIR, 'release', 'app-release.apk'), name: 'app-release.apk' },
-    { path: path.join(ANDROID_APK_DIR, 'debug', 'app-debug.apk'), name: 'app-debug.apk' },
-  ];
-
-  for (const { path: apkPath, name } of apkPaths) {
-    try {
-      await fs.access(apkPath);
-      const data = await fs.readFile(apkPath);
-      const stat = await fs.stat(apkPath);
-      console.log(`[download] Serving Android APK: ${apkPath} (${formatSize(stat.size)})`);
-      return new Response(data, {
-        headers: {
-          'Content-Type': 'application/vnd.android.package-archive',
-          'Content-Disposition': `attachment; filename="AiChat-Android.apk"`,
-          'Content-Length': String(data.length),
-        },
-      });
-    } catch {}
-  }
-
-  // No APK found — show download page with info
-  return renderDownloadPage(c);
-});
-
 // ─── Terminal API ──────────────────────────────────────────────
 // POST /api/terminal — execute a shell command in the workspace directory
 app.post('/api/terminal', async (c) => {
+  // Require session authentication
+  const session = c.get('session');
+  if (!session.authenticated) {
+    return c.json({ error: 'Authentication required' }, 401);
+  }
+
   try {
     const { command, cwd } = await c.req.json();
     if (!command || typeof command !== 'string') {
       return c.json({ error: 'command is required' }, 400);
     }
 
-    // Security: resolve and restrict command to workspace (or any parent)
+    // Input validation: block truly dangerous command patterns only
+    const dangerous = /\b(rm\s+-[rf]\s+\/|format\s+[c-z]:\s*\/q|dd\s+if=|mkfs\.|fdisk|shutdown\s+-[rh]\s+-t\s+0|del\s+\/f\s+\/s)/i;
+    if (dangerous.test(command)) {
+      appLogger.warn(`[terminal] Blocked dangerous command from user ${session.userId}`);
+      return c.json({ error: 'Command blocked for security' }, 403);
+    }
+
     const safeCwd = cwd ? path.resolve(cwd) : process.cwd();
 
-    // Run the command with a timeout
     const result = await execAsync(command, {
       cwd: safeCwd,
       timeout: 60000,
       shell: true,
       windowsHide: true,
-      maxBuffer: 10 * 1024 * 1024, // 10MB
+      maxBuffer: 10 * 1024 * 1024,
     });
 
     return c.json({
@@ -464,49 +377,6 @@ app.post('/api/terminal', async (c) => {
   }
 });
 
-// ─── Auto-Update Server ────────────────────────────────────────
-// Serves latest.yml and installer files for the Electron auto-updater
-const UPDATE_DIR = path.join(process.cwd(), '..', 'frontend', 'release');
-
-app.get('/latest.yml', async (c) => {
-  try {
-    const data = await fs.readFile(path.join(UPDATE_DIR, 'latest.yml'), 'utf-8');
-    return c.body(data, 200, {
-      'Content-Type': 'application/x-yaml',
-      'Cache-Control': 'no-cache',
-    });
-  } catch {
-    return c.json({ error: 'No update available yet' }, 404);
-  }
-});
-
-app.get('/latest.yml.blockmap', async (c) => {
-  try {
-    const data = await fs.readFile(path.join(UPDATE_DIR, 'latest.yml.blockmap'));
-    return c.body(data, 200, {
-      'Content-Type': 'application/octet-stream',
-      'Cache-Control': 'no-cache',
-    });
-  } catch {
-    return c.json({ error: 'Not found' }, 404);
-  }
-});
-
-app.get('/:filename{[A-Za-z0-9._-]+\.exe}', async (c) => {
-  const filename = c.req.param('filename');
-  try {
-    const data = await fs.readFile(path.join(UPDATE_DIR, filename));
-    return new Response(data, {
-      headers: {
-        'Content-Type': 'application/octet-stream',
-        'Content-Disposition': `attachment; filename="${filename}"`,
-      },
-    });
-  } catch {
-    return c.json({ error: 'Installer not found' }, 404);
-  }
-});
-
 // ─── Tools API ────────────────────────────────────────────
 app.get('/api/tools', (c) => {
   const tools = getAllTools();
@@ -514,404 +384,265 @@ app.get('/api/tools', (c) => {
 });
 
 app.post('/api/tools/execute', async (c) => {
+  // Require session authentication
+  const session = c.get('session');
+  if (!session.authenticated) {
+    return c.json({ error: 'Authentication required' }, 401);
+  }
+
   const { toolId, params, userInput } = await c.req.json();
   if (!toolId) return c.json({ error: 'toolId is required' }, 400);
   const result = await executeTool(toolId, params || {}, { userInput: userInput || '' });
   return c.json(result);
 });
 
-// ─── Critical Update Status ────────────────────────────────────
-const CRITICAL_UPDATE_FILE = path.join(process.cwd(), 'data', 'update-critical.json');
 
-async function readCriticalStatus(): Promise<{ version: string; critical: boolean } | null> {
+
+
+// ─── Release Directory ──────────────────────────────
+// Where downloaded APK/EXE files are stored. The auto-updater and web
+// download page serve files from here.
+const RELEASE_DIR = path.join(process.cwd(), '..', 'release');
+const GITHUB_RELEASES_URL = process.env.GITHUB_RELEASES_URL || 'https://github.com/Kasikexe/Kasalix/releases';
+
+// ─── Download Page ────────────────────────────────
+app.get('/download', async (c) => {
+  // Check what's available locally
+  let hasDesktop = false, hasAndroid = false, desktopName = '', androidName = '';
   try {
-    return JSON.parse(await fs.readFile(CRITICAL_UPDATE_FILE, 'utf-8'));
-  } catch { return null; }
-}
-
-async function writeCriticalStatus(version: string, critical: boolean): Promise<void> {
-  await fs.mkdir(path.dirname(CRITICAL_UPDATE_FILE), { recursive: true });
-  await fs.writeFile(CRITICAL_UPDATE_FILE, JSON.stringify({ version, critical, updatedAt: Date.now() }, null, 2), 'utf-8');
-}
-
-// GET /api/build/critical — returns whether the latest build version is critical
-app.get('/api/build/critical', async (c) => {
-  const status = await readCriticalStatus();
-  return c.json({ version: status?.version || null, critical: status?.critical || false });
-});
-
-// PUT /api/build/critical — sets the critical flag for a version (admin only)
-app.put('/api/build/critical', async (c) => {
-  if (!c.get('auth').authenticated) {
-    return c.json({ error: 'Not authenticated' }, 401);
-  }
-  try {
-    const { version, critical } = await c.req.json();
-    if (!version || typeof version !== 'string') {
-      return c.json({ error: 'version is required' }, 400);
+    const files = await fs.readdir(RELEASE_DIR);
+    for (const f of files) {
+      if (f.endsWith('.exe') && !f.endsWith('.exe.blockmap')) {
+        hasDesktop = true;
+        desktopName = f;
+      }
+      if (f.toLowerCase().endsWith('.apk')) {
+        hasAndroid = true;
+        androidName = f;
+      }
     }
-    await writeCriticalStatus(version, critical === true);
-    return c.json({ success: true, version, critical: critical === true });
-  } catch {
-    return c.json({ error: 'Invalid request body' }, 400);
-  }
+  } catch {}
+
+  const version = process.env.APP_VERSION || '1.6.0';
+  const html = `
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <title>Download Kasalix AI Chat</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #030712;
+      color: #e5e7eb;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .container { max-width: 600px; padding: 2rem; text-align: center; }
+    h1 { font-size: 1.5rem; font-weight: 700; color: #f9fafb; margin-bottom: 0.5rem; }
+    .subtitle { color: #9ca3af; font-size: 0.95rem; margin-bottom: 2rem; line-height: 1.5; }
+    .card {
+      background: linear-gradient(135deg, #111827, #1f2937);
+      border: 1px solid #374151;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+    .card:hover { border-color: #6366f1; background: linear-gradient(135deg, #1e1b4b, #1f2937); transform: translateY(-1px); }
+    .card-icon { width: 48px; height: 48px; background: #1e293b; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0; }
+    .card-content { flex: 1; text-align: left; }
+    .card-title { color: #f9fafb; font-weight: 600; font-size: 1rem; margin-bottom: 0.25rem; }
+    .card-desc { color: #9ca3af; font-size: 0.8rem; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 0.7rem; font-weight: 500; margin-top: 4px; }
+    .badge-green { background: #064e3b; color: #6ee7b7; }
+    .badge-blue { background: #1e3a5f; color: #93c5fd; }
+    .badge-gray { background: #374151; color: #9ca3af; }
+    .github-link { margin-top: 2rem; display: inline-block; color: #6366f1; font-size: 0.85rem; text-decoration: none; }
+    .github-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Kasalix AI Chat</h1>
+    <p class="subtitle">Download the app for your device.<br>Connect to your local AI server.</p>
+
+    <a href="${hasDesktop ? '/download/desktop' : GITHUB_RELEASES_URL}" class="card" target="${hasDesktop ? '_self' : '_blank'}" rel="noopener noreferrer">
+      <div class="card-icon">🪟</div>
+      <div class="card-content">
+        <div class="card-title">Windows Desktop</div>
+        <div class="card-desc">${hasDesktop ? 'Download from this server' : 'Get from GitHub releases'}</div>
+        <span class="badge ${hasDesktop ? 'badge-blue' : 'badge-gray'}">${hasDesktop ? desktopName : 'Not on this server'}</span>
+      </div>
+    </a>
+
+    <a href="${hasAndroid ? '/download/android' : GITHUB_RELEASES_URL}" class="card" target="${hasAndroid ? '_self' : '_blank'}" rel="noopener noreferrer">
+      <div class="card-icon">📱</div>
+      <div class="card-content">
+        <div class="card-title">Android App</div>
+        <div class="card-desc">${hasAndroid ? 'Download from this server' : 'Get from GitHub releases'}</div>
+        <span class="badge ${hasAndroid ? 'badge-green' : 'badge-gray'}">${hasAndroid ? androidName : 'Not on this server'}</span>
+      </div>
+    </a>
+
+    <a href="${GITHUB_RELEASES_URL}" class="github-link" target="_blank" rel="noopener noreferrer">View all releases on GitHub →</a>
+  </div>
+</body>
+</html>`;
+  return c.html(html);
 });
 
-// ─── Build Config Endpoints ──────────────────────────────────
-// GET /api/build/config — returns current build config from build-config.json
-app.get('/api/build/config', async (c) => {
-  if (!c.get('auth').authenticated) {
-    return c.json({ error: 'Not authenticated' }, 401);
-  }
-  const cfgPath = path.join(path.resolve(process.cwd(), '..', 'frontend'), 'build-config.json');
+// ─── Desktop download ──────────────────────────────
+app.get('/download/desktop', async (c) => {
   try {
-    const cfg = JSON.parse(await fs.readFile(cfgPath, 'utf-8'));
-    return c.json({ config: cfg });
-  } catch {
-    // Return defaults
-    return c.json({
-      config: {
-        version: '1.0.0',
-        productName: 'AI Chat',
-        appId: 'com.aichat.desktop',
-        iconPath: '',
-        description: 'AI Chat Desktop Application',
-        author: '',
-        lastBuild: null,
+    const files = await fs.readdir(RELEASE_DIR);
+    const exe = files.find(f => f.endsWith('.exe') && !f.endsWith('.exe.blockmap'));
+    if (!exe) return c.redirect(GITHUB_RELEASES_URL);
+    const data = await fs.readFile(path.join(RELEASE_DIR, exe));
+    return new Response(data, {
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="${exe}"`,
       },
     });
+  } catch {
+    return c.redirect(GITHUB_RELEASES_URL);
   }
 });
 
-// PUT /api/build/config — saves updated build config to build-config.json
-app.put('/api/build/config', async (c) => {
-  if (!c.get('auth').authenticated) {
-    return c.json({ error: 'Not authenticated' }, 401);
-  }
-  const frontendDir = path.resolve(process.cwd(), '..', 'frontend');
-  const cfgPath = path.join(frontendDir, 'build-config.json');
+// ─── Android download ──────────────────────────────
+app.get('/download/android', async (c) => {
   try {
-    const body = await c.req.json();
-    const current = await fs.readFile(cfgPath, 'utf-8').then(JSON.parse).catch(() => ({}));
-    const updated = { ...current, ...body, lastBuild: current.lastBuild || null };
-    await fs.writeFile(cfgPath, JSON.stringify(updated, null, 2), 'utf-8');
-    return c.json({ config: updated });
-  } catch (e) {
-    return c.json({ error: 'Failed to save build config' }, 500);
+    const files = await fs.readdir(RELEASE_DIR);
+    const apk = files.find(f => f.toLowerCase().endsWith('.apk'));
+    if (!apk) return c.redirect(GITHUB_RELEASES_URL);
+    const data = await fs.readFile(path.join(RELEASE_DIR, apk));
+    return new Response(data, {
+      headers: {
+        'Content-Type': 'application/vnd.android.package-archive',
+        'Content-Disposition': `attachment; filename="${apk}"`,
+      },
+    });
+  } catch {
+    return c.redirect(GITHUB_RELEASES_URL);
   }
 });
 
-// ─── Build Trigger (SSE) ─────────────────────────────────────
-// POST /api/build — triggers the Electron build (admin only)
-// Accepts { version, productName, iconPath, description, author } to update config before building
-// Returns SSE stream with real-time progress: stage, chunk, done/error events
-app.post('/api/build', async (c) => {
-  if (!c.get('auth').authenticated) {
-    return c.json({ error: 'Not authenticated' }, 401);
-  }
-
-  const frontendDir = path.resolve(process.cwd(), '..', 'frontend');
-  const pm = process.env.PKG_MANAGER === 'bun' ? 'bun' : 'npm';
-
-  // Read optional config from request body
-  let buildVersion: string | undefined;
-  let buildAndroid = false;
-  let buildMeta: { productName?: string; iconPath?: string; description?: string; author?: string; appId?: string } = {};
+// ─── Auto-update files (latest.yml, blockmap) ──────
+app.get('/latest.yml', async (c) => {
   try {
-    const body = await c.req.json();
-    buildVersion = body.version;
-    buildAndroid = body.buildAndroid === true;
-    if (body.productName) buildMeta.productName = body.productName;
-    if (body.iconPath !== undefined) buildMeta.iconPath = body.iconPath;
-    if (body.description) buildMeta.description = body.description;
-    if (body.author !== undefined) buildMeta.author = body.author;
-    if (body.appId) buildMeta.appId = body.appId;
-  } catch { /* no body — version unchanged */ }
-
-  const encoder = new TextEncoder();
-  let aborted = false;
-
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (data: object) => {
-        if (aborted) return;
-        try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
-        } catch { /* controller closed */ }
-      };
-
-      const run = async (cmd: string, opts?: { timeout?: number; label?: string }) => {
-        send({ type: 'stage', stage: opts?.label || cmd });
-        try {
-          const result = await execAsync(cmd, {
-            cwd: frontendDir,
-            timeout: opts?.timeout || 120000,
-            shell: 'cmd.exe',
-            windowsHide: true,
-            maxBuffer: 1024 * 1024,
-          });
-          // Send real output as chunks
-          if (result.stdout) {
-            // Split into lines and send each as a chunk for real-time feel
-            const lines = result.stdout.split('\n');
-            for (const line of lines) {
-              if (line.trim()) {
-                send({ type: 'chunk', content: line + '\n' });
-              }
-            }
-          }
-          if (result.stderr) {
-            const lines = result.stderr.split('\n');
-            for (const line of lines) {
-              if (line.trim()) {
-                send({ type: 'chunk', content: line + '\n' });
-              }
-            }
-          }
-          return result;
-        } catch (e) {
-          const err = e as { stdout?: string; stderr?: string; message?: string; killed?: boolean };
-          if (err.stdout) send({ type: 'chunk', content: err.stdout });
-          if (err.stderr) send({ type: 'chunk', content: err.stderr });
-          throw err;
-        }
-      };
-
-      try {
-        console.log(`[build] Starting build in ${frontendDir} with ${pm}...`);
-
-        // ── Step 0: Save config & version ───────────────────
-        const cfgPath = path.join(frontendDir, 'build-config.json');
-        const pkgPath = path.join(frontendDir, 'package.json');
-
-        // Apply config metadata (productName, iconPath, etc.)
-        const hasMeta = Object.keys(buildMeta).length > 0;
-        if (hasMeta) {
-          send({ type: 'stage', stage: 'build:version' });
-          send({ type: 'chunk', content: 'Applying build configuration...\n' });
-
-          // Update build-config.json
-          try {
-            const cfgJson = JSON.parse(await fs.readFile(cfgPath, 'utf-8'));
-            Object.assign(cfgJson, buildMeta);
-            await fs.writeFile(cfgPath, JSON.stringify(cfgJson, null, 2), 'utf-8');
-            send({ type: 'chunk', content: '✓ Updated build-config.json\n' });
-          } catch {}
-
-          // Apply to package.json (productName, appId, description, author)
-          try {
-            const pkgJson = JSON.parse(await fs.readFile(pkgPath, 'utf-8'));
-            if (buildMeta.productName) {
-              pkgJson.build = pkgJson.build || {};
-              pkgJson.build.productName = buildMeta.productName;
-              if (pkgJson.build.nsis) pkgJson.build.nsis.shortcutName = buildMeta.productName;
-            }
-            if (buildMeta.appId) pkgJson.build = pkgJson.build || {};
-            if (buildMeta.appId) pkgJson.build.appId = buildMeta.appId;
-            if (buildMeta.description) pkgJson.description = buildMeta.description;
-            if (buildMeta.author !== undefined) pkgJson.author = buildMeta.author;
-            if (buildMeta.iconPath) {
-              pkgJson.build = pkgJson.build || {};
-              pkgJson.build.win = pkgJson.build.win || {};
-              pkgJson.build.win.icon = path.resolve(frontendDir, buildMeta.iconPath);
-            }
-            await fs.writeFile(pkgPath, JSON.stringify(pkgJson, null, 2), 'utf-8');
-            send({ type: 'chunk', content: '✓ Updated package.json metadata\n' });
-          } catch {}
-        }
-
-        // ── Step 0b: Update version (if provided) ────────────
-        if (buildVersion) {
-          send({ type: 'stage', stage: 'build:version' });
-          send({ type: 'chunk', content: `Updating version to ${buildVersion}...\n` });
-
-          // Update package.json
-          const pkgJson = JSON.parse(await fs.readFile(pkgPath, 'utf-8'));
-          pkgJson.version = buildVersion;
-          await fs.writeFile(pkgPath, JSON.stringify(pkgJson, null, 2), 'utf-8');
-
-          // Verify it was written correctly
-          const verifyPkg = JSON.parse(await fs.readFile(pkgPath, 'utf-8'));
-          if (verifyPkg.version !== buildVersion) {
-            send({ type: 'chunk', content: `⚠️ Version mismatch after write (got ${verifyPkg.version}), retrying...\n` });
-            verifyPkg.version = buildVersion;
-            await fs.writeFile(pkgPath, JSON.stringify(verifyPkg, null, 2), 'utf-8');
-          }
-          send({ type: 'chunk', content: `✓ Updated package.json version → ${buildVersion}\n` });
-
-          // Update build-config.json
-          try {
-            const cfgJson = JSON.parse(await fs.readFile(cfgPath, 'utf-8'));
-            cfgJson.version = buildVersion;
-            cfgJson.lastBuild = Date.now();
-            await fs.writeFile(cfgPath, JSON.stringify(cfgJson, null, 2), 'utf-8');
-            send({ type: 'chunk', content: `✓ Updated build-config.json → ${buildVersion}\n` });
-          } catch {
-            send({ type: 'chunk', content: '⚠️ No build-config.json found, skipping\n' });
-          }
-        } else {
-          // Read current version from package.json if no version was provided
-          try {
-            const pkgJson = JSON.parse(await fs.readFile(pkgPath, 'utf-8'));
-            buildVersion = pkgJson.version;
-            send({ type: 'chunk', content: `Using existing version: ${buildVersion}\n` });
-          } catch {}
-        }
-
-        // ── Step 1: Clean old builds ──────────────────────────
-        send({ type: 'stage', stage: 'build:clean' });
-        send({ type: 'chunk', content: 'Cleaning old builds...\n' });
-        try {
-          await execAsync('rmdir /s /q release 2>nul & echo cleaned', {
-            cwd: frontendDir, shell: 'cmd.exe', windowsHide: true,
-          });
-          send({ type: 'chunk', content: '✓ Old builds cleaned\n' });
-        } catch {
-          send({ type: 'chunk', content: '⚠️ Could not clean release directory\n' });
-        }
-
-        // ── Step 2: Build frontend with Vite ──────────────────
-        send({ type: 'stage', stage: 'build:vite' });
-        const buildOut = await run(`${pm} run build`, { timeout: 120000, label: 'build:vite' });
-        send({ type: 'chunk', content: '\n✓ Frontend build complete\n' });
-
-        // ── Step 3: Package with electron-builder ─────────────
-        // Use --extraMetadata.version to FORCE the version in electron-builder
-        // This overrides the version from package.json at build time
-        send({ type: 'stage', stage: 'build:electron' });
-
-        let pkgOut;
-        if (buildVersion) {
-          // Run electron-builder directly with explicit version override
-          // Using node_modules/.bin path instead of npm run to avoid the vite rebuild
-          // -c.extraMetadata.version overrides package.json fields at build time
-          // (The help text says: electron-builder set package.json property `foo` to -c.extraMetadata.foo=bar)
-          pkgOut = await run(
-            `node_modules\\.bin\\electron-builder.cmd --win --config -c.extraMetadata.version=${buildVersion}`,
-            { timeout: 300000, label: 'build:electron' }
-          );
-        } else {
-          pkgOut = await run(`${pm} run build:electron`, { timeout: 300000, label: 'build:electron' });
-        }
-        send({ type: 'chunk', content: '\n✓ Electron packaging complete\n' });
-
-        // ── Step 4: Build Android APK (optional) ──────────────
-        let androidOut: any = { stdout: '' };
-        if (buildAndroid) {
-          const androidDir = path.join(path.resolve(process.cwd(), '..', 'frontend'), 'android');
-          send({ type: 'stage', stage: 'build:android' });
-          send({ type: 'chunk', content: '\nBuilding Android APK...\n' });
-
-          // Helper to convert exec output to string (Bun returns NonSharedBuffer, Node returns string)
-          const toStr = (v: any): string => typeof v === 'string' ? v : v?.toString() || '';
-
-          // Auto-detect JAVA_HOME for the Gradle build
-          // Capacitor 8 requires Java 21, so we need to find the JDK 21 installation
-          let javaHome = '';
-          try {
-            const javaResult = await execAsync('java -XshowSettings:properties -version 2>&1 | findstr "java.home"', {
-              timeout: 10000, shell: 'cmd.exe', windowsHide: true,
-            });
-            const match = javaResult.stdout.match(/java\.home\s*=\s*(.+)/);
-            if (match) {
-              javaHome = match[1].trim();
-              send({ type: 'chunk', content: `✓ Detected JAVA_HOME: ${javaHome}\n` });
-            }
-          } catch {}
-
-          // First sync the web build to Capacitor
-          const frontendRoot = path.resolve(process.cwd(), '..', 'frontend');
-          try {
-            send({ type: 'chunk', content: 'Syncing web build to Capacitor...\n' });
-            await execAsync('npx cap sync android', {
-              cwd: frontendRoot,
-              timeout: 60000,
-              shell: 'cmd.exe',
-              windowsHide: true,
-            } as any);
-            send({ type: 'chunk', content: '✓ Capacitor sync complete\n' });
-          } catch (e) {
-            const err = e as { stdout?: string; stderr?: string; message?: string };
-            send({ type: 'chunk', content: `⚠️ Capacitor sync issue: ${err.message || 'unknown'}\n` });
-          }
-
-          // Run Gradle build with the detected JAVA_HOME
-          try {
-            send({ type: 'chunk', content: 'Running Gradle assembleDebug...\n' });
-            const gradleEnv = { ...process.env } as Record<string, string>;
-            if (javaHome) gradleEnv.JAVA_HOME = javaHome;
-
-            const gradleResult: any = await execAsync('gradlew.bat assembleDebug', {
-              cwd: androidDir,
-              timeout: 600000, // 10 minutes for Android build
-              shell: 'cmd.exe',
-              windowsHide: true,
-              maxBuffer: 10 * 1024 * 1024,
-              env: gradleEnv,
-            });
-            androidOut = gradleResult;
-            const stdoutStr = toStr(gradleResult.stdout);
-            if (stdoutStr) {
-              const lines = stdoutStr.split('\n');
-              for (const line of lines) {
-                if (line.trim()) send({ type: 'chunk', content: line + '\n' });
-              }
-            }
-            send({ type: 'chunk', content: '\n✓ Android APK build complete!\n' });
-          } catch (e) {
-            const err = e as { stdout?: string; stderr?: string; message?: string; killed?: boolean };
-            if (err.stdout) send({ type: 'chunk', content: toStr(err.stdout) });
-            if (err.stderr) send({ type: 'chunk', content: toStr(err.stderr) });
-            send({ type: 'chunk', content: `\n⚠️ Android build issue: ${err.message || 'unknown'}\n` });
-          }
-        }
-
-        // ── Done ──────────────────────────────────────────────
-        console.log('[build] Build completed successfully');
-        send({
-          type: 'done',
-          success: true,
-          output: (buildOut.stdout + '\n' + pkgOut.stdout + '\n' + androidOut.stdout).slice(-2000) || '',
-          version: buildVersion || undefined,
-        });
-
-      } catch (e) {
-        const error = e as { stdout?: string; stderr?: string; message?: string; killed?: boolean };
-        const cause = error.killed ? 'Build timed out' : (error.message || 'Build failed');
-        console.error('[build] Build failed:', cause);
-        send({
-          type: 'error',
-          error: cause,
-          output: (error.stdout || error.stderr || '').slice(-2000),
-        });
-      } finally {
-        try { controller.close(); } catch { /* already closed */ }
-      }
-    },
-    cancel() {
-      aborted = true;
-      console.log('[build] Client disconnected');
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    },
-  });
+    const data = await fs.readFile(path.join(RELEASE_DIR, 'latest.yml'));
+    return new Response(data, {
+      headers: { 'Content-Type': 'text/yaml', 'Cache-Control': 'no-cache' },
+    });
+  } catch { return c.json({ error: 'Not found' }, 404); }
 });
 
-app.get('/', (c) => c.json({ message: 'AI Chat API', version: '1.0.0' }));
+app.get('/:filename.blockmap', async (c) => {
+  const filename = c.req.param('filename');
+  if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+    return c.json({ error: 'Invalid path' }, 400);
+  }
+  try {
+    const data = await fs.readFile(path.join(RELEASE_DIR, `${filename}.blockmap`));
+    return new Response(data, {
+      headers: { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-cache' },
+    });
+  } catch { return c.json({ error: 'Not found' }, 404); }
+});
+
+// ─── Serve any file from the release dir (for auto-updater) ─────
+app.get('/:filename.exe', async (c) => {
+  const filename = c.req.param('filename');
+  if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+    return c.json({ error: 'Invalid path' }, 400);
+  }
+  try {
+    const data = await fs.readFile(path.join(RELEASE_DIR, `${filename}.exe`));
+    return new Response(data, {
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Cache-Control': 'no-cache',
+      },
+    });
+  } catch { return c.json({ error: 'Not found' }, 404); }
+});
+
 app.get('/api/health', (c) => c.json({ status: 'ok' }));
+
+// ─── Frontend Static File Server ──────────────────────────
+// When the server is run standalone (not behind Vite dev server),
+// serve the built frontend files so hosts can open http://localhost:3001
+const STATIC_DIR = path.join(process.cwd(), '..', 'frontend', 'dist');
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+  '.webp': 'image/webp', '.woff': 'font/woff', '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+};
+
+app.get('*', async (c) => {
+  // Only handle non-API routes (API routes are matched first by Hono)
+  const url = c.req.path;
+  if (url.startsWith('/api/')) return c.json({ error: 'Not found' }, 404);
+  // /download is handled by a dedicated route above — skip SPA fallback for it
+  if (url === '/download') {
+    return c.json({ error: 'Not found' }, 404);
+  }
+
+  const filePath = url === '/' || url === '' ? '/index.html' : url;
+  if (filePath.includes('..')) {
+    return c.json({ error: 'Invalid path' }, 400);
+  }
+
+  const fullPath = path.join(STATIC_DIR, filePath);
+  try {
+    await fs.access(fullPath);
+    const stat = await fs.stat(fullPath);
+    if (stat.isFile()) {
+      const ext = path.extname(fullPath).toLowerCase();
+      const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+      const data = await fs.readFile(fullPath);
+      return new Response(data, {
+        headers: { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=3600' },
+      });
+    }
+  } catch {}
+
+  // SPA fallback: serve index.html for any non-file path
+  try {
+    const indexData = await fs.readFile(path.join(STATIC_DIR, 'index.html'));
+    return new Response(indexData, {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+  } catch {
+    return c.json({ error: 'Frontend not built. Run `cd frontend && npm run build` first.' }, 404);
+  }
+});
 
 const port = Number(process.env.PORT) || 3001;
 
 // HTTPS mode detection (priority: CLI flag > env var > default HTTPS)
 // Pass --http to `bun run dev` via `bun run dev -- --http` to disable HTTPS
 const useHttps = process.argv.includes('--http') ? false : process.env.HTTPS !== 'false';
+
+appLogger.info('[server] Starting...');
+appLogger.info(`[server] HTTPS: ${useHttps ? 'enabled' : 'disabled'}`);
+appLogger.info(`[server] Port: ${port}`);
+appLogger.info(`[server] Session TTL: ${Number(process.env.SESSION_TTL_MS) || 86400000}ms`);
 
 if (useHttps) {
   const certPath = process.env.SSL_CERT || '../certs/localhost.crt';
@@ -926,11 +657,23 @@ if (useHttps) {
       key: readFileSync(keyPath).toString(),
     },
   }, (info) => {
-    // Node.js defaults to 0.0.0.0 (all interfaces) when no host is given
-    console.log(`🔒 Backend running on https://localhost:${info.port}`);
+    appLogger.info(`[server] Backend running on https://0.0.0.0:${info.port}`);
   });
 } else {
   serve({ fetch: app.fetch, port }, (info) => {
-    console.log(`🚀 Backend running on http://localhost:${info.port}`);
+    appLogger.info(`[server] Backend running on http://0.0.0.0:${info.port}`);
   });
 }
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  appLogger.info('[server] Shutting down...');
+  shutdownAuth();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  appLogger.info('[server] Shutting down...');
+  shutdownAuth();
+  process.exit(0);
+});

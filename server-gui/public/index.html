@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#030712" />
+  <title>Kasalix AI Chat Server</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ═══ HEADER ═══ -->
+  <header>
+    <div class="header-left">
+      <div class="logo">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2a8 8 0 0 0-8 8c0 3.5 2 6.5 5 8l3 4 3-4c3-1.5 5-4.5 5-8a8 8 0 0 0-8-8z"/>
+          <circle cx="12" cy="10" r="3"/>
+        </svg>
+        <div>
+          <h1>Kasalix AI Chat</h1>
+          <span class="header-version" id="versionDisplay">v1.6.0</span>
+        </div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="status-badge" id="ollamaStatus">
+        <span class="dot dot-offline"></span>
+        Ollama
+      </div>
+      <div class="status-badge" id="serverStatus">
+        <span class="dot dot-offline"></span>
+        Server
+      </div>
+      <button class="btn-icon" id="minimizeBtn" title="Minimize to tray">─</button>
+      <button class="btn-icon btn-close" id="closeBtn" title="Close (server keeps running)">✕</button>
+    </div>
+  </header>
+
+  <!-- ═══ MAIN LAYOUT ═══ -->
+  <div class="layout">
+    <!-- ─── Left Column: Server Controls ─── -->
+    <div class="col-left">
+      <!-- Server Control Card -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+            <line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
+          </svg>
+          Server Control
+        </div>
+        <div class="server-controls">
+          <button class="btn btn-start" id="startBtn" disabled>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Start Server
+          </button>
+          <button class="btn btn-stop" id="stopBtn" disabled>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+            Stop Server
+          </button>
+          <div class="server-url" id="serverUrl">
+            <span class="label">URL:</span>
+            <span class="value">—</span>
+          </div>
+        </div>
+        <div class="server-options">
+          <label class="toggle-row">
+            <span>HTTP mode (no encryption)</span>
+            <div class="toggle" id="httpToggle">
+              <div class="toggle-knob"></div>
+            </div>
+          </label>
+          <label class="toggle-row">
+            <span>Start server on app launch</span>
+            <div class="toggle" id="autoStartToggle">
+              <div class="toggle-knob"></div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Network Card -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>
+          </svg>
+          Network
+        </div>
+        <div id="ipList">
+          <div class="ip-row placeholder">Detecting...</div>
+        </div>
+      </div>
+
+      <!-- App Icon Card -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+          </svg>
+          App Icon
+        </div>
+        <div class="icon-row">
+          <img id="iconPreview" class="icon-preview" style="display:none" alt="icon" />
+          <span id="iconStatus" style="font-size:12px;color:var(--text-dim)">Default icon</span>
+        </div>
+        <button class="btn btn-small" id="pickIconBtn">Choose Icon (.ico or .png)</button>
+      </div>
+
+      <!-- Downloads Card -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Downloads
+          <span class="dl-badge" id="releaseVersion"></span>
+        </div>
+        <button class="download-btn" id="downloadWin">
+          <span class="dl-icon">🪟</span>
+          <span class="dl-text">
+            <span>Windows Desktop (EXE)</span>
+            <span class="dl-status" id="dlWinStatus">Click to download</span>
+          </span>
+          <span class="dl-progress" id="dlWinProgress"></span>
+        </button>
+        <button class="download-btn" id="downloadAndroid">
+          <span class="dl-icon">📱</span>
+          <span class="dl-text">
+            <span>Android App (APK)</span>
+            <span class="dl-status" id="dlAndroidStatus">Click to download</span>
+          </span>
+          <span class="dl-progress" id="dlAndroidProgress"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ─── Right Column: Stats ─── -->
+    <div class="col-right">
+      <!-- CPU Card -->
+      <div class="card stat-card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 9h2"/><path d="M20 9h2"/><path d="M2 15h2"/><path d="M20 15h2"/>
+          </svg>
+          CPU
+        </div>
+        <div class="stat-value" id="cpuValue">0%</div>
+        <div class="stat-bar"><div class="stat-bar-fill" id="cpuBar" style="width:0%"></div></div>
+        <div class="stat-detail" id="cpuDetail">Cores: —</div>
+      </div>
+
+      <!-- RAM Card -->
+      <div class="card stat-card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 4v16"/><path d="M15 4v16"/>
+          </svg>
+          RAM
+        </div>
+        <div class="stat-value" id="ramValue">0%</div>
+        <div class="stat-bar"><div class="stat-bar-fill" id="ramBar" style="width:0%"></div></div>
+        <div class="stat-detail" id="ramDetail">— / —</div>
+      </div>
+
+      <!-- GPU Card (shown only if available) -->
+      <div class="card stat-card" id="gpuCard" style="display:none">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+          </svg>
+          <span id="gpuName">GPU</span>
+        </div>
+        <div class="stat-value" id="gpuValue">0%</div>
+        <div class="stat-bar"><div class="stat-bar-fill" id="gpuBar" style="width:0%"></div></div>
+        <div class="stat-detail" id="gpuDetail">VRAM: —</div>
+      </div>
+
+      <!-- Running Models Card -->
+      <div class="card models-card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+          </svg>
+          Running Models
+        </div>
+        <div id="modelsList">
+          <div class="model-row placeholder">Connect to Ollama to see models</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Middle Column: Admin ─── -->
+    <div class="col-mid">
+      <!-- Settings Password Card -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          Settings Password
+        </div>
+        <div class="pw-status" id="pwStatus">
+          <span class="dot dot-offline" id="pwDot"></span>
+          <span id="pwStatusText">Not authenticated</span>
+        </div>
+        <div class="pw-form" id="pwForm">
+          <input type="password" id="pwInput" placeholder="Default: letmein" class="pw-input" />
+          <button class="btn btn-small" id="pwAuthBtn">Unlock</button>
+          <span class="pw-hint">Default password is <strong>letmein</strong></span>
+          <span class="pw-msg pw-msg-error" id="pwErrorMsg"></span>
+        </div>
+        <div class="pw-change" id="pwChange" style="display:none">
+          <input type="password" id="pwCurrent" placeholder="Current password" class="pw-input" />
+          <input type="password" id="pwNew" placeholder="New password" class="pw-input" />
+          <button class="btn btn-small" id="pwChangeBtn">Change</button>
+          <span class="pw-msg" id="pwMsg"></span>
+        </div>
+      </div>
+
+      <!-- Connected Users Card -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+          Users
+          <span class="users-count" id="usersCount">0</span>
+        </div>
+        <div id="usersList">
+          <div class="user-row placeholder">Authenticate to see users</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Start-up Checklist (shown on launch) ═══ -->
+  <div class="overlay" id="startupOverlay">
+    <div class="overlay-content">
+      <div class="overlay-icon">🚀</div>
+      <h2>Starting Kasalix AI Chat Server</h2>
+      <div class="checklist" id="checklist">
+        <div class="check-item" id="check-bun">
+          <span class="check-spinner"></span>
+          <span>Checking Bun runtime...</span>
+        </div>
+        <div class="check-item" id="check-deps">
+          <span class="check-spinner"></span>
+          <span>Installing backend dependencies...</span>
+        </div>
+        <div class="check-item" id="check-ollama">
+          <span class="check-spinner"></span>
+          <span>Checking Ollama...</span>
+        </div>
+        <div class="check-item" id="check-server">
+          <span class="check-spinner"></span>
+          <span>Starting server...</span>
+        </div>
+      </div>
+      <div class="overlay-log" id="startupLog"></div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

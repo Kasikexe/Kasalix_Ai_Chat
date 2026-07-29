@@ -1,13 +1,41 @@
+# Dependencies
 node_modules/
-dist/
+
+# Build outputs
+release/
 frontend/release/
+frontend/dist/
+frontend/android/app/build/
+frontend/android/.gradle/
+frontend/android/build/
+frontend/android/capacitor-cordova-android-plugins/
+backend/generated_images/
+
+# Runtime data
 data/
+
+# Environment
 .env
 .env.local
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# Logs
 *.log
-certs/
+
+# Server App Installer build outputs
+server-app-installer/output/
+
+# Server GUI build outputs
+server-gui/node_modules/
+server-gui/release/
+
+# IDE
 .vscode/
 .idea/
+
+# Misc
 .http-mode
 bun.lockb

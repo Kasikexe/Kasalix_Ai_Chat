@@ -427,9 +427,12 @@ app.whenReady().then(async () => {
     height: 860,
     minWidth: 800,
     minHeight: 600,
-    title: 'AI Chat',
+    title: 'Kasalix AI Chat',
     backgroundColor: '#030712',
     show: false,
+    icon: app.isPackaged
+      ? path.join(process.resourcesPath, 'icon.png')
+      : path.join(__dirname, '..', '..', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

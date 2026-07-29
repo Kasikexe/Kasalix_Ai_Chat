@@ -4,6 +4,7 @@ import { addMessage, createConversation, getConversation } from '../services/sto
 import { getMemory } from '../services/memory';
 import { extractMemoryFromTurn } from '../services/extractor';
 import { chat as ollamaChat, streamChat } from '../services/ollama';
+import { logger as appLogger } from '../services/logger';
 import type { ConversationMode, Message } from '../types';
 
 const chat = new Hono();
@@ -132,7 +133,7 @@ chat.post('/', async (c) => {
           }
         } catch (e) {
           const message = e instanceof Error ? e.message : 'Unknown error';
-          console.error('[chat] Pipeline error:', message);
+          appLogger.error('[chat] Pipeline error:', message);
           send({ type: 'error', error: message });
         } finally {
           try {
@@ -146,7 +147,7 @@ chat.post('/', async (c) => {
         // Client disconnected — abort the pipeline
         aborted = true;
         ac.abort();
-        console.log('[chat] Client disconnected, aborting pipeline');
+        appLogger.info('[chat] Client disconnected, aborting pipeline');
 
         // Save whatever response we got
         if (fullResponse && activeConvId) {

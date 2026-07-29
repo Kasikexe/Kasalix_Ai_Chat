@@ -1,0 +1,10 @@
+{
+  "name": "kasalix-changelog",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CLI tool to manage changelog entries in the Kasalix repo",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  }
+}

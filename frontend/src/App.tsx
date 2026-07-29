@@ -27,6 +27,7 @@ import {
   createUserProfile,
   updateUserProfile,
   clearUserProfile,
+  isLoggedIn,
 } from './services/api';
 import type { ConversationMode, UserProfile, OllamaModel } from './types';
 
@@ -35,6 +36,7 @@ const THINKING_KEY = 'ai-chat:thinkingEnabled';
 function App() {
   const [user, setUser] = useState<UserProfile | null>(() => getUserProfile());
   const [serverConnected, setServerConnected] = useState(false);
+  const [sessionChecked, setSessionChecked] = useState(false);
   const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(() => {
     const stored = localStorage.getItem(THINKING_KEY);
     return stored === 'true'; // default OFF for speed
@@ -45,12 +47,56 @@ function App() {
     localStorage.setItem(THINKING_KEY, String(thinkingEnabled));
   }, [thinkingEnabled]);
 
+  // Check for existing session on startup
+  useEffect(() => {
+    (async () => {
+      if (isLoggedIn()) {
+        const result = await api.checkSession();
+        if (result.authenticated && result.user) {
+          setUser(result.user);
+        } else {
+          // Session expired or invalid — user will need to login
+          setUser(null);
+        }
+      } else {
+        setUser(null);
+      }
+      setSessionChecked(true);
+    })();
+  }, []);
+
+  if (!sessionChecked) {
+    // Show a loading state while checking session
+    return (
+      <div style={{
+        height: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#030712',
+        color: 'white',
+        fontSize: '14px',
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '24px', marginBottom: '12px' }}>🤖</div>
+          <div style={{ color: '#9ca3af' }}>Checking session...</div>
+        </div>
+      </div>
+    );
+  }
+
   if (!user) {
     return (
       <UserSetup
         onSubmit={(name) => {
-          const profile = createUserProfile(name);
-          setUser(profile);
+          // Profile is already saved by api.register()/api.login() — just load it
+          const existing = getUserProfile();
+          if (existing) {
+            setUser(existing);
+          } else {
+            const profile = createUserProfile(name);
+            setUser(profile);
+          }
         }}
       />
     );
@@ -64,8 +110,8 @@ function App() {
     <ToastProvider>
       <ChatApp
         user={user}
-        onSwitchUser={() => {
-          clearUserProfile();
+        onSwitchUser={async () => {
+          await api.logout();
           setUser(null);
         }}
         thinkingEnabled={thinkingEnabled}
@@ -297,7 +343,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
             className="flex-1 flex flex-col min-h-0 animate-mode-fade-in"
           >
             {viewTab === 'logs' ? (
-              <ChangelogView isAdmin={isAuthed} />
+              <ChangelogView />
             ) : viewTab === 'planned' ? (
               <PlannedView isAdmin={isAuthed} />
             ) : viewTab === 'speedtest' ? (

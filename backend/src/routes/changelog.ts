@@ -3,8 +3,11 @@ import { getChangelog, addChangelogEntry, deleteChangelogEntry, getDraft, update
 
 const changelog = new Hono();
 
-// GET /api/changelog — public, anyone can view
+// GET /api/changelog — developer only (requires settings auth)
 changelog.get('/', async (c) => {
+  if (!c.get('auth').authenticated) {
+    return c.json({ error: 'Not authenticated' }, 401);
+  }
   const entries = await getChangelog();
   return c.json({ entries });
 });
@@ -54,8 +57,11 @@ changelog.delete('/:version', async (c) => {
 
 // ─── Draft Routes (admin only) ──────────────────────────────
 
-// GET /api/changelog/draft — get current working draft
+// GET /api/changelog/draft — developer only
 changelog.get('/draft', async (c) => {
+  if (!c.get('auth').authenticated) {
+    return c.json({ error: 'Not authenticated' }, 401);
+  }
   const draft = await getDraft();
   return c.json({ draft });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { MessageSquare, Plus, Trash2, Edit2, X, Check, Menu, Wrench, Search, Film, FolderOpen, ChevronDown, ChevronRight, AlertTriangle, Download, Clock, ListChecks } from 'lucide-react';
+import { MessageSquare, Plus, Trash2, Edit2, X, Check, Menu, Wrench, Search, Film, FolderOpen, ChevronDown, ChevronRight, AlertTriangle, Clock, ListChecks } from 'lucide-react';
 import type { Conversation, ConversationMode } from '../types';
 import type { UserProfile } from '../types';
 import { UserBadge } from './UserBadge';
@@ -171,7 +171,7 @@ export function Sidebar({
         <div className="p-3 flex items-center justify-between border-b border-gray-800">
           <h1 className="text-base font-semibold flex items-center gap-2">
             <Menu size={18} className="md:hidden" />
-            AI Chat
+            Kasalix AI Chat
           </h1>
           <button
             onClick={onClose}
@@ -554,30 +554,6 @@ export function Sidebar({
             );
           })()}
         </div>
-
-        {/* Desktop app download banner — hidden on mobile (no .exe downloads on phones) */}
-        {isWebBlocked && !isMobile && (
-          <div className="mx-3 mb-2 p-3 bg-gradient-to-r from-purple-900/40 to-violet-900/40 border border-purple-700/30 rounded-xl">
-            <div className="flex items-start gap-2.5">
-              <div className="p-1.5 bg-purple-600/20 rounded-lg flex-shrink-0 mt-0.5">
-                <Download size={14} className="text-purple-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-purple-200">Desktop App</p>
-                <p className="text-[10px] text-purple-400/70 mt-0.5 leading-relaxed">
-                  Agent &amp; Editor modes are available in the desktop version.
-                </p>
-                <button
-                  onClick={() => window.open('/download', '_blank')}
-                  className="mt-1.5 text-[10px] font-medium text-purple-300 hover:text-purple-200 bg-purple-600/20 hover:bg-purple-600/30 px-2.5 py-1 rounded-lg transition-all inline-flex items-center gap-1"
-                >
-                  <Download size={10} />
-                  Download .exe
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         <UserBadge profile={user} onSwitch={onSwitchUser} onSettings={onUserSettings} />
       </aside>

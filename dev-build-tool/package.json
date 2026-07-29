@@ -1,0 +1,13 @@
+{
+  "name": "ai-chat-dev-build-tool",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build-electron": "node build.mjs --electron",
+    "build-android": "node build.mjs --android",
+    "build-interactive": "node build.mjs --interactive",
+    "build-all": "node build.mjs --electron --android"
+  },
+  "dependencies": {}
+}

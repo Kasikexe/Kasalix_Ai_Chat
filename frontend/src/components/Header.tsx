@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Menu, Brain, Download, Sparkles, Lock, Wifi, Smartphone } from 'lucide-react';
+import { Menu, Brain, Download, Smartphone, Sparkles, Lock, Wifi } from 'lucide-react';
 import type { Conversation } from '../types';
 import { isInCapacitor, clearServerUrl, getSavedServerUrl } from '../services/api';
 
@@ -97,7 +97,7 @@ export function Header({
         >
           <Menu size={20} />
         </button>
-        <h1 className="md:hidden text-sm font-medium text-gray-300">AI Chat</h1>
+        <h1 className="md:hidden text-sm font-medium text-gray-300">Kasalix AI Chat</h1>
         <div className="flex-1" />
 
         {/* Export dropdown */}
@@ -159,13 +159,11 @@ export function Header({
           </button>
         )}
 
-        {/* Download APK button — visible to everyone (or only on mobile) */}
+        {/* Download client apps button */}
         <a
           href="/download"
-          target="_blank"
-          rel="noopener noreferrer"
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors bg-blue-900/30 text-blue-300 border border-blue-700/50 hover:bg-blue-800/40"
-          title="Download the Android APK"
+          title="Download Android APK or Windows EXE"
         >
           <Smartphone size={14} />
           <span className="hidden sm:inline">Download</span>

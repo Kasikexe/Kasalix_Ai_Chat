@@ -26,6 +26,10 @@
     "remark-gfm": "^4.0.0"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@types/fs-extra": "^11.0.4",
+    "@types/minimist": "^1.2.5",
+    "@types/normalize-package-data": "^2.4.4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
@@ -40,10 +44,16 @@
   },
   "build": {
     "appId": "com.aichat.desktop",
-    "productName": "AI Chat",
+    "productName": "Kasalix AI Chat",
     "directories": {
       "output": "release"
     },
+    "extraResources": [
+      {
+        "from": "../icon.png",
+        "to": "icon.png"
+      }
+    ],
     "files": [
       "dist/**/*",
       "electron/**/*",
@@ -58,6 +68,7 @@
           ]
         }
       ],
+      "icon": "C:\\Users\\filik\\OneDrive\\Dokumenty\\Ai_Chat\\icon.png",
       "sign": false,
       "signAndEditExecutable": false
     },
@@ -67,8 +78,8 @@
       "allowElevation": true,
       "guid": "com-aichat-desktop",
       "createDesktopShortcut": true,
-      "shortcutName": "AI Chat",
-      "artifactName": "AI-Chat-Setup-${version}.exe",
+      "shortcutName": "Kasalix AI Chat",
+      "artifactName": "Kasalix-AI-Chat-Setup-${version}.exe",
       "runAfterFinish": true
     },
     "publish": {

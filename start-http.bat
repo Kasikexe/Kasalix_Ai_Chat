@@ -1,8 +1,8 @@
 @echo off
-title AI Chat - HTTP Mode
+title Kasalix AI Chat - HTTP Mode
 
 echo =============================================
-echo    AI Chat - HTTP Mode (for phone/Android)
+echo    Kasalix AI Chat - HTTP Mode (for phone/Android)
 echo =============================================
 echo.
 echo Starting in HTTP mode so phones can connect

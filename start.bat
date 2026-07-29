@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-title AI Chat - Ollama Client
+title Kasalix AI Chat - Ollama Client
 
 REM ─── Detect HTTPS mode ──────────────────────────────────
 REM If you pass --http as an argument, it starts in HTTP mode (for phone connections)
@@ -35,7 +35,7 @@ if "!HTTPS!"=="false" (
 )
 
 echo =============================================
-echo    AI Chat Client for Ollama
+echo    Kasalix AI Chat Client for Ollama
 echo =============================================
 echo   Mode: !PROTO_LABEL!
 echo.
@@ -107,9 +107,9 @@ echo [INFO] Starting backend on !PROTO!://localhost:3001 ...
 
 REM Use separate paths for HTTP vs HTTPS
 if "!HTTPS!"=="false" (
-    start "AI Chat - Backend" cmd /k "cd /d %~dp0backend && bun run dev -- --http"
+    start "Kasalix AI Chat - Backend" cmd /k "cd /d %~dp0backend && bun run dev -- --http"
 ) else (
-    start "AI Chat - Backend" cmd /k "cd /d %~dp0backend && bun run dev"
+    start "Kasalix AI Chat - Backend" cmd /k "cd /d %~dp0backend && bun run dev"
 )
 
 REM Wait a moment for backend to initialize
@@ -117,7 +117,7 @@ timeout /t 2 /nobreak >nul
 
 REM Start frontend in a new window
 echo [INFO] Starting frontend on !PROTO!://localhost:5173 ...
-start "AI Chat - Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"
+start "Kasalix AI Chat - Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"
 
 echo.
 echo =============================================

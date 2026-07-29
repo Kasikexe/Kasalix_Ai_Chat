@@ -1,9 +1,9 @@
 {
   "version": "1.6.0",
-  "productName": "AI Chat",
+  "productName": "Kasalix AI Chat",
   "appId": "com.aichat.desktop",
-  "iconPath": "",
+  "iconPath": "../icon.png",
   "description": "- Android app",
   "author": "Kasik",
-  "lastBuild": 1785258667674
+  "lastBuild": 1785328352383
 }

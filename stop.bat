@@ -1,9 +1,9 @@
 @echo off
 setlocal enabledelayedexpansion
-title Stop AI Chat
+title Stop Kasalix AI Chat
 
 echo =============================================
-echo    Stopping AI Chat Servers
+echo    Stopping Kasalix AI Chat Servers
 echo =============================================
 echo.
 

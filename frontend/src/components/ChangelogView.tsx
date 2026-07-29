@@ -1,10 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Layers, GitBranch, Calendar, X, Loader, Trash2, Sparkles, AlertTriangle, Package, Edit3, Send, Save, Settings2 } from 'lucide-react';
-import { api } from '../services/api';
-import { BuildProgressModal } from './BuildProgressModal';
-import { BuildConfigModal } from './BuildConfigModal';
+import { Layers, GitBranch, Calendar, Loader, Sparkles, AlertTriangle } from 'lucide-react';
+
+const GITHUB_CHANGELOG_URL = 'https://raw.githubusercontent.com/Kasikexe/Kasalix/main/changelog.json';
 
 interface ChangelogEntry {
   version: string;
@@ -44,139 +43,29 @@ function formatDate(dateStr: string) {
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
-export function ChangelogView({ isAdmin = false }: { isAdmin?: boolean }) {
+export function ChangelogView() {
   const [entries, setEntries] = useState<ChangelogEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [building, setBuilding] = useState(false);
-  const [buildResult, setBuildResult] = useState<{ success: boolean; output?: string; error?: string } | null>(null);
-  const [buildStage, setBuildStage] = useState('');
-  const [buildOutput, setBuildOutput] = useState('');
-  const [showConfig, setShowConfig] = useState(false);
-
-  // Draft state
-  const [draft, setDraft] = useState('');
-  const [draftSavedAt, setDraftSavedAt] = useState<number>(0);
-  const [draftLoading, setDraftLoading] = useState(true);
-  const [draftSaving, setDraftSaving] = useState(false);
-  const [draftDirty, setDraftDirty] = useState(false);
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Publish is now handled via BuildConfigModal — dialog state removed
+  const [error, setError] = useState<string | null>(null);
 
   const fetchChangelog = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      const data = await api.getChangelog();
-      setEntries(data.entries || []);
-    } catch { setEntries([]); }
+      const res = await fetch(GITHUB_CHANGELOG_URL);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: ChangelogEntry[] = await res.json();
+      setEntries(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setError('Could not load changelog. Check your internet connection.');
+      setEntries([]);
+    }
     setLoading(false);
-  }, []);
-
-  const fetchDraft = useCallback(async () => {
-    setDraftLoading(true);
-    try {
-      const data = await api.getChangelogDraft();
-      setDraft(data.draft?.description || '');
-      setDraftSavedAt(data.draft?.autoSavedAt || 0);
-    } catch { setDraft(''); }
-    setDraftLoading(false);
   }, []);
 
   useEffect(() => {
     fetchChangelog();
-    fetchDraft();
-  }, [fetchChangelog, fetchDraft]);
-
-  // Cleanup debounce timer on unmount
-  useEffect(() => {
-    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, []);
-
-  // Auto-save draft with debounce
-  const saveDraft = useCallback(async (content: string) => {
-    setDraftSaving(true);
-    try {
-      const data = await api.saveChangelogDraft(content);
-      setDraftSavedAt(data.draft?.autoSavedAt || Date.now());
-      setDraftDirty(false);
-    } catch {}
-    setDraftSaving(false);
-  }, []);
-
-  const handleDraftChange = (value: string) => {
-    setDraft(value);
-    setDraftDirty(true);
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => saveDraft(value), 1500);
-  };
-
-  // Draft is now published via BuildConfigModal — removed separate publish handler
-
-  const handleDelete = async (version: string) => {
-    try {
-      await api.deleteChangelogEntry(version);
-      await fetchChangelog();
-    } catch {}
-  };
-
-  // Show config modal instead of building immediately
-  const handleBuild = () => {
-    setShowConfig(true);
-  };
-
-  // Called when user presses "Start Build" in the config modal
-  const handleStartBuild = async (buildConfig: {
-    version: string;
-    productName: string;
-    iconPath: string;
-    description: string;
-    author: string;
-    appId: string;
-    releaseTitle?: string;
-    buildAndroid?: boolean;
-  }) => {
-    setShowConfig(false);
-
-    // If there's a draft, publish it first (using the config version)
-    if (draft.trim()) {
-      try {
-        const pubTitle = buildConfig.releaseTitle?.trim() || buildConfig.productName;
-        await api.publishChangelogDraft(buildConfig.version, pubTitle, 'patch');
-        setDraft('');
-        setDraftSavedAt(0);
-        await fetchChangelog();
-      } catch (e) {
-        console.error('Failed to publish draft:', e);
-      }
-    }
-
-    setBuilding(true);
-    setBuildStage('');
-    setBuildOutput('');
-    setBuildResult(null);
-    try {
-      const result = await api.triggerBuild(
-        buildConfig.version,
-        {
-          onStage: (stage) => setBuildStage(stage),
-          onChunk: (chunk) => setBuildOutput((prev) => prev + chunk),
-        },
-        {
-          productName: buildConfig.productName,
-          iconPath: buildConfig.iconPath,
-          description: buildConfig.description,
-          author: buildConfig.author,
-          appId: buildConfig.appId,
-          buildAndroid: buildConfig.buildAndroid,
-        }
-      );
-      setBuildResult({ success: result.success, output: result.output, error: result.error });
-    } catch (e) {
-      setBuildResult({ success: false, error: e instanceof Error ? e.message : 'Build request failed' });
-    }
-    setBuilding(false);
-  };
+  }, [fetchChangelog]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -189,124 +78,31 @@ export function ChangelogView({ isAdmin = false }: { isAdmin?: boolean }) {
             <span className="text-[10px] text-gray-600 font-mono">v{entries[0]?.version}</span>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          {isAdmin && entries.length > 0 && (
-            <button onClick={handleBuild} disabled={building}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-800 text-gray-400 hover:text-gray-200 hover:bg-gray-700 border border-gray-700 disabled:opacity-50"
-              title="Configure and build Electron app"
-            >
-              {building ? <Loader size={14} className="animate-spin" /> : <Settings2 size={14} />}
-              Build
-            </button>
-          )}
-        </div>
       </div>
-
-      {/* Build config modal (shows before build) */}
-      <BuildConfigModal
-        isOpen={showConfig}
-        onClose={() => setShowConfig(false)}
-        onStartBuild={handleStartBuild}
-        draftDescription={draft}
-      />
-
-      {/* Build progress modal */}
-      <BuildProgressModal
-        isOpen={building || buildResult !== null}
-        isBuilding={building}
-        currentStage={buildStage}
-        output={buildOutput}
-        result={buildResult}
-        onClose={() => { setBuilding(false); setBuildResult(null); setBuildStage(''); setBuildOutput(''); }}
-      />
 
       {/* Changelog content */}
       <div className="flex-1 overflow-y-auto">
-        {/* ═══════════════ DRAFT SECTION ═══════════════ */}
-        {isAdmin && (
-          <div className="border-b border-gray-800">
-            <div className="max-w-2xl mx-auto p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <Edit3 size={14} className="text-purple-400" />
-                  <h3 className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Working Draft</h3>
-                  {draftDirty && (
-                    <span className="flex items-center gap-1 text-[9px] text-amber-400">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                      Unsaved
-                    </span>
-                  )}
-                  {draftSaving && (
-                    <span className="flex items-center gap-1 text-[9px] text-gray-500">
-                      <Loader size={9} className="animate-spin" />
-                      Saving...
-                    </span>
-                  )}
-                  {!draftDirty && !draftSaving && draftSavedAt > 0 && (
-                    <span className="flex items-center gap-1 text-[9px] text-gray-600">
-                      <Save size={9} />
-                      Auto-saved
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {draft.trim() && (
-                    <button
-                      onClick={() => setShowConfig(true)}
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white transition-all shadow-lg shadow-purple-600/20 active:scale-95"
-                    >
-                      <Send size={12} />
-                      Publish Release
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {draftLoading ? (
-                <div className="flex items-center gap-2 py-8">
-                  <Loader size={14} className="animate-spin text-gray-500" />
-                  <span className="text-xs text-gray-500">Loading draft...</span>
-                </div>
-              ) : (
-                <>
-                  <textarea
-                    ref={textareaRef}
-                    value={draft}
-                    onChange={(e) => handleDraftChange(e.target.value)}
-                    placeholder={`Accumulate changes here as you work...\n\nExample:\n- Added new dashboard widget\n- Fixed login timeout bug\n- Improved search performance by 40%\n- Updated dependencies`}
-                    rows={6}
-                    className="w-full bg-gray-800/80 text-sm text-gray-200 placeholder-gray-600 rounded-xl px-4 py-3 border border-gray-700 outline-none focus:border-purple-700 transition-colors resize-none font-mono text-xs leading-relaxed"
-                  />
-                  <div className="flex items-center justify-between mt-1.5">
-                    <p className="text-[9px] text-gray-600">
-                      Changes are auto-saved. Use markdown for formatting.
-                    </p>
-                    <button
-                      onClick={() => saveDraft(draft)}
-                      disabled={!draftDirty}
-                      className="text-[9px] text-purple-400 hover:text-purple-300 disabled:text-gray-600 transition-colors flex items-center gap-1"
-                    >
-                      <Save size={10} />
-                      Save now
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ═══════════════ RELEASED VERSIONS ═══════════════ */}
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <Loader size={20} className="animate-spin text-gray-500" />
           </div>
-        ) : entries.length === 0 && !isAdmin ? (
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center px-4">
+            <GitBranch size={40} className="text-gray-700 mb-3" />
+            <p className="text-sm text-gray-500 mb-2">{error}</p>
+            <button
+              onClick={fetchChangelog}
+              className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
+            >
+              Try again
+            </button>
+          </div>
+        ) : entries.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center px-4">
             <GitBranch size={40} className="text-gray-700 mb-3" />
             <p className="text-sm text-gray-500">No changelog entries yet</p>
           </div>
-        ) : entries.length === 0 ? null : (
+        ) : (
           <div className="relative">
             <div className="absolute left-[26px] top-0 bottom-0 w-px bg-gradient-to-b from-purple-500/30 via-gray-700/50 to-gray-800" />
             <div className="py-4 space-y-0">
@@ -343,11 +139,6 @@ export function ChangelogView({ isAdmin = false }: { isAdmin?: boolean }) {
                               <Calendar size={10} />
                               {formatDate(entry.date)}
                             </span>
-                            {isAdmin && (
-                              <button onClick={() => handleDelete(entry.version)}
-                                className="p-1 rounded text-gray-600 hover:text-red-400 hover:bg-red-900/20 opacity-0 group-hover:opacity-100 transition-all"
-                              ><Trash2 size={12} /></button>
-                            )}
                           </div>
                         </div>
                         <p className={`font-medium mt-2 ${isLatest ? 'text-gray-100 text-sm' : 'text-gray-300 text-sm'}`}>

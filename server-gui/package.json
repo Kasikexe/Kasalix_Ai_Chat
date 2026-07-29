@@ -1,0 +1,68 @@
+{
+  "name": "kasalix-server-gui",
+  "version": "1.6.0",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "dev": "electron .",
+    "build": "electron-builder --win --config",
+    "build:portable": "electron-builder --win portable --config"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.kasalix.server",
+    "productName": "Kasalix AI Chat Server",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "public/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend",
+        "to": "backend",
+        "filter": ["**/*", "!node_modules/**", "!.git/**"]
+      },
+      {
+        "from": "../frontend/dist",
+        "to": "frontend/dist"
+      },
+      {
+        "from": "../certs",
+        "to": "certs"
+      },
+      {
+        "from": "../icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "win": {
+      "icon": "../icon.png",
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "Kasalix-AI-Chat-Server.exe",
+      "sign": false,
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "guid": "com-kasalix-server",
+      "createDesktopShortcut": true,
+      "shortcutName": "Kasalix AI Chat Server",
+      "artifactName": "Kasalix-AI-Chat-Server-${version}.exe",
+      "runAfterFinish": true
+    }
+  }
+}

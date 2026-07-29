@@ -6,7 +6,12 @@ import type { Variables } from '../types';
 const SETTINGS_FILE = path.join(process.cwd(), 'data', 'settings.json');
 const SETTINGS_DIR = path.dirname(SETTINGS_FILE);
 
-const SETTINGS_PASSWORD = process.env.SETTINGS_PASSWORD || 'letmein';
+// Load settings password — first from persisted file, then env var, then default
+let SETTINGS_PASSWORD = process.env.SETTINGS_PASSWORD || 'letmein';
+try {
+  const savedPw = require('fs').readFileSync(path.join(process.cwd(), 'data', 'settings_password.txt'), 'utf-8').trim();
+  if (savedPw) SETTINGS_PASSWORD = savedPw;
+} catch { /* no saved password file — using env/default */ }
 
 interface AppSettings {
   hiddenModels: string[];
@@ -100,6 +105,62 @@ settings.post('/reset', async (c) => {
   const data: AppSettings = { ...DEFAULT_SETTINGS, modelAssignments: {}, updatedAt: Date.now() };
   await saveSettings(data);
   return c.json(data);
+});
+
+// Protected: change settings password
+settings.post('/password', async (c) => {
+  if (!c.get('auth').authenticated) {
+    return c.json({ error: 'Not authenticated' }, 401);
+  }
+  try {
+    const body = await c.req.json();
+    const { currentPassword, newPassword } = body as { currentPassword: string; newPassword: string };
+
+    if (!currentPassword || !newPassword) {
+      return c.json({ error: 'Current password and new password are required' }, 400);
+    }
+    if (newPassword.length < 4) {
+      return c.json({ error: 'New password must be at least 4 characters' }, 400);
+    }
+
+    // Verify current password
+    if (currentPassword !== SETTINGS_PASSWORD) {
+      return c.json({ error: 'Current password is incorrect' }, 401);
+    }
+
+    // Update the in-memory variable immediately
+    SETTINGS_PASSWORD = newPassword;
+
+    // Persist to file so it survives restarts
+    const pwDir = path.join(process.cwd(), 'data');
+    await fs.mkdir(pwDir, { recursive: true });
+    await fs.writeFile(path.join(pwDir, 'settings_password.txt'), newPassword, 'utf-8');
+
+    return c.json({ success: true, message: 'Password updated' });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Failed to change password' }, 500);
+  }
+});
+
+// Get current password info (whether a custom password is set)
+settings.get('/password', async (c) => {
+  if (!c.get('auth').authenticated) {
+    return c.json({ error: 'Not authenticated' }, 401);
+  }
+  try {
+    const pwFile = path.join(process.cwd(), 'data', 'settings_password.txt');
+    let isCustom = false;
+    try {
+      await fs.access(pwFile);
+      isCustom = true;
+    } catch {}
+    return c.json({
+      isCustom,
+      message: isCustom ? 'Custom password is set' : 'Using default password',
+    });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Failed' }, 500);
+  }
 });
 
 export default settings;

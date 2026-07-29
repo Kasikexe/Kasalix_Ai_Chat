@@ -44,7 +44,13 @@ export interface MemoryData {
   updatedAt: number;
 }
 
+export interface SessionInfo {
+  authenticated: boolean;
+  userId?: string;
+}
+
 export type Variables = {
   user: { id: string };
   auth: { authenticated: boolean };
+  session: SessionInfo;
 };
