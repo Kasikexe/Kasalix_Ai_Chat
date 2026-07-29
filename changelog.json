@@ -2,7 +2,7 @@
   {
     "version": "1.7.0",
     "title": "Server App",
-    "description": "- Server App is now sharable on our website kasalix.vercel.app",
+    "description": "Our Server app is now accesible from our web kasalix.vercel.app",
     "date": "2026-07-29",
     "type": "minor"
   }
