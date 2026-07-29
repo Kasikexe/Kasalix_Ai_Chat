@@ -1,9 +1,9 @@
 [
   {
-    "version": "1.6.1",
-    "title": "Server App Setup",
-    "description": "- THis app now is sharable on our website kasalix.vercel.app",
+    "version": "1.7.0",
+    "title": "Server App",
+    "description": "- Server App is now sharable on our website kasalix.vercel.app",
     "date": "2026-07-29",
-    "type": "patch"
+    "type": "minor"
   }
 ]
