@@ -4,6 +4,16 @@
 
 const API = window.serverAPI;
 
+// Escape HTML in dynamic values rendered into innerHTML (model names, etc.)
+function esc(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // ─── State ───────────────────────────────────────────────────────
 let state = {
   serverRunning: false,
@@ -35,13 +45,6 @@ async function saveGuiSettings() {
     httpMode: state.httpMode,
     autoStart: state.autoStart,
     iconPath: iconPath.startsWith('file://') ? decodeURIComponent(iconPath.slice(7)) : iconPath,
-  });
-}
-
-async function saveGuiSettings() {
-  await API.saveGuiSettings({
-    httpMode: state.httpMode,
-    autoStart: state.autoStart,
   });
 }
 
@@ -395,6 +398,8 @@ $('pwAuthBtn').addEventListener('click', async () => {
     $('pwMsg').textContent = '';
     $('pwErrorMsg').textContent = '';
     loadUsers();
+    // If the user is on the Models / Speed Test tab, refresh it now that we're authed
+    refreshAuthedView();
   } else {
     $('pwErrorMsg').textContent = '❌ ' + (result.error || 'Wrong password');
     $('pwErrorMsg').style.color = 'var(--red)';
@@ -421,6 +426,22 @@ $('pwChangeBtn').addEventListener('click', async () => {
   } else {
     $('pwMsg').textContent = '❌ ' + (result.error || 'Failed');
     $('pwMsg').style.color = 'var(--red)';
+  }
+});
+
+$('pwResetBtn').addEventListener('click', async () => {
+  $('pwErrorMsg').textContent = '⏳ Resetting...';
+  $('pwErrorMsg').style.color = 'var(--text-dim)';
+  const result = await API.resetSettingsPassword();
+  if (result.success) {
+    $('pwErrorMsg').textContent = '✅ ' + (result.message || 'Password reset');
+    $('pwErrorMsg').style.color = 'var(--green)';
+    // Pre-fill the default password so the user can log right in
+    $('pwInput').value = 'letmein';
+    $('pwInput').focus();
+  } else {
+    $('pwErrorMsg').textContent = '❌ ' + (result.error || 'Reset failed');
+    $('pwErrorMsg').style.color = 'var(--red)';
   }
 });
 
@@ -459,6 +480,464 @@ async function loadUsers() {
 setInterval(() => {
   if (settingsAuthed) loadUsers();
 }, 10000);
+
+// ══════════════════════════════════════════════════════
+// Tab Navigation (Dashboard / Models / Speed Test)
+// ══════════════════════════════════════════════════════
+const tabs = document.querySelectorAll('.tab');
+const views = {
+  dashboard: $('view-dashboard'),
+  models: $('view-models'),
+  speedtest: $('view-speedtest'),
+};
+
+function switchView(name) {
+  Object.entries(views).forEach(([key, el]) => {
+    if (el) el.style.display = key === name ? 'block' : 'none';
+  });
+  tabs.forEach((t) => t.classList.toggle('active', t.dataset.view === name));
+  if (name === 'models') enterModelsView();
+  if (name === 'speedtest') enterSpeedTestView();
+}
+
+tabs.forEach((t) => t.addEventListener('click', () => switchView(t.dataset.view)));
+
+// If the user unlocks the admin panel while on the Models / Speed Test tab,
+// refresh that view immediately.
+function refreshAuthedView() {
+  const activeTab = document.querySelector('.tab.active');
+  if (!activeTab) return;
+  if (activeTab.dataset.view === 'models') enterModelsView();
+  if (activeTab.dataset.view === 'speedtest') enterSpeedTestView();
+}
+
+// ══════════════════════════════════════════════════════
+// Models View — Model Assignments
+// ══════════════════════════════════════════════════════
+const MODEL_KEYS = [
+  'chat_thinking', 'chat_fast', 'code', 'vision', 'extraction',
+  'editor', 'editor_vision', 'search', 'image_generation',
+];
+const MODEL_LABELS = {
+  chat_thinking: 'Chat (Thinking)',
+  chat_fast: 'Chat (Fast)',
+  code: 'Code Generation',
+  vision: 'Vision Analysis',
+  extraction: 'Memory Extraction',
+  editor: 'Video Editor',
+  editor_vision: 'Editor Vision',
+  search: 'Web Search',
+  image_generation: 'Image Generation',
+};
+const MODEL_ICONS = {
+  chat_thinking: '🧠', chat_fast: '⚡', code: '💻', vision: '👁️',
+  extraction: '🧠', editor: '🎬', editor_vision: '👁️', search: '🌐', image_generation: '🎨',
+};
+const DEFAULT_ASSIGNMENTS = {
+  chat_thinking: 'qwen3:4b',
+  chat_fast: 'qwen2.5:3b',
+  code: 'qwen2.5-coder:7b',
+  vision: 'qwen2.5vl:3b',
+  extraction: 'qwen2.5:3b',
+  editor: 'qwen2.5:3b',
+  editor_vision: 'qwen2.5vl:3b',
+  search: 'qwen2.5:3b',
+  image_generation: 'x/flux2-klein',
+};
+
+let installedModels = [];
+let localAssignments = {};
+
+async function enterModelsView() {
+  if (!settingsAuthed) {
+    $('modelsLocked').style.display = 'block';
+    $('modelsGrid').innerHTML = '';
+    $('modelsSaveBtn').disabled = true;
+    $('modelsResetBtn').disabled = true;
+    return;
+  }
+  $('modelsLocked').style.display = 'none';
+  $('modelsSaveBtn').disabled = false;
+  $('modelsResetBtn').disabled = false;
+  await loadModelsView();
+}
+
+async function loadModelsView() {
+  $('modelsGrid').innerHTML = '<div class="models-loading">Loading models…</div>';
+  const [mRes, sRes] = await Promise.all([API.getInstalledModels(), API.getSettings()]);
+  installedModels = (mRes && mRes.models) || [];
+  const saved = (sRes && sRes.modelAssignments) || {};
+  localAssignments = { ...DEFAULT_ASSIGNMENTS };
+  for (const k of MODEL_KEYS) if (saved[k]) localAssignments[k] = saved[k];
+  $('modelsCount').textContent = installedModels.length + ' model' + (installedModels.length === 1 ? '' : 's') + ' installed';
+  renderModelsGrid();
+}
+
+function suggestFor(key) {
+  if (key === 'vision' || key === 'editor_vision') {
+    const v = installedModels.find((m) => /vl|vision|llava/i.test(m.name));
+    if (v) return v.name;
+  }
+  if (key === 'code') {
+    const c = installedModels.find((m) => /coder|deepseek-coder/i.test(m.name));
+    if (c) return c.name;
+  }
+  if (key === 'chat_thinking') {
+    const t = installedModels.find((m) => /qwen3|deepseek-r1|qwq/i.test(m.name));
+    if (t) return t.name;
+  }
+  if (key === 'extraction' || key === 'editor') {
+    const small = installedModels
+      .filter((m) => m.details && m.details.parameter_size)
+      .sort((a, b) => {
+        const sz = (s) => parseInt(s.replace(/[^0-9]/g, '')) || 999;
+        return sz(a.details.parameter_size) - sz(b.details.parameter_size);
+      });
+    if (small.length) return small[0].name;
+  }
+  return null;
+}
+
+function renderModelsGrid() {
+  const grid = $('modelsGrid');
+  grid.innerHTML = MODEL_KEYS.map((key) => {
+    const cur = localAssignments[key];
+    const suggestion = suggestFor(key);
+    const chips = installedModels
+      .map((m) => {
+        const sel = m.name === cur;
+        const size = m.details && m.details.parameter_size
+          ? `<span class="chip-size">${esc(m.details.parameter_size)}</span>`
+          : '';
+        return `<button class="model-chip${sel ? ' selected' : ''}" data-key="${key}" data-model="${m.name}">${esc(m.name)}${size}</button>`;
+      })
+      .join('');
+    const suggBtn = suggestion && suggestion !== cur
+      ? `<button class="model-chip suggestion" data-key="${key}" data-model="${suggestion}">✨ ${esc(suggestion)}</button>`
+      : '';
+    return `<div class="model-card">
+      <div class="model-card-head">
+        <span class="model-card-icon">${MODEL_ICONS[key]}</span>
+        <div class="model-card-titles">
+          <div class="model-card-label">${MODEL_LABELS[key]}</div>
+          <div class="model-card-key">${key.replace(/_/g, ' ')}</div>
+        </div>
+        ${cur ? `<span class="model-card-current" title="${esc(cur)}">${esc(cur)}</span>` : ''}
+      </div>
+      <div class="model-chips">
+        ${installedModels.length ? chips : '<span style="font-size:11px;color:var(--text-muted)">No models installed</span>'}
+        ${suggBtn}
+      </div>
+    </div>`;
+  }).join('');
+
+  grid.querySelectorAll('.model-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      localAssignments[chip.dataset.key] = chip.dataset.model;
+      renderModelsGrid();
+      const status = $('modelsSaveStatus');
+      status.textContent = 'Unsaved changes';
+      status.className = 'save-status';
+    });
+  });
+}
+
+$('modelsSaveBtn').addEventListener('click', async () => {
+  const status = $('modelsSaveStatus');
+  status.textContent = 'Saving…';
+  status.className = 'save-status';
+  const res = await API.saveSettings({ modelAssignments: localAssignments });
+  if (res && res.modelAssignments) {
+    status.textContent = '✓ Saved';
+    status.className = 'save-status ok';
+    setTimeout(() => { status.textContent = ''; }, 2500);
+  } else {
+    status.textContent = '❌ ' + ((res && res.error) || 'Failed to save');
+    status.className = 'save-status err';
+  }
+});
+
+$('modelsResetBtn').addEventListener('click', () => {
+  localAssignments = { ...DEFAULT_ASSIGNMENTS };
+  renderModelsGrid();
+  const status = $('modelsSaveStatus');
+  status.textContent = 'Defaults loaded — click Save';
+  status.className = 'save-status';
+});
+
+// ══════════════════════════════════════════════════════
+// Speed Test View — timeline + detail modal
+// ══════════════════════════════════════════════════════
+const MODEL_STYLES = {
+  chat_fast: { color: '#34d399', bg: 'rgba(52,211,153,0.12)' },
+  chat_thinking: { color: '#c084fc', bg: 'rgba(168,85,247,0.15)' },
+  code: { color: '#60a5fa', bg: 'rgba(59,130,246,0.15)' },
+  vision: { color: '#fbbf24', bg: 'rgba(251,191,36,0.12)' },
+  search: { color: '#22d3ee', bg: 'rgba(34,211,238,0.12)' },
+  extraction: { color: '#fb7185', bg: 'rgba(244,63,94,0.12)' },
+};
+
+let speedResults = [];
+let speedRunning = false;
+
+function formatDuration(ms) {
+  if (ms < 1000) return ms + 'ms';
+  if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+  return Math.floor(ms / 60000) + 'm ' + Math.round((ms % 60000) / 1000) + 's';
+}
+
+function formatSpeedDate(dateStr) {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diff = now.getTime() - d.getTime();
+  const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  if (diff < 86400000) return 'Today, ' + time;
+  if (diff < 172800000) return 'Yesterday, ' + time;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ', ' + time;
+}
+
+function qualityColor(score) {
+  return score >= 70 ? '#fbbf24' : score >= 40 ? '#fb923c' : '#f87171';
+}
+
+function sanitizeResult(r) {
+  const ms = {};
+  Object.entries(r.modelSummaries || {}).forEach(([k, v]) => {
+    ms[k] = { ...v, avgQualityScore: v.avgQualityScore || 0 };
+  });
+  return {
+    ...r,
+    modelSummaries: ms,
+    modelCount: r.modelCount ?? Object.keys(ms).length,
+    summary: { avgQualityScore: 0, ...(r.summary || {}) },
+    tests: (r.tests || []).map((t) => ({ qualityScore: 0, qualityChecks: [], ...t })),
+  };
+}
+
+async function enterSpeedTestView() {
+  if (!settingsAuthed) {
+    $('speedLocked').style.display = 'block';
+    $('speedRunBtn').disabled = true;
+    $('speedTimeline').innerHTML = '';
+    return;
+  }
+  $('speedLocked').style.display = 'none';
+  $('speedRunBtn').disabled = false;
+  await loadSpeedResults();
+}
+
+async function loadSpeedResults() {
+  const res = await API.getSpeedTestResults();
+  speedResults = ((res && res.results) || []).map(sanitizeResult);
+  renderTimeline();
+}
+
+function renderTimeline() {
+  const tl = $('speedTimeline');
+  if (!speedResults.length) {
+    tl.innerHTML = '<div class="speed-empty">No speed test results yet. Click "Run All Tests" to benchmark your models.</div>';
+    return;
+  }
+
+  tl.innerHTML = speedResults.map((r, idx) => {
+    const isLatest = idx === 0;
+    const badges = Object.entries(r.modelSummaries || {}).map(([k, ms]) => {
+      const color = (MODEL_STYLES[k] || {}).color || '#9ca3af';
+      return `<span class="speed-badge" style="color:${color};border-color:${color}44">${esc(ms.icon)} ${esc(ms.label)}: ${formatDuration(ms.avgResponseTimeMs)}</span>`;
+    }).join('');
+    const maxTime = Math.max(...r.tests.map((t) => t.totalTimeMs), 1);
+    const miniBars = r.tests.map((t) => {
+      const h = Math.max(15, (t.totalTimeMs / maxTime) * 100);
+      const style = MODEL_STYLES[t.assignmentKey] || {};
+      const grad = t.success ? (style.color || '#6b7280') : '#ef4444';
+      return `<div class="mini-bar" style="height:${h}%;background:${grad};opacity:${t.success ? 0.75 : 0.5}" title="${esc(t.testName)}: ${formatDuration(t.totalTimeMs)}"></div>`;
+    }).join('');
+    return `<div class="speed-item${isLatest ? ' latest' : ''}" data-id="${r.id}">
+      <div class="speed-item-top">
+        <div class="speed-chips">
+          <span class="speed-chip">🗓 ${formatSpeedDate(r.date)}</span>
+          <span class="speed-chip">🧠 ${r.modelCount} models</span>
+          ${isLatest ? '<span class="speed-chip latest-chip">Latest</span>' : ''}
+        </div>
+        <button class="speed-del" data-id="${r.id}" title="Delete result">🗑</button>
+      </div>
+      <div class="speed-model-badges">${badges}</div>
+      <div class="speed-quick">
+        <span><b>${formatDuration(r.summary.avgResponseTimeMs)}</b> avg resp</span>
+        <span><b>${r.summary.avgTokensPerSecond.toFixed(1)}</b> tok/s</span>
+        <span><b>${formatDuration(r.summary.avgTimeToFirstTokenMs)}</b> ttfb</span>
+        <span><b>${r.summary.passed}/${r.summary.totalTests}</b> passed</span>
+        <span><b style="color:${qualityColor(r.summary.avgQualityScore)}">${r.summary.avgQualityScore}%</b> quality</span>
+      </div>
+      <div class="speed-mini-bars">${miniBars}</div>
+      <div class="speed-hint">Click for detailed results and graphs</div>
+    </div>`;
+  }).join('');
+
+  tl.querySelectorAll('.speed-item').forEach((item) => {
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('.speed-del')) return;
+      const r = speedResults.find((x) => x.id === item.dataset.id);
+      if (r) openSpeedDetail(r);
+    });
+  });
+
+  tl.querySelectorAll('.speed-del').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await API.deleteSpeedTestResult(btn.dataset.id);
+      await loadSpeedResults();
+    });
+  });
+}
+
+$('speedRunBtn').addEventListener('click', async () => {
+  if (speedRunning || !settingsAuthed) return;
+  speedRunning = true;
+  $('speedRunBtn').disabled = true;
+  const status = $('speedRunStatus');
+  status.textContent = 'Running tests… this can take a few minutes';
+  status.className = 'save-status';
+  try {
+    const res = await API.runSpeedTests();
+    if (res && res.result) {
+      status.textContent = '✓ Suite complete';
+      status.className = 'save-status ok';
+    } else {
+      status.textContent = '❌ ' + ((res && res.error) || 'Test failed');
+      status.className = 'save-status err';
+    }
+    await loadSpeedResults();
+  } catch (err) {
+    status.textContent = '❌ ' + (err.message || 'Test failed');
+    status.className = 'save-status err';
+  }
+  speedRunning = false;
+  $('speedRunBtn').disabled = !settingsAuthed;
+  setTimeout(() => {
+    if ($('speedRunStatus').textContent.startsWith('✓')) status.textContent = '';
+  }, 3000);
+});
+
+// ─── Speed Test Detail Modal ────────────────────────
+function openSpeedDetail(r) {
+  $('speedModalTitle').textContent = 'Speed Test Results — ' + formatSpeedDate(r.date);
+  $('speedModalBody').innerHTML = '';
+  $('speedModal').style.display = 'flex';
+
+  const maxTime = Math.max(...r.tests.map((t) => t.totalTimeMs), 1);
+  const maxTps = Math.max(...r.tests.map((t) => t.tokensPerSecond), 1);
+
+  const summary = `
+    <div class="summary-cards">
+      <div class="summary-card"><div class="sc-label">⏱ Total Duration</div><div class="sc-value">${formatDuration(r.totalDurationMs)}</div></div>
+      <div class="summary-card"><div class="sc-label">🧠 Models Tested</div><div class="sc-value">${r.modelCount}</div></div>
+      <div class="summary-card"><div class="sc-label">⚡ Avg Response</div><div class="sc-value">${formatDuration(r.summary.avgResponseTimeMs)}</div></div>
+      <div class="summary-card"><div class="sc-label">🎯 Avg Quality</div><div class="sc-value" style="color:${qualityColor(r.summary.avgQualityScore)}">${r.summary.avgQualityScore}%</div></div>
+    </div>`;
+
+  const modelCards = `
+    <div class="model-summary-cards">
+      ${Object.entries(r.modelSummaries || {}).map(([k, ms]) => {
+        const color = (MODEL_STYLES[k] || {}).color || '#9ca3af';
+        return `<div class="model-summary">
+          <div class="ms-head"><span>${ms.icon}</span> ${ms.label}</div>
+          <div class="ms-model">${ms.model}</div>
+          <div class="ms-metrics">
+            <span><b style="color:${color}">${formatDuration(ms.avgResponseTimeMs)}</b> avg</span>
+            <span><b style="color:${color}">${ms.avgTokensPerSecond.toFixed(1)}</b> tok/s</span>
+            <span><b style="color:${ms.failed === 0 ? '#34d399' : '#f87171'}">${ms.passed}/${ms.tests}</b> pass</span>
+            <span><b style="color:${qualityColor(ms.avgQualityScore)}">${ms.avgQualityScore}%</b> quality</span>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  // Group tests by assignment key
+  const groups = {};
+  for (const t of r.tests) {
+    if (!groups[t.assignmentKey]) groups[t.assignmentKey] = [];
+    groups[t.assignmentKey].push(t);
+  }
+
+  const barChart = (title, valueFn, formatter, maxVal) => `
+    <div class="chart-block">
+      <div class="chart-title">${title}</div>
+      ${Object.entries(groups).map(([k, tests]) => {
+        const color = (MODEL_STYLES[k] || {}).color || '#6b7280';
+        const ms = r.modelSummaries[k];
+        return `<div class="chart-group">
+          <div class="chart-group-head"><span class="gdot" style="background:${color}"></span> ${ms ? ms.label : k} <span style="color:var(--text-muted);font-weight:400">(${ms ? ms.model : ''})</span></div>
+          ${tests.map((t) => {
+            const val = valueFn(t);
+            const pct = Math.max(2, (val / maxVal) * 100);
+            return `<div class="bar-row">
+              <div class="br-label">${t.testName}</div>
+              <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${t.success ? color : '#ef4444'};opacity:${t.success ? 1 : 0.5}"></div></div>
+              <div class="br-value">${formatter(val)}</div>
+            </div>`;
+          }).join('')}
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  const qualityBlock = `
+    <div class="chart-block">
+      <div class="chart-title">🎯 Quality Score by Test — check details below each bar</div>
+      ${r.tests.map((t) => {
+        const q = t.qualityScore || 0;
+        const color = qualityColor(q);
+        const checks = (t.qualityChecks || []).map((c) =>
+          `<div class="qcheck ${c.passed ? 'pass' : 'fail'}"><span>${c.passed ? '✓' : '✗'}</span> ${c.name}${c.details ? ` <span class="qc-detail">— ${c.details}</span>` : ''}</div>`
+        ).join('');
+        return `<div class="qrow">
+          <div class="qrow-top"><span class="qrow-name">${t.testName}</span><span class="qrow-score" style="color:${color}">${q}%</span></div>
+          <div class="bar-track"><div class="bar-fill" style="width:${q}%;background:${color}"></div></div>
+          ${checks ? `<div class="qchecks">${checks}</div>` : ''}
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  const table = `
+    <div class="chart-block">
+      <div class="chart-title">📋 All Test Details</div>
+      <table class="detail-table">
+        <thead><tr><th>Test</th><th>Model</th><th>Status</th><th>Time</th><th>TTFB</th><th>Chars</th><th>Tok/s</th><th>Quality</th></tr></thead>
+        <tbody>
+          ${r.tests.map((t) => {
+            const color = (MODEL_STYLES[t.assignmentKey] || {}).color || '#9ca3af';
+            const q = t.qualityScore || 0;
+            const ms = r.modelSummaries[t.assignmentKey];
+            return `<tr>
+              <td>${t.testName}</td>
+              <td><span style="color:${color}">${ms ? ms.label : t.assignmentKey}</span></td>
+              <td class="td-status">${t.success ? '✅' : '❌'}</td>
+              <td class="td-mono">${formatDuration(t.totalTimeMs)}</td>
+              <td class="td-mono">${formatDuration(t.timeToFirstTokenMs)}</td>
+              <td class="td-mono">${t.totalChars}</td>
+              <td class="td-mono">${t.tokensPerSecond.toFixed(1)}</td>
+              <td class="td-mono" style="color:${qualityColor(q)}">${q}%</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+
+  const errors = r.tests.filter((t) => !t.success);
+  const errorsBlock = errors.length
+    ? `<div class="errors-block"><h4>⚠️ Errors</h4>${errors.map((t) => `<p><strong>${t.testName}:</strong> ${t.error || 'Unknown error'}</p>`).join('')}</div>`
+    : '';
+
+  $('speedModalBody').innerHTML =
+    summary + modelCards +
+    barChart('📊 Response Time by Test', (t) => t.totalTimeMs, formatDuration, maxTime) +
+    barChart('⚡ Tokens per Second', (t) => t.tokensPerSecond, (v) => v.toFixed(1) + ' tok/s', maxTps) +
+    qualityBlock + table + errorsBlock;
+}
+
+$('speedModalClose').addEventListener('click', () => { $('speedModal').style.display = 'none'; });
+$('speedModal').addEventListener('click', (e) => { if (e.target === $('speedModal')) $('speedModal').style.display = 'none'; });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('speedModal').style.display = 'none'; });
 
 // Check GitHub release version on init
 async function checkLatestRelease() {

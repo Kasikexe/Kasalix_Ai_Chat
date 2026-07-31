@@ -136,7 +136,7 @@ app.use('*', async (c, next) => {
 // Auth routes (public — for registration, login, logout, and session check)
 app.post('/api/auth/register', async (c) => {
   try {
-    const { username, password } = await c.req.json();
+    const { username, password, rememberMe } = await c.req.json();
     if (!username || !password) {
       return c.json({ error: 'Username and password are required' }, 400);
     }
@@ -145,7 +145,7 @@ app.post('/api/auth/register', async (c) => {
       return c.json({ error: result.error }, 400);
     }
     // Auto-login after registration
-    const loginResult = await loginUser(username, password, c.req.header('x-forwarded-for') || 'local');
+    const loginResult = await loginUser(username, password, c.req.header('x-forwarded-for') || 'local', rememberMe === true);
     if (!loginResult.success) {
       return c.json({ error: loginResult.error }, 500);
     }
@@ -163,12 +163,12 @@ app.post('/api/auth/register', async (c) => {
 
 app.post('/api/auth/login', async (c) => {
   try {
-    const { username, password } = await c.req.json();
+    const { username, password, rememberMe } = await c.req.json();
     if (!username || !password) {
       return c.json({ error: 'Username and password are required' }, 400);
     }
     const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'local';
-    const result = await loginUser(username, password, ip);
+    const result = await loginUser(username, password, ip, rememberMe === true);
     if (!result.success) {
       return c.json({ error: result.error }, 401);
     }

@@ -56,9 +56,20 @@ contextBridge.exposeInMainWorld('serverAPI', {
   // ─── Settings Password ─────────────────────────
   authSettings: (password) => ipcRenderer.invoke('auth-settings', password),
   changeSettingsPassword: (current, next) => ipcRenderer.invoke('change-settings-password', current, next),
+  resetSettingsPassword: () => ipcRenderer.invoke('reset-settings-password'),
 
   // ─── User Management ───────────────────────────
   getUsers: () => ipcRenderer.invoke('get-users'),
+
+  // ─── Model Settings ────────────────────────────
+  getInstalledModels: () => ipcRenderer.invoke('get-installed-models'),
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  saveSettings: (payload) => ipcRenderer.invoke('save-settings', payload),
+
+  // ─── Speed Test ─────────────────────────────────
+  runSpeedTests: () => ipcRenderer.invoke('speedtest-run'),
+  getSpeedTestResults: () => ipcRenderer.invoke('speedtest-results'),
+  deleteSpeedTestResult: (id) => ipcRenderer.invoke('speedtest-delete', id),
 
   // ─── Download Manager ─────────────────────────
   downloadRelease: (assetName) => ipcRenderer.invoke('download-release', assetName),

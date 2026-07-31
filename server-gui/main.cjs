@@ -20,6 +20,12 @@ let mainWindow = null;
 let serverProcess = null;
 let statsInterval = null;
 
+// Track how the backend is currently running (HTTPS vs HTTP, port) so
+// the auth IPC handlers can talk to it with the correct protocol.
+// Previously these were hardcoded to http://localhost:3001, which broke
+// auth whenever the backend ran in HTTPS mode (the default).
+let serverMode = { https: false, port: 3001 };
+
 // ─── Detect Local IPs ───────────────────────────────────────────
 function getLocalIPs() {
   const interfaces = os.networkInterfaces();
@@ -288,6 +294,7 @@ async function startServer(httpMode) {
       // Wait a bit and check if it's still running
       setTimeout(() => {
         if (serverProcess && serverProcess.exitCode === null) {
+          serverMode = { https: useHttps, port: parseInt(port, 10) || 3001 };
           resolve({ success: true, port, https: useHttps });
         } else {
           // Extract a meaningful error from the startup log
@@ -593,79 +600,151 @@ function setupIPC() {
   });
 
   // ─── Settings Password ──────────────────────────
-  /** Authenticate with the settings password */
-  ipcMain.handle('auth-settings', async (_event, password) => {
-    try {
-      const http = require('http');
-      return await new Promise((resolve) => {
-        const data = JSON.stringify({ password });
-        const req = http.request(`http://localhost:${process.env.PORT || 3001}/api/settings/auth`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
-          timeout: 5000,
+  /** Send a request to the local backend. Tries both HTTP and HTTPS so auth
+   *  works whether the server-gui started the backend or it was started
+   *  externally (run-server.bat / start.bat). */
+  function backendRequest(apiPath, { method = 'GET', body = null, headers = {}, timeout = 5000 } = {}) {
+    return new Promise((resolve) => {
+      const payload = body ? JSON.stringify(body) : null;
+      const reqHeaders = { ...headers };
+      if (payload) {
+        reqHeaders['Content-Type'] = 'application/json';
+        reqHeaders['Content-Length'] = Buffer.byteLength(payload);
+      }
+      const port = serverMode.port || 3001;
+      // Try the currently tracked protocol first, then fall back to the other
+      // if the connection fails (stale mode or externally-started backend).
+      const protocols = serverMode.https ? ['https', 'http'] : ['http', 'https'];
+
+      const attempt = (idx) => {
+        if (idx >= protocols.length) {
+          resolve({ error: 'Server not running' });
+          return;
+        }
+        const protocol = protocols[idx];
+        const transport = protocol === 'https' ? require('https') : require('http');
+        const req = transport.request(`${protocol}://localhost:${port}${apiPath}`, {
+          method,
+          headers: reqHeaders,
+          // Self-signed localhost certs must be accepted for HTTPS mode
+          rejectUnauthorized: false,
+          // 0 = no timeout (long-running requests like the speed test suite)
+          timeout: timeout || 0,
         }, (res) => {
           let body = '';
           res.on('data', (chunk) => body += chunk);
           res.on('end', () => {
             try { resolve(JSON.parse(body)); }
-            catch { resolve({ error: 'Invalid response' }); }
+            catch { attempt(idx + 1); } // Non-JSON (e.g. wrong-protocol error page) — try the other protocol
           });
         });
-        req.on('error', () => resolve({ error: 'Server not running' }));
-        req.write(data);
+        req.on('error', () => attempt(idx + 1));
+        req.on('timeout', () => { req.destroy(); attempt(idx + 1); });
+        if (payload) req.write(payload);
         req.end();
-      });
+      };
+
+      attempt(0);
+    });
+  }
+
+  /** Authenticate with the settings password */
+  ipcMain.handle('auth-settings', async (_event, password) => {
+    try {
+      return await backendRequest('/api/settings/auth', { method: 'POST', body: { password } });
     } catch { return { error: 'Failed to authenticate' }; }
   });
 
   /** Change the settings password */
   ipcMain.handle('change-settings-password', async (_event, currentPassword, newPassword) => {
     try {
-      const http = require('http');
-      return await new Promise((resolve) => {
-        const data = JSON.stringify({ currentPassword, newPassword });
-        const req = http.request(`http://localhost:${process.env.PORT || 3001}/api/settings/password`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(data),
-            'Cookie': 'settings_auth=1',
-          },
-          timeout: 5000,
-        }, (res) => {
-          let body = '';
-          res.on('data', (chunk) => body += chunk);
-          res.on('end', () => {
-            try { resolve(JSON.parse(body)); }
-            catch { resolve({ error: 'Invalid response' }); }
-          });
-        });
-        req.on('error', () => resolve({ error: 'Server not running' }));
-        req.write(data);
-        req.end();
+      return await backendRequest('/api/settings/password', {
+        method: 'POST',
+        body: { currentPassword, newPassword },
+        headers: { 'Cookie': 'settings_auth=1' },
       });
     } catch { return { error: 'Failed to change password' }; }
+  });
+
+  /** Reset the settings password back to the default (letmein) */
+  ipcMain.handle('reset-settings-password', async () => {
+    try {
+      const pwDir = path.join(BACKEND_DIR, 'data');
+      fs.mkdirSync(pwDir, { recursive: true });
+      fs.writeFileSync(path.join(pwDir, 'settings_password.txt'), 'letmein', 'utf-8');
+      return { success: true, message: 'Password reset to: letmein' };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
   });
 
   /** Get registered users */
   ipcMain.handle('get-users', async () => {
     try {
-      const http = require('http');
-      return await new Promise((resolve) => {
-        const req = http.get(`http://localhost:${process.env.PORT || 3001}/api/auth/users`, {
-          headers: { 'Cookie': 'settings_auth=1' },
-          timeout: 5000,
-        }, (res) => {
-          let body = '';
-          res.on('data', (chunk) => body += chunk);
-          res.on('end', () => {
-            try { resolve(JSON.parse(body)); }
-            catch { resolve({ users: [] }); }
-          });
-        });
-        req.on('error', () => resolve({ users: [] }));
+      const result = await backendRequest('/api/auth/users', {
+        headers: { 'Cookie': 'settings_auth=1' },
       });
+      if (result && Array.isArray(result.users)) return result;
+      return { users: [] };
     } catch { return { users: [] }; }
+  });
+
+  // ─── Model Settings ────────────────────────────────
+  /** Get all installed Ollama models (backend /api/models) */
+  ipcMain.handle('get-installed-models', async () => {
+    try {
+      return await backendRequest('/api/models');
+    } catch { return { models: [] }; }
+  });
+
+  /** Get the current app settings (model assignments, hidden models) */
+  ipcMain.handle('get-settings', async () => {
+    try {
+      return await backendRequest('/api/settings');
+    } catch { return null; }
+  });
+
+  /** Save model assignments (admin only) */
+  ipcMain.handle('save-settings', async (_event, payload) => {
+    try {
+      return await backendRequest('/api/settings', {
+        method: 'PUT',
+        body: payload,
+        headers: { 'Cookie': 'settings_auth=1' },
+      });
+    } catch { return { error: 'Failed to save settings' }; }
+  });
+
+  // ─── Speed Test ─────────────────────────────────────
+  /** Run the full speed test suite (admin only) — can take several minutes */
+  ipcMain.handle('speedtest-run', async () => {
+    try {
+      return await backendRequest('/api/speedtest/run', {
+        method: 'POST',
+        body: {},
+        headers: { 'Cookie': 'settings_auth=1' },
+        timeout: 0, // no timeout — suite may take minutes
+      });
+    } catch { return { error: 'Speed test failed' }; }
+  });
+
+  /** Get past speed test results (admin only) */
+  ipcMain.handle('speedtest-results', async () => {
+    try {
+      return await backendRequest('/api/speedtest/results', {
+        headers: { 'Cookie': 'settings_auth=1' },
+      });
+    } catch { return { results: [] }; }
+  });
+
+  /** Delete a speed test result (admin only) */
+  ipcMain.handle('speedtest-delete', async (_event, id) => {
+    try {
+      return await backendRequest(`/api/speedtest/results/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'Cookie': 'settings_auth=1' },
+      });
+    } catch { return { success: false }; }
   });
 }
 

@@ -6,13 +6,32 @@ interface Props {
   onSubmit: (name: string) => void;
 }
 
+const REMEMBER_KEY = 'ai-chat:rememberMe';
+
+function readRememberPreference(): boolean {
+  try {
+    // Default to true for a smooth experience on the user's own devices
+    return localStorage.getItem(REMEMBER_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
 export function UserSetup({ onSubmit }: Props) {
   const [mode, setMode] = useState<'register' | 'login'>('register');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState<boolean>(readRememberPreference);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const handleRememberToggle = (checked: boolean) => {
+    setRememberMe(checked);
+    try {
+      localStorage.setItem(REMEMBER_KEY, String(checked));
+    } catch {}
+  };
 
   const handleSubmit = async () => {
     const trimmedUser = username.trim();
@@ -24,9 +43,9 @@ export function UserSetup({ onSubmit }: Props) {
     try {
       let result;
       if (mode === 'register') {
-        result = await api.register(trimmedUser, password);
+        result = await api.register(trimmedUser, password, rememberMe);
       } else {
-        result = await api.login(trimmedUser, password);
+        result = await api.login(trimmedUser, password, rememberMe);
       }
 
       if (result.success) {
@@ -174,6 +193,32 @@ export function UserSetup({ onSubmit }: Props) {
             {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
           </button>
         </div>
+
+        {/* Remember me */}
+        <label style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          marginBottom: '16px',
+          cursor: 'pointer',
+          userSelect: 'none',
+        }}>
+          <input
+            type="checkbox"
+            checked={rememberMe}
+            onChange={(e) => handleRememberToggle(e.target.checked)}
+            disabled={loading}
+            style={{
+              width: '16px',
+              height: '16px',
+              accentColor: '#2563eb',
+              cursor: 'pointer',
+            }}
+          />
+          <span style={{ color: '#9ca3af', fontSize: '13px' }}>
+            Remember me — stay signed in on this device
+          </span>
+        </label>
 
         {/* Submit button */}
         <button

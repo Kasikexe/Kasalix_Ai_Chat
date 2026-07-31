@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { MessageSquare, Plus, Trash2, Edit2, X, Check, Menu, Wrench, Search, Film, FolderOpen, ChevronDown, ChevronRight, AlertTriangle, Clock, ListChecks } from 'lucide-react';
+import { MessageSquare, Plus, Trash2, Edit2, X, Check, Menu, Wrench, Search, Film, FolderOpen, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import type { Conversation, ConversationMode } from '../types';
 import type { UserProfile } from '../types';
 import { UserBadge } from './UserBadge';
@@ -20,7 +20,7 @@ interface SidebarProps {
   onSwitchUser: () => void;
   onUserSettings?: () => void;
   mode: ConversationMode;
-  onModeChange: (mode: ConversationMode | 'logs' | 'planned') => void;
+  onModeChange: (mode: ConversationMode) => void;
   loading?: boolean;
 }
 
@@ -214,42 +214,15 @@ export function Sidebar({
             </span>
           </button>
           <button
-            onClick={() => !isWebBlocked && onModeChange('editor')}
-            disabled={isWebBlocked}
-            className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all relative ${
-              mode === 'editor'
-                ? 'bg-red-600 text-white shadow-sm'
-                : isWebBlocked
-                  ? 'text-gray-600 cursor-not-allowed opacity-50'
-                  : 'text-gray-400 hover:text-gray-200'
-            }`}
-            title={isWebBlocked ? 'Available in the desktop app — download below' : 'Editor mode'}
+            disabled
+            title="Planned — coming soon"
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all relative cursor-not-allowed opacity-50 text-gray-600"
           >
             <Film size={14} />
-            Editor
-            <span className="absolute -top-1.5 -right-1.5 px-1 py-0.5 text-[8px] font-bold bg-amber-500 text-black rounded-sm leading-none shadow-sm">
-              BETA
+            Video Editor
+            <span className="absolute -top-1.5 -right-1.5 px-1 py-0.5 text-[8px] font-bold bg-blue-500 text-white rounded-sm leading-none shadow-sm">
+              Planned
             </span>
-          </button>
-        </div>
-
-        {/* Logs & Planned buttons below mode tabs */}
-        <div className="mx-3 mt-2 flex gap-1">
-          <button
-            onClick={() => onModeChange('logs')}
-            className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-800 text-gray-400 hover:text-gray-200 hover:bg-gray-700 border border-gray-700"
-            title="View activity log"
-          >
-            <Clock size={13} />
-            Logs
-          </button>
-          <button
-            onClick={() => onModeChange('planned')}
-            className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors bg-gray-800 text-gray-400 hover:text-gray-200 hover:bg-gray-700 border border-gray-700"
-            title="View planned features"
-          >
-            <ListChecks size={13} />
-            Planned
           </button>
         </div>
 

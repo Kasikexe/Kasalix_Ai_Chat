@@ -4,20 +4,14 @@ import { Header } from './components/Header';
 import { ChatView } from './components/ChatView';
 import { AgentWorkspace } from './components/AgentWorkspace';
 import { VideoEditor } from './components/VideoEditor';
-import { ChangelogView } from './components/ChangelogView';
-import { PlannedView } from './components/PlannedView';
-import { SpeedTestView } from './components/SpeedTestView';
 import { ServerConnect } from './components/ServerConnect';
 import { ServerDownOverlay } from './components/ServerDownOverlay';
-import { ModelAssignmentModal } from './components/ModelAssignmentModal';
 import { UserSettingsModal } from './components/UserSettingsModal';
 import { UpdateBanner } from './components/UpdateBanner';
-import { PasswordPrompt } from './components/PasswordPrompt';
 import { UserSetup } from './components/UserSetup';
 import { ToastProvider } from './hooks/useToast';
 import { useModelAssignments } from './hooks/useModelAssignments';
 import { useConversations } from './hooks/useConversations';
-import { useModelVisibility } from './hooks/useModelVisibility';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useTheme } from './hooks/useTheme';
 import { useMemory } from './hooks/useMemory';
@@ -29,7 +23,7 @@ import {
   clearUserProfile,
   isLoggedIn,
 } from './services/api';
-import type { ConversationMode, UserProfile, OllamaModel } from './types';
+import type { ConversationMode, UserProfile } from './types';
 
 const THINKING_KEY = 'ai-chat:thinkingEnabled';
 
@@ -130,13 +124,8 @@ interface ChatAppProps {
 
 function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: ChatAppProps) {
   const {
-    isAuthed, authenticate,
-  } = useModelVisibility();
-  const {
-    assignments: modelAssignments,
     loading: assignmentsLoading,
     getChatModel,
-    saveAll: saveModelAssignments,
   } = useModelAssignments();
   const { theme, toggleTheme } = useTheme();
   const {
@@ -153,11 +142,9 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
   const { conversations, loading: conversationsLoading, create, remove, rename, update, refresh } = useConversations();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [modelAssignOpen, setModelAssignOpen] = useState(false);
   const [userSettingsOpen, setUserSettingsOpen] = useState(false);
-  const [passwordOpen, setPasswordOpen] = useState(false);
   const [mode, setMode] = useState<ConversationMode>('chat');
-  const [viewTab, setViewTab] = useState<'chat' | 'agent' | 'editor' | 'logs' | 'planned' | 'speedtest'>('chat');
+  const [viewTab, setViewTab] = useState<'chat' | 'agent' | 'editor'>('chat');
   const [offlineWorkspace, setOfflineWorkspace] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchActive, setSearchActive] = useState(false);
@@ -181,12 +168,6 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
   // Derive the main chat model from assignments + thinking toggle
   const model = assignmentsLoading ? (thinkingEnabled ? 'qwen3:4b' : 'qwen2.5:3b') : getChatModel(thinkingEnabled);
 
-  // Fetch all installed models for the assignment modal and model selector
-  const [allModels, setAllModels] = useState<OllamaModel[]>([]);
-  useEffect(() => {
-    api.getModels().then(setAllModels).catch(() => {});
-  }, []);
-
   // Web search is always enabled (no toggle needed)
 
   const isMobile = useIsMobile();
@@ -195,21 +176,6 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
     () => (activeId ? conversations.find((c) => c.id === activeId) ?? null : null),
     [activeId, conversations]
   );
-
-  const handleAdminClick = () => {
-    if (isAuthed) setModelAssignOpen(true);
-    else setPasswordOpen(true);
-  };
-
-  // Wrap authenticate to auto-open the model modal after successful login
-  const handleAuthenticate = async (password: string): Promise<boolean> => {
-    const ok = await authenticate(password);
-    if (ok) {
-      setPasswordOpen(false);
-      setModelAssignOpen(true);
-    }
-    return ok;
-  };
 
   // Refresh conversations when the window regains focus (helps Electron on startup)
   useEffect(() => {
@@ -259,14 +225,11 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
     if (activeId === id) setActiveId(null);
   };
 
-  const handleModeChange = (newMode: ConversationMode | 'logs' | 'planned' | 'speedtest') => {
-    if (newMode === 'logs' || newMode === 'planned' || newMode === 'speedtest') {
-      setViewTab(newMode);
-      return;
-    }
-    // Agent & Editor modes are only available in the desktop app
+  const handleModeChange = (newMode: ConversationMode) => {
+    // Agent mode is only available in the desktop app; Editor mode is planned (unavailable)
     const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
-    if (!isElectron && (newMode === 'agent' || newMode === 'editor')) return;
+    if (newMode === 'editor') return;
+    if (!isElectron && newMode === 'agent') return;
     setMode(newMode);
     setViewTab(newMode);
     setActiveId(null);
@@ -328,9 +291,6 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
       <div className="flex-1 flex flex-col min-w-0">
         <Header
           onMenuClick={() => setSidebarOpen(true)}
-          onAdminClick={handleAdminClick}
-          onSpeedTestClick={() => setViewTab('speedtest')}
-          isAdmin={isAuthed}
           thinkingEnabled={thinkingEnabled}
           onToggleThinking={onToggleThinking}
           conversation={activeConv}
@@ -342,13 +302,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
             key={viewTab}
             className="flex-1 flex flex-col min-h-0 animate-mode-fade-in"
           >
-            {viewTab === 'logs' ? (
-              <ChangelogView />
-            ) : viewTab === 'planned' ? (
-              <PlannedView isAdmin={isAuthed} />
-            ) : viewTab === 'speedtest' ? (
-              <SpeedTestView isAdmin={isAuthed} />
-            ) : mode === 'agent' ? (
+            {mode === 'agent' ? (
               <AgentWorkspace
                 key={activeConv?.id || 'new'}
                 conversation={activeConv}
@@ -470,19 +424,6 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
         }}
       />
 
-      <ModelAssignmentModal
-        open={modelAssignOpen}
-        onClose={() => setModelAssignOpen(false)}
-        models={allModels}
-        assignments={modelAssignments}
-        onSave={saveModelAssignments}
-      />
-
-      <PasswordPrompt
-        open={passwordOpen}
-        onClose={() => setPasswordOpen(false)}
-        onSubmit={handleAuthenticate}
-      />
     </div>
   );
 }

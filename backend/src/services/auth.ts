@@ -21,8 +21,10 @@ import { logger } from './logger';
 
 // ─── Configuration ───────────────────────────────────────
 const USERS_FILE = path.join(process.cwd(), 'data', 'users.json');
+const SESSIONS_FILE = path.join(process.cwd(), 'data', 'sessions.json');
 const DATA_DIR = path.dirname(USERS_FILE);
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS) || 86_400_000; // 24h default
+const REMEMBER_ME_TTL_MS = Number(process.env.REMEMBER_ME_TTL_MS) || 2_592_000_000; // 30 days
 const MAX_LOGIN_ATTEMPTS = Number(process.env.MAX_LOGIN_ATTEMPTS) || 5;
 const LOCKOUT_DURATION_MS = Number(process.env.LOCKOUT_DURATION_MS) || 900_000; // 15 min
 
@@ -124,6 +126,7 @@ function startCleanup(): void {
     }
     if (expired > 0) {
       logger.debug(`[auth] Cleaned up ${expired} expired session(s)`);
+      queueSessionSave();
     }
   }, CLEANUP_INTERVAL);
 }
@@ -135,17 +138,50 @@ function stopCleanup(): void {
   }
 }
 
-export async function createSession(userId: string): Promise<string> {
+// ─── Session Persistence ───────────────────────────────
+// Remember-me sessions are persisted to disk so they survive server restarts.
+// Regular (24h) sessions are saved too — they simply expire on their own.
+let sessionWriteChain: Promise<void> = Promise.resolve();
+
+function queueSessionSave(): void {
+  const snapshot = Array.from(sessions.values());
+  sessionWriteChain = sessionWriteChain
+    .then(async () => {
+      await ensureDir();
+      await fs.writeFile(SESSIONS_FILE, JSON.stringify(snapshot, null, 2));
+    })
+    .catch((err) => {
+      logger.warn(`[auth] Failed to persist sessions: ${err.message}`);
+    });
+}
+
+async function loadSessions(): Promise<void> {
+  try {
+    const data = await fs.readFile(SESSIONS_FILE, 'utf-8');
+    const parsed: Session[] = JSON.parse(data);
+    // Merge (set) instead of replacing: the map starts empty at boot, and any
+    // session created while this read was in flight is preserved. Disk entries
+    // simply overwrite same-token entries — fully race-free.
+    for (const s of parsed) sessions.set(s.token, s);
+    logger.info(`[auth] Loaded ${sessions.size} persisted session(s)`);
+  } catch {
+    // No file yet — start fresh
+  }
+}
+
+export async function createSession(userId: string, rememberMe = false): Promise<string> {
   const token = generateToken();
   const now = Date.now();
+  const ttl = rememberMe ? REMEMBER_ME_TTL_MS : SESSION_TTL_MS;
   const session: Session = {
     token,
     userId,
     createdAt: now,
-    expiresAt: now + SESSION_TTL_MS,
+    expiresAt: now + ttl,
   };
   sessions.set(token, session);
-  logger.info(`[auth] Session created for user ${userId}`);
+  queueSessionSave();
+  logger.info(`[auth] Session created for user ${userId} (${rememberMe ? 'remember me · 30 days' : '24h'})`);
   return token;
 }
 
@@ -161,6 +197,7 @@ export function validateSession(token: string): { valid: boolean; userId?: strin
 
 export function destroySession(token: string): void {
   sessions.delete(token);
+  queueSessionSave();
 }
 
 export function destroyAllUserSessions(userId: string): void {
@@ -169,6 +206,7 @@ export function destroyAllUserSessions(userId: string): void {
       sessions.delete(token);
     }
   }
+  queueSessionSave();
 }
 
 // ─── User Account Management ────────────────────────────
@@ -236,7 +274,8 @@ export async function registerUser(username: string, password: string): Promise<
 export async function loginUser(
   username: string,
   password: string,
-  ip: string
+  ip: string,
+  rememberMe = false
 ): Promise<{ success: true; userId: string; token: string } | { success: false; error: string }> {
   await loadUsers();
 
@@ -263,7 +302,7 @@ export async function loginUser(
 
   // Success — reset rate limit and create session
   resetRateLimit(ip);
-  const token = await createSession(user.id);
+  const token = await createSession(user.id, rememberMe);
   logger.info(`[auth] User logged in: ${normalized}`);
   return { success: true, userId: user.id, token };
 }
@@ -349,5 +388,7 @@ export function shutdown(): void {
   logger.info('[auth] Auth service shut down');
 }
 
-// Start session cleanup timer
-startCleanup();
+// Load persisted sessions (so remember-me logins survive restarts), then start cleanup
+loadSessions().finally(() => {
+  startCleanup();
+});

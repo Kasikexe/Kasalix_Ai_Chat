@@ -371,12 +371,12 @@ export const api = {
   },
 
   // ─── User Authentication ────────────────────────────────
-  async register(username: string, password: string): Promise<{ success: boolean; error?: string }> {
+  async register(username: string, password: string, rememberMe = false): Promise<{ success: boolean; error?: string }> {
     try {
       const res = await fetch(`${API_BASE}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, rememberMe }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -399,12 +399,12 @@ export const api = {
     }
   },
 
-  async login(username: string, password: string): Promise<{ success: boolean; error?: string }> {
+  async login(username: string, password: string, rememberMe = false): Promise<{ success: boolean; error?: string }> {
     try {
       const res = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, rememberMe }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -899,38 +899,6 @@ streamChat(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command, cwd }),
-      }))
-    );
-  },
-
-  // --- Speed Test API ---
-  async getSpeedTestTests(): Promise<{ id: string; name: string; description: string; category: string }[]> {
-    const data = await handleResponse<{ tests: any[] }>(
-      await fetch(`${API_BASE}/speedtest/tests`, authedFetch(`${API_BASE}/speedtest/tests`))
-    );
-    return data.tests;
-  },
-
-  async runSpeedTests(): Promise<{ result: any }> {
-    return handleResponse<{ result: any }>(
-      await fetch(`${API_BASE}/speedtest/run`, authedFetch(`${API_BASE}/speedtest/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      }))
-    );
-  },
-
-  async getSpeedTestResults(): Promise<{ results: any[] }> {
-    return handleResponse<{ results: any[] }>(
-      await fetch(`${API_BASE}/speedtest/results`, authedFetch(`${API_BASE}/speedtest/results`))
-    );
-  },
-
-  async deleteSpeedTestResult(id: string): Promise<{ success: boolean }> {
-    return handleResponse<{ success: boolean }>(
-      await fetch(`${API_BASE}/speedtest/results/${encodeURIComponent(id)}`, authedFetch(`${API_BASE}/speedtest/results/${encodeURIComponent(id)}`, {
-        method: 'DELETE',
       }))
     );
   },

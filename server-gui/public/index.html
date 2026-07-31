@@ -36,7 +36,24 @@
     </div>
   </header>
 
-  <!-- ═══ MAIN LAYOUT ═══ -->
+  <!-- ═══ TAB BAR ═══ -->
+  <nav class="tabs">
+    <button class="tab active" data-view="dashboard">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+      Dashboard
+    </button>
+    <button class="tab" data-view="models">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Models
+    </button>
+    <button class="tab" data-view="speedtest">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      Speed Test
+    </button>
+  </nav>
+
+  <!-- ═══ DASHBOARD VIEW ═══ -->
+  <div class="view" id="view-dashboard">
   <div class="layout">
     <!-- ─── Left Column: Server Controls ─── -->
     <div class="col-left">
@@ -209,6 +226,7 @@
           <input type="password" id="pwInput" placeholder="Default: letmein" class="pw-input" />
           <button class="btn btn-small" id="pwAuthBtn">Unlock</button>
           <span class="pw-hint">Default password is <strong>letmein</strong></span>
+          <button class="btn btn-small btn-reset" id="pwResetBtn" title="Reset the settings password to the default">Forgot password? Reset</button>
           <span class="pw-msg pw-msg-error" id="pwErrorMsg"></span>
         </div>
         <div class="pw-change" id="pwChange" style="display:none">
@@ -232,6 +250,65 @@
           <div class="user-row placeholder">Authenticate to see users</div>
         </div>
       </div>
+    </div>
+  </div>
+  </div>
+
+  <!-- ═══ MODELS VIEW ═══ -->
+  <div class="view" id="view-models" style="display:none">
+    <div class="view-header">
+      <div class="view-title-row">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <div>
+          <h2>Model Assignments</h2>
+          <p>Assign which AI model handles each task · <span id="modelsCount">…</span></p>
+        </div>
+      </div>
+      <div class="view-actions">
+        <span class="save-status" id="modelsSaveStatus"></span>
+        <button class="btn btn-small btn-ghost" id="modelsResetBtn">Reset defaults</button>
+        <button class="btn btn-small btn-primary" id="modelsSaveBtn">Save Assignments</button>
+      </div>
+    </div>
+    <div class="view-locked" id="modelsLocked" style="display:none">
+      <p>🔒 Unlock the admin panel (Settings Password on the Dashboard) to edit model assignments.</p>
+    </div>
+    <div class="models-grid" id="modelsGrid">
+      <div class="models-loading">Loading models…</div>
+    </div>
+  </div>
+
+  <!-- ═══ SPEED TEST VIEW ═══ -->
+  <div class="view" id="view-speedtest" style="display:none">
+    <div class="view-header">
+      <div class="view-title-row">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        <div>
+          <h2>Speed Test</h2>
+          <p>Benchmark response time, throughput and answer quality across all models</p>
+        </div>
+      </div>
+      <div class="view-actions">
+        <span class="save-status" id="speedRunStatus"></span>
+        <button class="btn btn-run" id="speedRunBtn">Run All Tests</button>
+      </div>
+    </div>
+    <div class="view-locked" id="speedLocked" style="display:none">
+      <p>🔒 Unlock the admin panel (Settings Password on the Dashboard) to run speed tests.</p>
+    </div>
+    <div class="speed-timeline" id="speedTimeline">
+      <div class="speed-empty">No speed test results yet. Click "Run All Tests" to benchmark your models.</div>
+    </div>
+  </div>
+
+  <!-- ═══ SPEED TEST DETAIL MODAL ═══ -->
+  <div class="modal-overlay" id="speedModal" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="speedModalTitle">Speed Test Results</h3>
+        <button class="btn-icon" id="speedModalClose">✕</button>
+      </div>
+      <div class="modal-body" id="speedModalBody"></div>
     </div>
   </div>
 

@@ -63,6 +63,18 @@ function run(cmd, opts = {}) {
   }
 }
 
+// Keep the web favicon (public/icon.png) in sync with the current root icon.
+// Runs before BOTH Electron and Android builds so the favicon embedded in
+// dist/ (and thus the EXE, the APK, and the web) always matches the icon.
+function syncWebFavicon() {
+  const faviconSrc = resolve(__dirname, '..', 'icon.png');
+  if (!existsSync(faviconSrc)) return;
+  const publicDir = join(ROOT_DIR, 'public');
+  if (!existsSync(publicDir)) mkdirSync(publicDir, { recursive: true });
+  copyFileSync(faviconSrc, join(publicDir, 'icon.png'));
+  console.log('  ✓ Web favicon synced from icon.png');
+}
+
 // ─── Config Management ──────────────────────────────────
 
 function ensureConfig() {
@@ -122,6 +134,7 @@ async function buildElectron(config) {
 
   // Step 3: Build frontend with Vite
   console.log('  [3/4] Building frontend with Vite...');
+  syncWebFavicon();
   run(`${pm} run build`, { cwd: ROOT_DIR, timeout: 120000 });
 
   // Step 4: Package with electron-builder
@@ -174,14 +187,21 @@ async function buildAndroid(config) {
 
   // Step 2: Build frontend
   console.log('  [2/4] Building frontend with Vite...');
+  syncWebFavicon();
   run(`${pm} run build`, { cwd: ROOT_DIR, timeout: 120000 });
 
-  // Step 3: Generate Android icons from root icon.png
+  // Step 3: Generate Android icons from the source logo in assets/
+  // capacitor-assets v3 reads assets/logo.png (no --path flag supported).
+  // The build tool copies the root icon.png there before running.
   const rootIcon = resolve(__dirname, '..', 'icon.png');
+  const assetsDir = join(ROOT_DIR, 'assets');
   if (existsSync(rootIcon)) {
     console.log('  [3/5] Generating Android icons from root icon.png...');
     try {
-      run(`npx @capacitor/assets generate --path "${rootIcon}" --iconBackgroundColor "#030712"`, {
+      // Keep assets/logo.png in sync with the current root icon
+      if (!existsSync(assetsDir)) mkdirSync(assetsDir, { recursive: true });
+      copyFileSync(rootIcon, join(assetsDir, 'logo.png'));
+      run(`npx @capacitor/assets generate --android --iconBackgroundColor "#030712" --splashBackgroundColor "#030712"`, {
         cwd: ROOT_DIR,
         timeout: 60000,
       });

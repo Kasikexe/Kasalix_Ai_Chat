@@ -7,11 +7,21 @@ const SETTINGS_FILE = path.join(process.cwd(), 'data', 'settings.json');
 const SETTINGS_DIR = path.dirname(SETTINGS_FILE);
 
 // Load settings password — first from persisted file, then env var, then default
+const PW_FILE = path.join(process.cwd(), 'data', 'settings_password.txt');
 let SETTINGS_PASSWORD = process.env.SETTINGS_PASSWORD || 'letmein';
-try {
-  const savedPw = require('fs').readFileSync(path.join(process.cwd(), 'data', 'settings_password.txt'), 'utf-8').trim();
-  if (savedPw) SETTINGS_PASSWORD = savedPw;
-} catch { /* no saved password file — using env/default */ }
+
+// Reload the password from the persisted file on every check so that a
+// reset from the Server app (or deleting the file) takes effect immediately
+// without restarting the backend.
+function reloadSettingsPassword(): void {
+  try {
+    const savedPw = require('fs').readFileSync(PW_FILE, 'utf-8').trim();
+    SETTINGS_PASSWORD = savedPw || process.env.SETTINGS_PASSWORD || 'letmein';
+  } catch {
+    SETTINGS_PASSWORD = process.env.SETTINGS_PASSWORD || 'letmein';
+  }
+}
+reloadSettingsPassword();
 
 interface AppSettings {
   hiddenModels: string[];
@@ -61,6 +71,7 @@ settings.get('/auth', (c) => {
 settings.post('/auth', async (c) => {
   try {
     const body = await c.req.json();
+    reloadSettingsPassword();
     if (body.password === SETTINGS_PASSWORD) {
       c.header('Set-Cookie', 'settings_auth=1; HttpOnly; Path=/; SameSite=Strict; Max-Age=86400');
       return c.json({ authenticated: true });
@@ -124,6 +135,7 @@ settings.post('/password', async (c) => {
     }
 
     // Verify current password
+    reloadSettingsPassword();
     if (currentPassword !== SETTINGS_PASSWORD) {
       return c.json({ error: 'Current password is incorrect' }, 401);
     }

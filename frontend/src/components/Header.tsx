@@ -1,13 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
-import { Menu, Brain, Download, Smartphone, Sparkles, Lock, Wifi } from 'lucide-react';
+import { Menu, Brain, Download, Smartphone, Wifi } from 'lucide-react';
 import type { Conversation } from '../types';
 import { isInCapacitor, clearServerUrl, getSavedServerUrl } from '../services/api';
 
 interface HeaderProps {
   onMenuClick: () => void;
-  onAdminClick: () => void;
-  onSpeedTestClick?: () => void;
-  isAdmin: boolean;
   thinkingEnabled: boolean;
   onToggleThinking: () => void;
   conversation?: Conversation | null;
@@ -15,7 +12,7 @@ interface HeaderProps {
 }
 
 export function Header({
-  onMenuClick, onAdminClick, onSpeedTestClick, isAdmin, thinkingEnabled, onToggleThinking, conversation, hideThinking
+  onMenuClick, thinkingEnabled, onToggleThinking, conversation, hideThinking
 }: HeaderProps) {
   const [exportOpen, setExportOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
@@ -147,18 +144,6 @@ export function Header({
           </button>
         )}
 
-        {/* Speed Test button — admin only */}
-        {isAdmin && onSpeedTestClick && (
-          <button
-            onClick={onSpeedTestClick}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors bg-emerald-900/30 text-emerald-300 border border-emerald-700/50 hover:bg-emerald-800/40"
-            title="Run performance speed tests"
-          >
-            <span className="text-[11px]">⚡</span>
-            <span className="hidden sm:inline">Speed</span>
-          </button>
-        )}
-
         {/* Download client apps button */}
         <a
           href="/download"
@@ -184,20 +169,6 @@ export function Header({
           </button>
         )}
 
-        <button
-          onClick={onAdminClick}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-            isAdmin
-              ? 'bg-indigo-900/30 text-indigo-300 border border-indigo-700/50 hover:bg-indigo-800/40'
-              : 'bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700'
-          }`}
-          title={isAdmin ? 'Assign models to different tasks' : 'Enter admin password to configure models'}
-        >
-          {isAdmin ? <Sparkles size={14} /> : <Lock size={14} />}
-          <span className="hidden sm:inline">
-            {isAdmin ? 'Models' : 'Admin'}
-          </span>
-        </button>
       </div>
     </header>
   );
