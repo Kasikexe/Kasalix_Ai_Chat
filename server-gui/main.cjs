@@ -761,7 +761,7 @@ function createWindow() {
     autoHideMenuBar: true,
     icon: app.isPackaged
       ? path.join(process.resourcesPath, 'icon.png')
-      : path.join(__dirname, '..', 'icon.png'), // Root icon.png, updated after loading saved settings
+      : path.join(__dirname, '..', 'icon_server.png'), // Root icon_server.png, updated after loading saved settings
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

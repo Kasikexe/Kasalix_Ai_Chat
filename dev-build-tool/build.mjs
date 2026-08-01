@@ -15,7 +15,7 @@
 
 import { execSync } from 'child_process';
 import { createInterface } from 'readline';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, copyFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, copyFileSync, rmSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -47,6 +47,31 @@ function detectPm() {
   }
 }
 
+// ─── Windows Admin Elevation ────────────────────────────
+// electron-builder must extract the winCodeSign tool archive, which contains
+// symlinks. Creating symlinks requires SeCreateSymbolicLinkPrivilege — only an
+// elevated (Administrator) process has it by default. Without it the build
+// fails with "Cannot create symbolic link: A required privilege is not held".
+// If we're on Windows and NOT elevated, relaunch this script as Administrator.
+function ensureAdmin() {
+  if (process.platform !== 'win32') return;
+  try {
+    execSync('net session', { stdio: 'ignore', windowsHide: true });
+    return; // already elevated
+  } catch { /* not elevated */ }
+
+  const parts = [process.argv[1], ...process.argv.slice(2)].map((a) => `'${a.replace(/'/g, "''")}'`);
+  const psCmd = `Start-Process -FilePath '${process.execPath.replace(/'/g, "''")}' -ArgumentList ${parts.join(',')} -Verb RunAs`;
+  console.log('\n  🔐 Requesting Administrator privileges (needed for Electron build)...\n');
+  try {
+    execSync(`powershell -NoProfile -Command "${psCmd}"`, { stdio: 'inherit', shell: true, windowsHide: true });
+  } catch {
+    console.log('\n  ⚠️  Elevation was cancelled or failed. Re-run this tool as Administrator manually.');
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
 function run(cmd, opts = {}) {
   console.log(`\n  $ ${cmd}\n`);
   try {
@@ -67,12 +92,12 @@ function run(cmd, opts = {}) {
 // Runs before BOTH Electron and Android builds so the favicon embedded in
 // dist/ (and thus the EXE, the APK, and the web) always matches the icon.
 function syncWebFavicon() {
-  const faviconSrc = resolve(__dirname, '..', 'icon.png');
+  const faviconSrc = resolve(__dirname, '..', 'icon_client.png');
   if (!existsSync(faviconSrc)) return;
   const publicDir = join(ROOT_DIR, 'public');
   if (!existsSync(publicDir)) mkdirSync(publicDir, { recursive: true });
   copyFileSync(faviconSrc, join(publicDir, 'icon.png'));
-  console.log('  ✓ Web favicon synced from icon.png');
+  console.log('  ✓ Web favicon synced from icon_client.png');
 }
 
 // ─── Config Management ──────────────────────────────────
@@ -192,11 +217,11 @@ async function buildAndroid(config) {
 
   // Step 3: Generate Android icons from the source logo in assets/
   // capacitor-assets v3 reads assets/logo.png (no --path flag supported).
-  // The build tool copies the root icon.png there before running.
-  const rootIcon = resolve(__dirname, '..', 'icon.png');
+  // The build tool copies the root icon_client.png there before running.
+  const rootIcon = resolve(__dirname, '..', 'icon_client.png');
   const assetsDir = join(ROOT_DIR, 'assets');
   if (existsSync(rootIcon)) {
-    console.log('  [3/5] Generating Android icons from root icon.png...');
+    console.log('  [3/5] Generating Android icons from root icon_client.png...');
     try {
       // Keep assets/logo.png in sync with the current root icon
       if (!existsSync(assetsDir)) mkdirSync(assetsDir, { recursive: true });
@@ -205,12 +230,12 @@ async function buildAndroid(config) {
         cwd: ROOT_DIR,
         timeout: 60000,
       });
-      console.log('  [OK] Android icons regenerated from icon.png');
+      console.log('  [OK] Android icons regenerated from icon_client.png');
     } catch {
       console.log('  [WARN] Icon generation failed — using existing icons');
     }
   } else {
-    console.log('  [SKIP] No icon.png found at root — using existing icons');
+    console.log('  [SKIP] No icon_client.png found at root — using existing icons');
   }
 
   // Step 4: Sync to Capacitor
@@ -221,25 +246,42 @@ async function buildAndroid(config) {
   console.log('  [5/5] Building APK with Gradle (this may take a while)...');
   run('gradlew.bat assembleDebug', { cwd: androidDir, timeout: 600000 });
 
-  // Copy APK to root release/ directory
+  // Copy APK to root release/ directory with a descriptive filename
+  // e.g. "Kasalix AI Chat" v1.6.4 → "Kasalix-AI-Chat-Android-v1.6.4.apk"
   const apkDir = join(androidDir, 'app', 'build', 'outputs', 'apk', 'debug');
   const rootReleaseDir = resolve(__dirname, '..', 'release');
   if (!existsSync(rootReleaseDir)) mkdirSync(rootReleaseDir, { recursive: true });
+  const apkBaseName = `${config.productName} Android v${config.version}`
+    .replace(/[^\w\- .]+/g, '') // keep letters/digits/underscore/dash/dot only
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/-{2,}/g, '-'); // collapse any double dashes
+  let apkFileName = null;
   try {
+    // Remove stale APKs from previous builds so release/ only has the current one
+    for (const f of readdirSync(rootReleaseDir)) {
+      if (f.endsWith('.apk')) {
+        try { rmSync(join(rootReleaseDir, f), { force: true }); }
+        catch { /* ignore */ }
+      }
+    }
     const files = readdirSync(apkDir);
     for (const f of files) {
       if (f.endsWith('.apk')) {
-        copyFileSync(join(apkDir, f), join(rootReleaseDir, f));
-        console.log(`     Copied ${f} → release/`);
+        apkFileName = `${apkBaseName}.apk`;
+        copyFileSync(join(apkDir, f), join(rootReleaseDir, apkFileName));
+        console.log(`     Copied ${f} → release/${apkFileName}`);
+        break; // only ship the primary APK
       }
     }
+    if (!apkFileName) console.log('  ⚠️  No .apk found in Gradle output — check the build above.');
   } catch (err) {
     console.log(`  ⚠️  Could not copy APK to release/: ${err.message}`);
   }
 
   console.log(`\n  ✅ Android APK build complete!`);
   console.log(`     Output: ${rootReleaseDir}\\`);
-  console.log(`     File: app-debug.apk\n`);
+  console.log(`     File: ${apkFileName || 'app-debug.apk (copy failed)'}\n`);
 }
 
 // ─── Interactive Menu ──────────────────────────────────
@@ -350,6 +392,8 @@ async function interactiveMenu(config) {
 
 async function main() {
   const args = process.argv.slice(2);
+  const needsAdmin = args.some((a) => ['--electron', '--all', '--interactive'].includes(a));
+  if (needsAdmin) ensureAdmin();
   const config = ensureConfig();
 
   if (args.includes('--interactive')) {

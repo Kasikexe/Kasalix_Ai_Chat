@@ -50,7 +50,7 @@
     },
     "extraResources": [
       {
-        "from": "../icon.png",
+        "from": "../icon_client.png",
         "to": "icon.png"
       }
     ],
@@ -68,7 +68,7 @@
           ]
         }
       ],
-      "icon": "C:\\Users\\filik\\OneDrive\\Dokumenty\\Ai_Chat\\icon.png",
+      "icon": "C:\\Users\\filik\\OneDrive\\Dokumenty\\Ai_Chat\\icon_client.png",
       "sign": false,
       "signAndEditExecutable": true
     },

@@ -38,12 +38,12 @@
         "to": "certs"
       },
       {
-        "from": "../icon.png",
+        "from": "../icon_server.png",
         "to": "icon.png"
       }
     ],
     "win": {
-      "icon": "../icon.png",
+      "icon": "../icon_server.png",
       "target": [
         {
           "target": "portable",

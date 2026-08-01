@@ -432,7 +432,7 @@ app.whenReady().then(async () => {
     show: false,
     icon: app.isPackaged
       ? path.join(process.resourcesPath, 'icon.png')
-      : path.join(__dirname, '..', '..', 'icon.png'),
+      : path.join(__dirname, '..', '..', 'icon_client.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

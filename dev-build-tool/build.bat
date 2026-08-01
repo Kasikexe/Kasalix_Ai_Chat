@@ -2,6 +2,21 @@
 setlocal enabledelayedexpansion
 TITLE Kasalix AI Chat - Developer Build Tool
 
+:: ── Ensure Administrator privileges ─────────────────────
+:: electron-builder must extract the winCodeSign tool archive, which contains
+:: symlinks. Creating symlinks requires SeCreateSymbolicLinkPrivilege — only
+:: an elevated (Administrator) process has it by default. Without it the build
+:: fails with "Cannot create symbolic link: A required privilege is not held".
+net session >nul 2>&1
+if %errorlevel% neq 0 (
+    echo.
+    echo  [UAC] This build tool needs Administrator privileges.
+    echo        Relaunching elevated...
+    echo.
+    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    exit /b
+)
+
 :: ── Determine script directory (works even when run from other locations) ──
 set "SCRIPT_DIR=%~dp0"
 set "FRONTEND_DIR=%SCRIPT_DIR%..\frontend"
@@ -25,10 +40,20 @@ if not exist "%FRONTEND_DIR%\build-config.json" (
 )
 
 :: ── Load current version ────────────────────────────
-for /f "tokens=1,2 delims=," %%a in (`node -e "const c=JSON.parse(require('fs').readFileSync('%FRONTEND_DIR%\\build-config.json','utf-8'));console.log(c.version+','+c.productName);" 2^>nul`) do (
+:: Read build-config.json from the frontend dir. We pushd there and use a
+:: RELATIVE path so no backslashes ever reach the JS string (backslashes are
+:: escape characters in JS and mangled the old absolute path, e.g. \U, \f,
+:: \O). The result is written to a temp file and read back with for /f —
+:: reading a file is far more reliable than cmd's backtick command
+:: substitution, which chokes on the parens/quotes in an inline node command.
+pushd "%FRONTEND_DIR%" 2>nul
+node -e "const c=require('fs').readFileSync('build-config.json','utf-8');const j=JSON.parse(c);console.log(j.version+','+j.productName);" > "%TEMP%\aichat-ver.tmp" 2>nul
+popd 2>nul
+for /f "usebackq tokens=1,2 delims=," %%a in ("%TEMP%\aichat-ver.tmp") do (
     set "CURRENT_VER=%%a"
     set "APP_NAME=%%b"
 )
+del "%TEMP%\aichat-ver.tmp" 2>nul
 if not defined CURRENT_VER set "CURRENT_VER=1.0.0"
 if not defined APP_NAME set "APP_NAME=Kasalix AI Chat"
 
