@@ -27,7 +27,21 @@
       {
         "from": "../backend",
         "to": "backend",
-        "filter": ["**/*", "!node_modules/**", "!.git/**"]
+        "filter": [
+          "**/*",
+          "!.git/**",
+          "!node_modules/.cache/**",
+          "!node_modules/.bin/**",
+          "!node_modules/typescript/**",
+          "!node_modules/bun-types/**",
+          "!node_modules/@types/**",
+          "!node_modules/ffprobe-static/bin/darwin/**",
+          "!node_modules/ffprobe-static/bin/linux/**",
+          "!node_modules/ffprobe-static/bin/win32/ia32/**",
+          "!data/**",
+          "!generated_images/**",
+          "!.env"
+        ]
       },
       {
         "from": "../frontend/dist",

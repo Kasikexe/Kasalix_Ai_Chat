@@ -82,8 +82,10 @@ ShowUnInstDetails show
 Section "Server Files" SEC_MAIN
     SetOutPath "$INSTDIR"
 
-    ; Copy backend
-    File /r /x "node_modules" /x ".git" "..\backend\*.*"
+    ; Copy backend (runtime code + deps only — NEVER bundle the local data/ dir
+    ; or .env, otherwise every install ships the builder's accounts,
+    ; conversations, speed test results, and plaintext settings password)
+    File /r /x "node_modules" /x ".git" /x "data" /x "generated_images" /x ".env" "..\backend\*.*"
 
     ; Copy frontend dist
     SetOutPath "$INSTDIR\frontend\dist"

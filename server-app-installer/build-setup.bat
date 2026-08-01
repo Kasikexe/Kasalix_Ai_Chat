@@ -218,6 +218,9 @@ powershell -NoProfile -Command ^
     "if (Test-Path $staging) { Remove-Item $staging -Recurse -Force };" ^
     "New-Item -ItemType Directory -Path $staging -Force | Out-Null;" ^
     "Copy-Item -Path (Join-Path (Get-Location) '..\backend') -Destination (Join-Path $staging 'backend') -Recurse -Force;" ^
+    "Remove-Item -Path (Join-Path $staging 'backend\data') -Recurse -Force -ErrorAction SilentlyContinue;" ^
+    "Remove-Item -Path (Join-Path $staging 'backend\generated_images') -Recurse -Force -ErrorAction SilentlyContinue;" ^
+    "Remove-Item -Path (Join-Path $staging 'backend\.env') -Force -ErrorAction SilentlyContinue;" ^
     "Copy-Item -Path (Join-Path (Get-Location) '..\frontend\dist') -Destination (Join-Path $staging 'frontend\dist') -Recurse -Force;" ^
     "Copy-Item -Path (Join-Path (Get-Location) '..\certs\*') -Destination (Join-Path $staging 'certs') -Force;" ^
     "Copy-Item -Path (Join-Path (Get-Location) 'run-server.bat') -Destination $staging -Force;" ^

@@ -94,12 +94,27 @@ function answerInstall(yes) {
 function showInstallProgress(title, msg) {
   $('installProgressTitle').textContent = title;
   $('installProgressMsg').textContent = msg || '';
+  $('installProgressMsg').classList.remove('error');
   $('installProgressBar').style.width = '0%';
+  $('installProgressClose').style.display = 'none';
   $('installProgressOverlay').style.display = 'flex';
 }
 
 function hideInstallProgress() {
   $('installProgressOverlay').style.display = 'none';
+  $('installProgressClose').style.display = 'none';
+}
+
+// Show the progress overlay in an error state — keeps it visible with the
+// failure reason and a Close button (previously failures vanished instantly
+// with no feedback).
+function showInstallError(title, msg) {
+  $('installProgressTitle').textContent = title;
+  $('installProgressMsg').textContent = msg || 'Installation failed.';
+  $('installProgressMsg').classList.add('error');
+  $('installProgressBar').style.width = '0%';
+  $('installProgressClose').style.display = 'inline-flex';
+  $('installProgressOverlay').style.display = 'flex';
 }
 
 async function ensureBun() {
@@ -109,8 +124,9 @@ async function ensureBun() {
   if (!yes) return false;
   showInstallProgress('Installing Bun...', 'Downloading and installing the Bun runtime. This may take a minute.');
   const res = await API.installBun();
-  hideInstallProgress();
-  return !!res.installed;
+  if (res.installed) { hideInstallProgress(); return true; }
+  showInstallError('Bun install failed', res.error || 'Bun could not be installed. Please install it manually from https://bun.sh');
+  return false;
 }
 
 async function ensureOllama() {
@@ -118,7 +134,7 @@ async function ensureOllama() {
   if (check.available) return true;
   const yes = await promptInstall('ollama');
   if (!yes) return false;
-  showInstallProgress('Installing Ollama...', 'Downloading Ollama and installing it. This may take a few minutes.');
+  showInstallProgress('Installing Ollama...', 'Downloading Ollama (~1.5 GB) and installing it. This may take a few minutes depending on your connection.');
   const res = await API.installOllama();
   if (res.success) {
     // Wait for the Ollama service to come up (it auto-starts after install)
@@ -131,7 +147,7 @@ async function ensureOllama() {
     // Installed successfully even if the service hasn't come up yet
     return true;
   }
-  hideInstallProgress();
+  showInstallError('Ollama install failed', res.error || 'Ollama could not be installed. Please download it manually from https://ollama.com/download');
   return false;
 }
 
@@ -376,6 +392,7 @@ $('closeBtn').addEventListener('click', () => {
 $('installYesBtn').addEventListener('click', () => answerInstall(true));
 $('installNoBtn').addEventListener('click', () => answerInstall(false));
 $('installModalClose').addEventListener('click', () => answerInstall(false));
+$('installProgressClose').addEventListener('click', hideInstallProgress);
 
 // Install progress updates from main process
 API.onInstallProgress((data) => {

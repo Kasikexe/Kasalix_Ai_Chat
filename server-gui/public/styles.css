@@ -1086,6 +1086,21 @@ header button, header .status-badge { -webkit-app-region: no-drag; }
   transition: width 0.3s ease;
 }
 
+/* Install progress overlay: error state + close button */
+#installProgressClose {
+  flex: 0 0 auto;
+  margin: 18px auto 0;
+  padding: 9px 32px;
+  min-width: 140px;
+}
+
+#installProgressMsg.error {
+  color: var(--red);
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.08);
+  white-space: pre-wrap;
+}
+
 /* ═══ Speed Test Detail Modal ═══ */
 .modal-overlay {
   position: fixed;

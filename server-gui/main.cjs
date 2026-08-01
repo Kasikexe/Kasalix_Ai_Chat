@@ -255,6 +255,49 @@ async function startServer(httpMode) {
     }
   }
 
+  // Ensure backend dependencies exist. The portable exe ships with a bundled
+  // node_modules (see extraResources in package.json), but if it's missing
+  // (dev run, older build, or manual copy) install it on the fly so the
+  // server can always start instead of failing with "ENOENT resolving package".
+  if (!fs.existsSync(path.join(BACKEND_DIR, 'node_modules'))) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('install-progress', {
+        component: 'backend',
+        stage: 'install',
+        message: 'Installing backend dependencies (first run)...',
+      });
+    }
+    const bunCmd = resolveBunPath() || 'bun';
+    let installLog = '';
+    const depsOk = await new Promise((resolve) => {
+      const proc = spawn(bunCmd, ['install'], {
+        cwd: BACKEND_DIR,
+        windowsHide: true,
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      proc.stdout.on('data', (d) => { installLog += d.toString(); });
+      proc.stderr.on('data', (d) => { installLog += d.toString(); });
+      proc.on('error', () => resolve(false));
+      proc.on('close', (code) => resolve(code === 0));
+    });
+    if (!depsOk || !fs.existsSync(path.join(BACKEND_DIR, 'node_modules'))) {
+      const tail = installLog.split('\n').filter(Boolean).slice(-4).join('; ');
+      return {
+        success: false,
+        error: 'Backend dependencies could not be installed' +
+          (tail ? ': ' + tail : '. Check that Bun is installed correctly, then try again.'),
+      };
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('install-progress', {
+        component: 'backend',
+        stage: 'done',
+        message: 'Backend dependencies ready',
+      });
+    }
+  }
+
   const env = {
     ...process.env,
     PORT: String(port),
@@ -775,37 +818,83 @@ function setupIPC() {
     const https = require('https');
     const url = 'https://ollama.com/download/OllamaSetup.exe';
     const dest = path.join(app.getPath('temp'), 'OllamaSetup.exe');
+    const MAX_REDIRECTS = 10;
 
-    try {
-      // Download
-      await new Promise((resolve, reject) => {
-        const file = fs.createWriteStream(dest);
-        let received = 0;
-        const req = https.get(url, { headers: { 'User-Agent': 'Kasalix-Server/1.0' } }, (res) => {
-          if (res.statusCode !== 200) {
-            reject(new Error('Download failed (HTTP ' + res.statusCode + ')'));
-            res.resume();
+    // Download a URL, following HTTP redirects. The public download URL
+    // 307s to github.com/ollama/ollama, which then 302s to a CDN — and
+    // Node's https.get does NOT follow redirects on its own, which made
+    // the install fail instantly with "HTTP 307".
+    function download(urlToFetch, redirectsLeft) {
+      return new Promise((resolve, reject) => {
+        let redirected = false;
+        let req = null;
+        let stallTimer = null;
+
+        // A 1.5 GB file over a slow connection can stall mid-download.
+        // Abort if no data arrives for 60s instead of hanging forever.
+        const armStallTimer = () => {
+          clearTimeout(stallTimer);
+          stallTimer = setTimeout(() => {
+            if (req) req.destroy(new Error('Download stalled (no data for 60s)'));
+          }, 60000);
+        };
+
+        req = https.get(urlToFetch, { headers: { 'User-Agent': 'Kasalix-Server/1.0' } }, (res) => {
+          // Response received (or redirected) — reset the timer; data chunks re-arm it
+          armStallTimer();
+          // Redirect — follow it (up to MAX_REDIRECTS hops)
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            res.resume(); // drain the old response
+            clearTimeout(stallTimer);
+            if (redirectsLeft <= 0) {
+              reject(new Error('Too many redirects downloading Ollama'));
+              return;
+            }
+            redirected = true; // ignore late errors from the drained request
+            const next = new URL(res.headers.location, urlToFetch).toString();
+            download(next, redirectsLeft - 1).then(resolve, reject);
             return;
           }
+          if (res.statusCode !== 200) {
+            res.resume();
+            clearTimeout(stallTimer);
+            reject(new Error('Download failed (HTTP ' + res.statusCode + ')'));
+            return;
+          }
+          const file = fs.createWriteStream(dest);
+          let received = 0;
           const size = parseInt(res.headers['content-length'] || '0', 10) || 0;
           res.on('data', (chunk) => {
+            armStallTimer(); // any data = still alive
             received += chunk.length;
             if (mainWindow && !mainWindow.isDestroyed()) {
               const percent = size ? Math.round((received / size) * 100) : 0;
+              const mb = Math.round(received / 1048576);
+              const totalMb = size ? ' / ' + Math.round(size / 1048576) + ' MB' : '';
               mainWindow.webContents.send('install-progress', {
                 component: 'ollama',
                 stage: 'download',
-                message: 'Downloading Ollama... ' + percent + '%',
+                message: 'Downloading Ollama... ' + percent + '% (' + mb + ' MB' + totalMb + ')',
                 percent,
               });
             }
           });
           res.pipe(file);
-          file.on('finish', () => { file.close(); resolve(); });
-          file.on('error', reject);
+          file.on('finish', () => { clearTimeout(stallTimer); file.close(); resolve(); });
+          file.on('error', (err) => { clearTimeout(stallTimer); reject(err); });
         });
-        req.on('error', reject);
+        // Also arm the timer now so a hang during DNS/TCP/TLS connect (before
+        // any response callback fires) gets aborted too.
+        armStallTimer();
+        req.on('error', (err) => {
+          clearTimeout(stallTimer);
+          if (!redirected) reject(err);
+        });
       });
+    }
+
+    try {
+      await download(url, MAX_REDIRECTS);
 
       // Install silently (Inno Setup flags; per-user install, no admin needed)
       if (mainWindow && !mainWindow.isDestroyed()) {
