@@ -20,6 +20,11 @@
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 !define PRODUCT_UNINST_ROOT_KEY "HKLM"
 
+; Application display name — defines $(^Name) so the uninstall entry,
+; MUI pages, and window titles use the real product name instead of the
+; literal string "Name".
+Name "${PRODUCT_NAME}"
+
 ; Set compression — zlib (commercially friendly license)
 SetCompressor zlib
 
@@ -106,7 +111,8 @@ Section "Server Files" SEC_MAIN
     WriteUninstaller "$INSTDIR\uninstall.exe"
 
     ; Registry: add to Add/Remove Programs
-    WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayName" "$(^Name)"
+    WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"
+    WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "UninstallDisplayIcon" "$INSTDIR\Kasalix-AI-Chat-Server.exe"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "UninstallString" "$INSTDIR\uninstall.exe"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayIcon" "$INSTDIR\Kasalix-AI-Chat-Server.exe"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
@@ -114,6 +120,9 @@ Section "Server Files" SEC_MAIN
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "URLInfoAbout" "${PRODUCT_WEB_SITE}"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "NoModify" "1"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "NoRepair" "1"
+
+    ; Clean up stale uninstall entries from older installs (old product name)
+    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AI Chat Server"
 
     ; Create shortcuts — main shortcut points to the GUI app
     CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
@@ -143,6 +152,8 @@ Section "Uninstall"
     ; Remove registry keys
     DeleteRegKey ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}"
     DeleteRegKey HKLM "${PRODUCT_DIR_REGKEY}"
+    ; Clean up stale uninstall entries from older installs (old product name)
+    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AI Chat Server"
 
     ; Remove installed files
     RmDir /r "$INSTDIR\backend"

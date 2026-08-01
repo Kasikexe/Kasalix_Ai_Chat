@@ -60,6 +60,81 @@ const startupLog = $('startupLog');
 const ollamaBadge = $('ollamaStatus');
 const serverBadge = $('serverStatus');
 
+// ─── Missing Component Install (Bun / Ollama) ───────────────────
+let installResolve = null;
+
+function promptInstall(component) {
+  // If a prompt is already showing (e.g. both the startup check and the
+  // bun-not-found event fire), chain onto it so no caller hangs waiting
+  // for a resolver that never gets called.
+  if (installResolve) {
+    return new Promise((resolve) => {
+      const prevResolve = installResolve;
+      installResolve = (answer) => { prevResolve(answer); resolve(answer); };
+    });
+  }
+  return new Promise((resolve) => {
+    installResolve = resolve;
+    if (component === 'bun') {
+      $('installModalTitle').textContent = 'Bun is missing';
+      $('installModalMsg').textContent = 'The Bun runtime is required to run the AI server. I can install it for you. May I?';
+    } else {
+      $('installModalTitle').textContent = 'Ollama is missing';
+      $('installModalMsg').textContent = 'Ollama is required for AI model responses. I can install it for you. May I?';
+    }
+    $('installModal').style.display = 'flex';
+  });
+}
+
+function answerInstall(yes) {
+  $('installModal').style.display = 'none';
+  if (installResolve) { installResolve(yes); installResolve = null; }
+}
+
+function showInstallProgress(title, msg) {
+  $('installProgressTitle').textContent = title;
+  $('installProgressMsg').textContent = msg || '';
+  $('installProgressBar').style.width = '0%';
+  $('installProgressOverlay').style.display = 'flex';
+}
+
+function hideInstallProgress() {
+  $('installProgressOverlay').style.display = 'none';
+}
+
+async function ensureBun() {
+  const check = await API.checkBun();
+  if (check.installed) return true;
+  const yes = await promptInstall('bun');
+  if (!yes) return false;
+  showInstallProgress('Installing Bun...', 'Downloading and installing the Bun runtime. This may take a minute.');
+  const res = await API.installBun();
+  hideInstallProgress();
+  return !!res.installed;
+}
+
+async function ensureOllama() {
+  const check = await API.checkOllama();
+  if (check.available) return true;
+  const yes = await promptInstall('ollama');
+  if (!yes) return false;
+  showInstallProgress('Installing Ollama...', 'Downloading Ollama and installing it. This may take a few minutes.');
+  const res = await API.installOllama();
+  if (res.success) {
+    // Wait for the Ollama service to come up (it auto-starts after install)
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const again = await API.checkOllama();
+      if (again.available) { hideInstallProgress(); return true; }
+    }
+    hideInstallProgress();
+    // Installed successfully even if the service hasn't come up yet
+    return true;
+  }
+  hideInstallProgress();
+  return false;
+}
+
 // ─── Startup Sequence ───────────────────────────────────────────
 async function runStartup() {
   const mark = (id, status) => {
@@ -80,33 +155,39 @@ async function runStartup() {
     startupLog.scrollTop = startupLog.scrollHeight;
   };
 
-  // Step 1: Check Bun
+  // Step 1: Check Bun (auto-install if missing, after asking)
   mark('check-bun', 'active');
   log('Checking Bun runtime...');
-  // Bun check is passive - if it's not available, we'll show error later
+  const bunOk = await ensureBun();
+  if (bunOk) {
+    mark('check-bun', 'done');
+    log('Bun found ✓');
+  } else {
+    mark('check-bun', 'error');
+    log('Bun not found — server cannot start without it. Install from https://bun.sh');
+  }
 
-  // Step 2: Check Ollama
-  mark('check-bun', 'done');
+  // Step 2: Check Ollama (auto-install if missing, after asking)
   mark('check-deps', 'active');
   log('Checking if Ollama is available...');
-  const ollama = await API.checkOllama();
-  if (ollama.available) {
+  const ollamaOk = await ensureOllama();
+  if (ollamaOk) {
     mark('check-deps', 'done');
     updateOllamaBadge(true);
     log('Ollama is running ✓');
   } else {
-    mark('check-deps', 'done');
-    log('Ollama not found — AI features will be unavailable');
+    mark('check-deps', 'error');
     updateOllamaBadge(false);
+    log('Ollama not found — AI features will be unavailable');
   }
 
-  // Step 3: Install deps if needed
+  // Step 3: Backend dependencies
   mark('check-ollama', 'active');
   log('Backend dependencies ready ✓');
   mark('check-ollama', 'done');
 
-  // Enable start button
-  startBtn.disabled = false;
+  // Enable start button (only if Bun is available)
+  startBtn.disabled = !bunOk;
 
   // Step 4: Auto-start server if setting is on
   mark('check-server', 'active');
@@ -289,6 +370,21 @@ $('minimizeBtn').addEventListener('click', () => {
 
 $('closeBtn').addEventListener('click', () => {
   window.close();
+});
+
+// ─── Install Modal Buttons ──────────────────────────────────────
+$('installYesBtn').addEventListener('click', () => answerInstall(true));
+$('installNoBtn').addEventListener('click', () => answerInstall(false));
+$('installModalClose').addEventListener('click', () => answerInstall(false));
+
+// Install progress updates from main process
+API.onInstallProgress((data) => {
+  const bar = $('installProgressBar');
+  const msg = $('installProgressMsg');
+  if (msg) msg.textContent = data.message || '';
+  if (bar && typeof data.percent === 'number') {
+    bar.style.width = Math.min(100, data.percent) + '%';
+  }
 });
 
 // ─── Download Manager ──────────────────────────────────────────
@@ -955,16 +1051,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     $('versionDisplay').textContent = 'v' + info.version;
   });
 
-  // Handle Bun not found
-  API.onBunNotFound(() => {
+  // Handle Bun not found (also offer to install it)
+  API.onBunNotFound(async () => {
     const $checkBun = $('check-bun');
     if ($checkBun) {
       $checkBun.classList.remove('active');
       $checkBun.classList.add('error');
     }
-    startupLog.textContent += '❌ Bun runtime not found! Please install Bun from https://bun.sh\n';
+    const yes = await promptInstall('bun');
+    if (yes) {
+      startupLog.textContent += 'Installing Bun...\n';
+      showInstallProgress('Installing Bun...', 'Downloading and installing the Bun runtime. This may take a minute.');
+      const res = await API.installBun();
+      hideInstallProgress();
+      if (res.installed) {
+        startupLog.textContent += '✓ Bun installed!\n';
+        if ($checkBun) { $checkBun.classList.remove('error'); $checkBun.classList.add('done'); }
+        startBtn.disabled = false;
+      } else {
+        startupLog.textContent += '❌ Bun install failed: ' + (res.error || 'unknown error') + '\n';
+      }
+    } else {
+      startupLog.textContent += '❌ Bun runtime not found! Please install Bun from https://bun.sh\n';
+      startBtn.disabled = true;
+    }
     startupOverlay.classList.remove('hidden');
-    startBtn.disabled = true;
   });
 
   // Load saved settings (autoStart, httpMode) — AWAIT so startup respects them

@@ -15,6 +15,16 @@ contextBridge.exposeInMainWorld('serverAPI', {
   getOllamaModels: () => ipcRenderer.invoke('get-ollama-models'),
   checkOllama: () => ipcRenderer.invoke('check-ollama'),
 
+  // ─── Bun / Ollama Auto-Install ──────────────
+  checkBun: () => ipcRenderer.invoke('check-bun'),
+  installBun: () => ipcRenderer.invoke('install-bun'),
+  installOllama: () => ipcRenderer.invoke('install-ollama'),
+  onInstallProgress: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('install-progress', handler);
+    return () => ipcRenderer.removeListener('install-progress', handler);
+  },
+
   // ─── Downloads ─────────────────────────────
   openDownload: (url) => ipcRenderer.invoke('open-download', url),
 

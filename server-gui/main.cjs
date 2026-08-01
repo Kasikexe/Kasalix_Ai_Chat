@@ -188,6 +188,24 @@ async function getRunningModels() {
   } catch { return []; }
 }
 
+// ─── Bun Runtime Detection ────────────────────────────────────────
+// Bun may be installed but not on the current process PATH (fresh install).
+// We check PATH first, then fall back to the well-known install locations.
+function resolveBunPath() {
+  try {
+    execSync('where bun', { stdio: 'ignore', windowsHide: true });
+    return 'bun';
+  } catch { /* not on PATH */ }
+  const candidates = [
+    path.join(os.homedir(), '.bun', 'bin', 'bun.exe'),
+    path.join(process.env.LOCALAPPDATA || '', 'bun', 'bun.exe'),
+  ];
+  for (const c of candidates) {
+    if (c && fs.existsSync(c)) return c;
+  }
+  return null;
+}
+
 // ─── Server Management ───────────────────────────────────────────
 async function startServer(httpMode) {
   if (serverProcess) {
@@ -252,7 +270,8 @@ async function startServer(httpMode) {
 
   return new Promise((resolve) => {
     try {
-      serverProcess = spawn('bun', ['run', 'src/index.ts'], {
+      const bunCmd = resolveBunPath() || 'bun';
+      serverProcess = spawn(bunCmd, ['run', 'src/index.ts'], {
         cwd: BACKEND_DIR,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -715,6 +734,98 @@ function setupIPC() {
     } catch { return { error: 'Failed to save settings' }; }
   });
 
+  // ─── Bun / Ollama Install ──────────────────────────
+  /** Check whether the Bun runtime is installed */
+  ipcMain.handle('check-bun', async () => {
+    return { installed: resolveBunPath() !== null };
+  });
+
+  /** Install Bun silently using the official installer script */
+  ipcMain.handle('install-bun', async () => {
+    return new Promise((resolve) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('install-progress', { component: 'bun', stage: 'download', message: 'Downloading Bun installer...' });
+      }
+      // Official Bun Windows installer: irm bun.sh/install.ps1 | iex
+      // Use spawn with an arg array so the pipe is passed literally to
+      // PowerShell (no fragile cmd.exe nested-quote handling).
+      const ps = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', 'irm bun.sh/install.ps1 | iex'], {
+        windowsHide: true,
+        shell: false,
+        timeout: 600000,
+      });
+      let stderr = '';
+      ps.stderr.on('data', (d) => { stderr += d.toString(); });
+      ps.on('error', (err) => {
+        resolve({ success: false, installed: false, error: err.message });
+      });
+      ps.on('close', () => {
+        const installed = resolveBunPath() !== null;
+        resolve({
+          success: installed,
+          installed,
+          error: installed ? undefined : (stderr.trim() || 'Bun install finished but bun.exe was not found.'),
+        });
+      });
+    });
+  });
+
+  /** Download and silently install Ollama using its official Windows installer */
+  ipcMain.handle('install-ollama', async () => {
+    const https = require('https');
+    const url = 'https://ollama.com/download/OllamaSetup.exe';
+    const dest = path.join(app.getPath('temp'), 'OllamaSetup.exe');
+
+    try {
+      // Download
+      await new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(dest);
+        let received = 0;
+        const req = https.get(url, { headers: { 'User-Agent': 'Kasalix-Server/1.0' } }, (res) => {
+          if (res.statusCode !== 200) {
+            reject(new Error('Download failed (HTTP ' + res.statusCode + ')'));
+            res.resume();
+            return;
+          }
+          const size = parseInt(res.headers['content-length'] || '0', 10) || 0;
+          res.on('data', (chunk) => {
+            received += chunk.length;
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              const percent = size ? Math.round((received / size) * 100) : 0;
+              mainWindow.webContents.send('install-progress', {
+                component: 'ollama',
+                stage: 'download',
+                message: 'Downloading Ollama... ' + percent + '%',
+                percent,
+              });
+            }
+          });
+          res.pipe(file);
+          file.on('finish', () => { file.close(); resolve(); });
+          file.on('error', reject);
+        });
+        req.on('error', reject);
+      });
+
+      // Install silently (Inno Setup flags; per-user install, no admin needed)
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('install-progress', { component: 'ollama', stage: 'install', message: 'Installing Ollama...' });
+      }
+      await new Promise((resolve, reject) => {
+        exec(`"${dest}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`, { timeout: 600000, windowsHide: true }, (err) => {
+          if (err) reject(err); else resolve();
+        });
+      });
+
+      // Cleanup the installer file
+      try { fs.unlinkSync(dest); } catch {}
+      return { success: true, installed: true };
+    } catch (err) {
+      try { fs.unlinkSync(dest); } catch {}
+      return { success: false, error: err.message };
+    }
+  });
+
   // ─── Speed Test ─────────────────────────────────────
   /** Run the full speed test suite (admin only) — can take several minutes */
   ipcMain.handle('speedtest-run', async () => {
@@ -809,11 +920,9 @@ function createWindow() {
       // Check if Bun is available (first time only)
       if (!global._bunChecked) {
         global._bunChecked = true;
-        exec('where bun', { windowsHide: true }, (err) => {
-          if (err && mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('bun-not-found');
-          }
-        });
+        if (!resolveBunPath() && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('bun-not-found');
+        }
       }
 
       mainWindow.webContents.send('dashboard-update', { stats, ips, serverStatus, models });

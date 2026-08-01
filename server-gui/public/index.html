@@ -312,6 +312,33 @@
     </div>
   </div>
 
+  <!-- ═══ Missing Component Install Modal ═══ -->
+  <div class="modal-overlay" id="installModal" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3 id="installModalTitle">Missing component</h3>
+        <button class="btn-icon" id="installModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="installModalMsg"></p>
+        <div class="install-actions">
+          <button class="btn btn-primary" id="installYesBtn">Yes</button>
+          <button class="btn btn-ghost" id="installNoBtn">No</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Install Progress Overlay ═══ -->
+  <div class="overlay" id="installProgressOverlay" style="display:none">
+    <div class="overlay-content">
+      <div class="overlay-icon" id="installProgressIcon">⬇️</div>
+      <h2 id="installProgressTitle">Installing...</h2>
+      <div class="overlay-log" id="installProgressMsg"></div>
+      <div class="progress-track"><div class="progress-fill" id="installProgressBar" style="width:0%"></div></div>
+    </div>
+  </div>
+
   <!-- ═══ Start-up Checklist (shown on launch) ═══ -->
   <div class="overlay" id="startupOverlay">
     <div class="overlay-content">
