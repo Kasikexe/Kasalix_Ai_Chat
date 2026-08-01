@@ -1,7 +1,8 @@
 import { promises as fs } from 'fs';
 import path from 'path';
+import { getDataDir } from '../utils/helpers';
 
-const DATA_DIR = path.join(process.cwd(), 'data', 'planned');
+const DATA_DIR = path.join(getDataDir(), 'planned');
 const FILE_PATH = path.join(DATA_DIR, 'planned.json');
 
 export interface PlannedFeature {

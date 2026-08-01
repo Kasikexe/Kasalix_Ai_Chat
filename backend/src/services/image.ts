@@ -1,9 +1,10 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { getGeneratedImagesDir } from '../utils/helpers';
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
-const GENERATED_DIR = path.join(process.cwd(), 'generated_images');
+const GENERATED_DIR = getGeneratedImagesDir();
 
 // Models whose names suggest they can generate images
 const IMAGE_MODEL_KEYWORDS = [

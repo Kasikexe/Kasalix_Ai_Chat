@@ -3,6 +3,7 @@ import path from 'path';
 import zlib from 'zlib';
 import { chat } from './ollama';
 import { getModelAssignment } from './model-assignments';
+import { getDataDir } from '../utils/helpers';
 import type { Message } from '../types';
 
 // ─── Model Assignment Keys ──────────────────────────────────
@@ -36,7 +37,7 @@ const ASSIGNMENT_ICONS: Record<ModelAssignmentKey, string> = {
 // ─── Test Image Generation ──────────────────────────────────
 // Generate a small PNG test image of a fox for vision model testing.
 
-const DATA_DIR = path.join(process.cwd(), 'data', 'speedtest');
+const DATA_DIR = path.join(getDataDir(), 'speedtest');
 const TEST_IMAGE_PATH = path.join(DATA_DIR, 'test_fox.png');
 
 /**

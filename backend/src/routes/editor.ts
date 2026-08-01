@@ -4,6 +4,7 @@ import { execSync, spawn } from 'child_process';
 import path from 'path';
 import { streamChat } from '../services/ollama';
 import { getModelAssignment } from '../services/model-assignments';
+import { getDataDir } from '../utils/helpers';
 import type { Message } from '../types';
 
 // @ts-ignore – ffmpeg-static and ffprobe-static have no type definitions
@@ -17,7 +18,7 @@ const FFMPEG_PATH = ffmpegPath;
 const editor = new Hono();
 
 // Video upload directory
-const UPLOAD_DIR = path.join(process.cwd(), 'data', 'uploads');
+const UPLOAD_DIR = path.join(getDataDir(), 'uploads');
 
 async function ensureUploadDir(): Promise<void> {
   await fs.mkdir(UPLOAD_DIR, { recursive: true });

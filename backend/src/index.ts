@@ -16,7 +16,7 @@ import memoryRoutes from './routes/memory';
 import changelogRoutes from './routes/changelog';
 import plannedRoutes from './routes/planned';
 import speedtestRoutes from './routes/speedtest';
-import { errorHandler, generateId } from './utils/helpers';
+import { errorHandler, generateId, getGeneratedImagesDir } from './utils/helpers';
 import { registerAllTools } from './services/tools/register';
 import { getAllTools, executeTool } from './services/tools/index';
 import { exec } from 'child_process';
@@ -246,7 +246,7 @@ app.route('/api/planned', plannedRoutes);
 app.route('/api/speedtest', speedtestRoutes);
 
 // Serve generated images
-const GENERATED_DIR = path.join(process.cwd(), 'generated_images');
+const GENERATED_DIR = getGeneratedImagesDir();
 
 async function streamGeneratedImage(filename: string, c: any, forceDownload?: boolean) {
   // Prevent path traversal

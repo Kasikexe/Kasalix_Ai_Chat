@@ -18,11 +18,12 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { logger } from './logger';
+import { getDataDir } from '../utils/helpers';
 
 // ─── Configuration ───────────────────────────────────────
-const USERS_FILE = path.join(process.cwd(), 'data', 'users.json');
-const SESSIONS_FILE = path.join(process.cwd(), 'data', 'sessions.json');
-const DATA_DIR = path.dirname(USERS_FILE);
+const DATA_DIR = getDataDir();
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS) || 86_400_000; // 24h default
 const REMEMBER_ME_TTL_MS = Number(process.env.REMEMBER_ME_TTL_MS) || 2_592_000_000; // 30 days
 const MAX_LOGIN_ATTEMPTS = Number(process.env.MAX_LOGIN_ATTEMPTS) || 5;

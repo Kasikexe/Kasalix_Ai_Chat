@@ -1,7 +1,8 @@
 import { promises as fs } from 'fs';
 import path from 'path';
+import { getDataDir } from '../utils/helpers';
 
-const DATA_DIR = path.join(process.cwd(), 'data', 'changelog');
+const DATA_DIR = path.join(getDataDir(), 'changelog');
 
 export interface ChangelogEntry {
   version: string;

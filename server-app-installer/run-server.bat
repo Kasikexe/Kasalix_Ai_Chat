@@ -19,8 +19,14 @@ echo.
 ::     └── stop-server.bat
 set "INSTALL_DIR=%~dp0"
 set "BACKEND_DIR=%INSTALL_DIR%backend"
+:: The installer copies backend files to the install ROOT (not a backend\
+:: subfolder), so fall back to the root when the subfolder doesn't exist.
+if not exist "%BACKEND_DIR%\package.json" set "BACKEND_DIR=%INSTALL_DIR%"
 set "FRONTEND_DIR=%INSTALL_DIR%frontend"
 set "CERT_DIR=%INSTALL_DIR%certs"
+:: Runtime data lives in a stable per-install folder so it survives updates.
+set "DATA_DIR=%INSTALL_DIR%data"
+set "GENERATED_IMAGES_DIR=%INSTALL_DIR%generated_images"
 
 :: ── Check if Bun is available ───────────────────────
 where bun >nul 2>nul

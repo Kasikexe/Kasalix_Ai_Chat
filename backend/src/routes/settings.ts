@@ -2,12 +2,13 @@ import { Hono } from 'hono';
 import { promises as fs } from 'fs';
 import path from 'path';
 import type { Variables } from '../types';
+import { getDataDir } from '../utils/helpers';
 
-const SETTINGS_FILE = path.join(process.cwd(), 'data', 'settings.json');
-const SETTINGS_DIR = path.dirname(SETTINGS_FILE);
+const SETTINGS_DIR = getDataDir();
+const SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json');
 
 // Load settings password — first from persisted file, then env var, then default
-const PW_FILE = path.join(process.cwd(), 'data', 'settings_password.txt');
+const PW_FILE = path.join(SETTINGS_DIR, 'settings_password.txt');
 let SETTINGS_PASSWORD = process.env.SETTINGS_PASSWORD || 'letmein';
 
 // Reload the password from the persisted file on every check so that a
@@ -144,7 +145,7 @@ settings.post('/password', async (c) => {
     SETTINGS_PASSWORD = newPassword;
 
     // Persist to file so it survives restarts
-    const pwDir = path.join(process.cwd(), 'data');
+    const pwDir = getDataDir();
     await fs.mkdir(pwDir, { recursive: true });
     await fs.writeFile(path.join(pwDir, 'settings_password.txt'), newPassword, 'utf-8');
 
@@ -160,7 +161,7 @@ settings.get('/password', async (c) => {
     return c.json({ error: 'Not authenticated' }, 401);
   }
   try {
-    const pwFile = path.join(process.cwd(), 'data', 'settings_password.txt');
+    const pwFile = path.join(getDataDir(), 'settings_password.txt');
     let isCustom = false;
     try {
       await fs.access(pwFile);

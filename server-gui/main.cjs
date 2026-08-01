@@ -14,6 +14,25 @@ const RESOURCES_DIR = app.isPackaged
 const BACKEND_DIR = path.join(RESOURCES_DIR, 'backend');
 const CERTS_DIR = path.join(RESOURCES_DIR, 'certs');
 const RELEASE_DIR = path.join(RESOURCES_DIR, 'release');
+
+// ─── Stable data location ────────────────────────────────────────
+// The backend writes its runtime data (accounts, conversations, speed tests,
+// memory, uploads, settings) to process.cwd()/data. For a portable exe that
+// cwd is the temp extraction dir (resourcesPath), which gets WIPED — so users
+// would lose data on every update. Instead we point DATA_DIR at a stable
+// per-install folder next to the exe, which survives updates (NSIS File /r
+// never deletes it) and matches run-server.bat.
+function getAppDataRoot() {
+  // Portable exe: env var set by electron-builder pointing at the exe's folder
+  if (process.env.PORTABLE_EXECUTABLE_DIR) return process.env.PORTABLE_EXECUTABLE_DIR;
+  // Installed (non-portable) build
+  if (app.isPackaged) return path.dirname(app.getPath('exe'));
+  // Dev: project root (same place the repo's backend/data lives)
+  return path.join(__dirname, '..', '..');
+}
+const APP_DATA_ROOT = getAppDataRoot();
+const DATA_DIR = path.join(APP_DATA_ROOT, 'data');
+const GENERATED_IMAGES_DIR = path.join(APP_DATA_ROOT, 'generated_images');
 const GITHUB_API = 'https://api.github.com/repos/Kasikexe/Kasalix/releases/latest';
 
 let mainWindow = null;
@@ -303,6 +322,9 @@ async function startServer(httpMode) {
     PORT: String(port),
     HTTPS: useHttps ? 'true' : 'false',
     NODE_ENV: 'production',
+    // Stable data locations — see the DATA_DIR note above
+    DATA_DIR,
+    GENERATED_IMAGES_DIR,
   };
 
   // Add SSL cert paths if using HTTPS
@@ -731,7 +753,7 @@ function setupIPC() {
   /** Reset the settings password back to the default (letmein) */
   ipcMain.handle('reset-settings-password', async () => {
     try {
-      const pwDir = path.join(BACKEND_DIR, 'data');
+      const pwDir = DATA_DIR;
       fs.mkdirSync(pwDir, { recursive: true });
       fs.writeFileSync(path.join(pwDir, 'settings_password.txt'), 'letmein', 'utf-8');
       return { success: true, message: 'Password reset to: letmein' };

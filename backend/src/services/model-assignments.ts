@@ -1,7 +1,8 @@
 import { promises as fs } from 'fs';
 import path from 'path';
+import { getDataDir } from '../utils/helpers';
 
-const SETTINGS_FILE = path.join(process.cwd(), 'data', 'settings.json');
+const SETTINGS_FILE = path.join(getDataDir(), 'settings.json');
 
 /**
  * All assignable model roles in the app.

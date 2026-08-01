@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import type { Conversation, ConversationMode, Message } from '../types';
-import { generateId, truncate } from '../utils/helpers';
+import { generateId, truncate, getDataDir } from '../utils/helpers';
 
 function migrate(conv: any): Conversation {
   return {
@@ -11,7 +11,7 @@ function migrate(conv: any): Conversation {
   };
 }
 
-const STORAGE_DIR = path.join(process.cwd(), 'data');
+const STORAGE_DIR = getDataDir();
 const STORAGE_FILE = path.join(STORAGE_DIR, 'conversations.json');
 
 let conversations: Map<string, Conversation> = new Map();

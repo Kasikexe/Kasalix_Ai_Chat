@@ -1,8 +1,9 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import type { MemoryData } from '../types';
+import { getDataDir } from '../utils/helpers';
 
-const MEMORY_DIR = path.join(process.cwd(), 'data', 'memory');
+const MEMORY_DIR = path.join(getDataDir(), 'memory');
 
 const DEFAULT_MEMORY: MemoryData = {
   enabled: false,
