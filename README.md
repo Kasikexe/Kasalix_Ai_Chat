@@ -1,6 +1,22 @@
+# Kasalix AI Chat
+
+Kasalix is an open-source AI platform for running and using
+local AI models through Ollama.
+
+## Original Project
+
+Kasalix is an original project created and maintained by
+Filip Kasman.
+
+This project is licensed under the Apache License 2.0.
+
+See [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
+
+
+
 # AI Chat Client for Ollama
 
-A modern, ChatGPT-like chat interface powered by local Ollama models.
+A modern chat interface powered by local Ollama models.
 
 ## Features
 

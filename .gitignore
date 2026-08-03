@@ -36,6 +36,9 @@ server-gui/release/
 .vscode/
 .idea/
 
+#certification
+/certs
+
 # Misc
 .http-mode
 bun.lockb

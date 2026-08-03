@@ -90,5 +90,6 @@
     }
   },
   "description": "Kasalix AI Chat Client",
-  "author": "Kasik"
+  "author": "Filip Kasman",
+  "license": "Apache-2.0"
 }
