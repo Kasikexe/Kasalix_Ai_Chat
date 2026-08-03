@@ -21,6 +21,7 @@ import { registerAllTools } from './services/tools/register';
 import { getAllTools, executeTool } from './services/tools/index';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { createRequire } from 'module';
 import { logger as appLogger } from './services/logger';
 import {
   registerUser,
@@ -640,26 +641,56 @@ const port = Number(process.env.PORT) || 3001;
 const useHttps = process.argv.includes('--http') ? false : process.env.HTTPS !== 'false';
 
 appLogger.info('[server] Starting...');
-appLogger.info(`[server] HTTPS: ${useHttps ? 'enabled' : 'disabled'}`);
 appLogger.info(`[server] Port: ${port}`);
 appLogger.info(`[server] Session TTL: ${Number(process.env.SESSION_TTL_MS) || 86400000}ms`);
+
+// ─── HTTPS startup with automatic self-signed cert generation ────────
+// Certs live in certs/localhost.{crt,key}. If they are missing (or expired)
+// they are generated on the fly using only Node's built-in crypto — no
+// openssl or manual setup required. Only if generation itself fails do we
+// fall back to plain HTTP instead of crashing.
+let httpsServerOptions: { cert: string; key: string } | null = null;
 
 if (useHttps) {
   const certPath = process.env.SSL_CERT || '../certs/localhost.crt';
   const keyPath = process.env.SSL_KEY || '../certs/localhost.key';
 
+  try {
+    const { ensureCerts } = createRequire(import.meta.url)(
+      path.join(process.cwd(), '..', 'certs', 'generate-certs.cjs')
+    );
+    const created = ensureCerts(certPath, keyPath, {
+      onError: (err: Error) => appLogger.warn(`[server] Certificate generation failed: ${err.message}`),
+    });
+    if (created) {
+      appLogger.info(`[server] Generated self-signed certificate (${path.resolve(certPath)})`);
+    }
+  } catch (err) {
+    appLogger.warn(`[server] Certificate auto-generation unavailable: ${(err as Error).message}`);
+  }
+
+  try {
+    httpsServerOptions = {
+      cert: readFileSync(certPath).toString(),
+      key: readFileSync(keyPath).toString(),
+    };
+  } catch (err) {
+    appLogger.warn(`[server] SSL certificates not found and could not be generated — falling back to HTTP: ${(err as Error).message}`);
+  }
+}
+
+if (httpsServerOptions) {
+  appLogger.info('[server] HTTPS: enabled');
   serve({
     fetch: app.fetch,
     port,
     createServer,
-    serverOptions: {
-      cert: readFileSync(certPath).toString(),
-      key: readFileSync(keyPath).toString(),
-    },
+    serverOptions: httpsServerOptions,
   }, (info) => {
     appLogger.info(`[server] Backend running on https://0.0.0.0:${info.port}`);
   });
 } else {
+  appLogger.info('[server] HTTPS: disabled — serving plain HTTP');
   serve({ fetch: app.fetch, port }, (info) => {
     appLogger.info(`[server] Backend running on http://0.0.0.0:${info.port}`);
   });

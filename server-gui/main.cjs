@@ -232,7 +232,28 @@ async function startServer(httpMode) {
   }
 
   const port = process.env.PORT || 3001;
-  const useHttps = !httpMode && fs.existsSync(path.join(CERTS_DIR, 'localhost.crt'));
+  const certFile = path.join(CERTS_DIR, 'localhost.crt');
+  const keyFile = path.join(CERTS_DIR, 'localhost.key');
+  let useHttps = !httpMode && fs.existsSync(certFile);
+
+  // Auto-generate missing/expired SSL certificates (zero-dependency, pure
+  // Node crypto — no openssl needed) so HTTPS stays the default even when
+  // the certs folder was deleted or reset.
+  if (!httpMode && !useHttps) {
+    try {
+      const certGen = require(path.join(CERTS_DIR, 'generate-certs.cjs'));
+      const created = certGen.ensureCerts(certFile, keyFile);
+      useHttps = fs.existsSync(certFile) && fs.existsSync(keyFile);
+      if (useHttps && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('server-log', created
+          ? '[server] SSL certificates missing — generated automatically\n'
+          : '[server] SSL certificates ready\n');
+      }
+    } catch (_) {
+      // Generation unavailable (e.g. older packaged build without the
+      // generator) — keep the existing HTTP fallback below.
+    }
+  }
 
   // Check if port is already in use (e.g., zombie bun from a previous stop)
   const portInUse = await isPortInUse(parseInt(port));

@@ -2,6 +2,17 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { createRequire } from 'module';
+var require = createRequire(import.meta.url);
+// Auto-generate missing/expired self-signed certs (certs/localhost.crt +
+// certs/localhost.key) so the HTTPS dev server starts even after a fresh
+// clone or a deleted certs folder. Zero-dependency — no openssl needed.
+var certFile = join(process.cwd(), '..', 'certs', 'localhost.crt');
+var keyFile = join(process.cwd(), '..', 'certs', 'localhost.key');
+if (!existsSync(certFile) || !existsSync(keyFile)) {
+    var certGen = require('../certs/generate-certs.cjs');
+    certGen.ensureCerts(certFile, keyFile);
+}
 // Detect backend protocol using a signal file created by start.bat --http
 // This is reliable because file system operations work across process boundaries
 // (unlike environment variables which don't propagate through `start` cmd)

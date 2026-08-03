@@ -112,11 +112,21 @@ set "HTTPS_ARGS="
 if /i "%~1"=="--http" set "HTTPS=false"
 if /i "%~1"=="/http" set "HTTPS=false"
 
-:: Check if certs exist
+:: Check if certs exist — auto-generate missing self-signed certs
+:: (generate-certs.cjs is a zero-dependency generator, run with Bun which is
+:: verified to be installed above)
 if "%HTTPS%"=="true" (
     if not exist "%CERT_DIR%\localhost.crt" (
-        echo [WARN] SSL certificates not found. Falling back to HTTP.
-        set "HTTPS=false"
+        echo [INFO] SSL certificates not found. Generating self-signed certs...
+        if exist "%CERT_DIR%\generate-certs.cjs" (
+            bun "%CERT_DIR%\generate-certs.cjs" "%CERT_DIR%" >nul 2>nul
+        )
+        if not exist "%CERT_DIR%\localhost.crt" (
+            echo [WARN] Certificate generation failed. Falling back to HTTP.
+            set "HTTPS=false"
+        ) else (
+            echo [OK] Self-signed certificates generated
+        )
     )
 )
 

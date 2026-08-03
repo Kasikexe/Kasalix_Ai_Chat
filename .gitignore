@@ -37,7 +37,10 @@ server-gui/release/
 .idea/
 
 #certification
-/certs
+# The cert files stay git-ignored, but the auto-generation script is source
+# code and must be tracked (it ships with both installers).
+/certs/*
+!/certs/generate-certs.cjs
 
 # Misc
 .http-mode
