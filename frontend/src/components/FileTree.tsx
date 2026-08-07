@@ -5,6 +5,8 @@ import type { FileEntry } from '../types';
 
 interface Props {
   rootPath: string;
+  /** Workspace root for the sandbox (defaults to rootPath) */
+  workspacePath?: string;
   onFileSelect?: (file: FileEntry) => void;
   /** Called when user wants to browse a local folder as the workspace */
   onBrowseFolder?: () => void;
@@ -138,7 +140,7 @@ function DirectoryNode({ name, path, depth, onFileSelect }: {
   );
 }
 
-export function FileTree({ rootPath, onFileSelect, onBrowseFolder }: Props) {
+export function FileTree({ rootPath, workspacePath, onFileSelect, onBrowseFolder }: Props) {
   const [entries, setEntries] = useState<FileEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -211,7 +213,7 @@ export function FileTree({ rootPath, onFileSelect, onBrowseFolder }: Props) {
     setCreatingError(null);
     try {
       const filePath = rootPath.replace(/\\/g, '/').replace(/\/$/, '') + '/' + name;
-      await api.writeFile(filePath, '');
+      await api.writeFile(filePath, '', workspacePath || rootPath);
       setNewFileName('');
       setCreating(false);
       await loadRoot();

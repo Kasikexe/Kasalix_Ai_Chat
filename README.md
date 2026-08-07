@@ -1,22 +1,19 @@
 # Kasalix AI Chat
 
-Kasalix is an open-source AI platform for running and using
-local AI models through Ollama.
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+Kasalix is an open-source AI platform for running and using local AI models
+through Ollama — with a modern chat interface, streaming responses, a desktop
+app, and a standalone server.
 
 ## Original Project
 
-Kasalix is an original project created and maintained by
-Filip Kasman.
+Kasalix is an original project created and maintained by Filip Kasman.
 
-This project is licensed under the Apache License 2.0.
-
-See [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
-
-
-
-# AI Chat Client for Ollama
-
-A modern chat interface powered by local Ollama models.
+This project is licensed under the Apache License 2.0. See
+[LICENSE](LICENSE), [NOTICE](NOTICE), and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for details.
 
 ## Features
 
@@ -30,11 +27,15 @@ A modern chat interface powered by local Ollama models.
 - Auto-scroll during streaming (with stick-to-bottom detection)
 - Stop generation mid-stream
 - Persists last selected model
+- Desktop app (Electron) and mobile app (Capacitor/Android)
+- Standalone server app with generated TLS certificates
 
 ## Tech Stack
 
 **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, react-markdown, lucide-react
 **Backend:** Bun, Hono, TypeScript
+**Desktop:** Electron, electron-builder
+**Mobile:** Capacitor
 
 ## Prerequisites
 
@@ -65,6 +66,8 @@ A modern chat interface powered by local Ollama models.
    npm run dev
    ```
    Runs on `http://localhost:5173`
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full development setup details.
 
 ## Architecture
 
@@ -97,3 +100,15 @@ The architecture is designed to be provider-agnostic. To add a new provider:
 4. Add a `provider` field to `Conversation` type and route through a factory
 
 The same applies to image generation, voice, file uploads, and authentication.
+
+## Community
+
+- [Contributing](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security](SECURITY.md)
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE).
+Third-party software used by this project is listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

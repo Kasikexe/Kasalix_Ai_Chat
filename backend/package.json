@@ -1,6 +1,6 @@
 {
   "name": "ai-chat-backend",
-  "version": "1.0.0",
+  "version": "0.9.0",
   "type": "module",
   "scripts": {
     "dev": "bun run --hot src/index.ts",

@@ -16,6 +16,8 @@ interface FileContent {
 interface Props {
   filePath: string;
   fileName: string;
+  /** Workspace root for the sandbox */
+  workspacePath?: string;
   onClose: () => void;
   onSave?: (filePath: string, changeType: 'created' | 'edited', originalContent?: string) => void;
 }
@@ -188,7 +190,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
-export function FilePreview({ filePath, fileName, onClose, onSave }: Props) {
+export function FilePreview({ filePath, fileName, workspacePath, onClose, onSave }: Props) {
   const [data, setData] = useState<FileContent | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -206,7 +208,7 @@ export function FilePreview({ filePath, fileName, onClose, onSave }: Props) {
     setShowingDiff(false);
     setSaved(false);
 
-    api.getFileContent(filePath).then((result) => {
+    api.getFileContent(filePath, workspacePath).then((result) => {
       if (!cancelled) {
         const fc = result as FileContent;
         setData(fc);
@@ -221,7 +223,7 @@ export function FilePreview({ filePath, fileName, onClose, onSave }: Props) {
     });
 
     return () => { cancelled = true; };
-  }, [filePath]);
+  }, [filePath, workspacePath]);
 
   const startEditing = () => {
     setEditContent(data?.content || '');
@@ -242,7 +244,7 @@ export function FilePreview({ filePath, fileName, onClose, onSave }: Props) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await api.writeFile(filePath, editContent);
+      await api.writeFile(filePath, editContent, workspacePath);
       setSaved(true);
       setEditing(false);
       setShowingDiff(false);
@@ -251,7 +253,7 @@ export function FilePreview({ filePath, fileName, onClose, onSave }: Props) {
       const wasNew = oldContent === '';
       onSave?.(filePath, wasNew ? 'created' : 'edited', wasNew ? undefined : oldContent);
       // Reload content
-      const result = await api.getFileContent(filePath);
+      const result = await api.getFileContent(filePath, workspacePath);
       const fc = result as FileContent;
       setData(fc);
       setEditContent(fc.content || '');

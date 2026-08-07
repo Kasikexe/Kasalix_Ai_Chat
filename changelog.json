@@ -1,5 +1,12 @@
 [
   {
+    "version": "0.9.0",
+    "title": "Public Release",
+    "description": "Open-source release: Apache-2.0 license with full legal notices, About dialog, FFmpeg downloaded on first run (no GPL in the installer), smarter Agent mode intent detection, workspace file sandbox, and version alignment across all apps.",
+    "date": "2026-08-07",
+    "type": "minor"
+  },
+  {
     "version": "1.7.0",
     "title": "Server App",
     "description": "Our Server app is now accesible from our web kasalix.vercel.app",

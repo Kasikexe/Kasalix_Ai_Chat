@@ -78,6 +78,9 @@ function promptInstall(component) {
     if (component === 'bun') {
       $('installModalTitle').textContent = 'Bun is missing';
       $('installModalMsg').textContent = 'The Bun runtime is required to run the AI server. I can install it for you. May I?';
+    } else if (component === 'ffmpeg') {
+      $('installModalTitle').textContent = 'FFmpeg is missing';
+      $('installModalMsg').textContent = 'FFmpeg is used by the built-in video editor. I can download it for you (~100 MB). May I?';
     } else {
       $('installModalTitle').textContent = 'Ollama is missing';
       $('installModalMsg').textContent = 'Ollama is required for AI model responses. I can install it for you. May I?';
@@ -151,6 +154,18 @@ async function ensureOllama() {
   return false;
 }
 
+async function ensureFfmpeg() {
+  const check = await API.checkFfmpeg();
+  if (check.installed) return true;
+  const yes = await promptInstall('ffmpeg');
+  if (!yes) return false;
+  showInstallProgress('Downloading FFmpeg...', 'FFmpeg powers the video editor. Downloading the official build (~100 MB). This may take a minute.');
+  const res = await API.installFfmpeg();
+  if (res.success && res.installed) { hideInstallProgress(); return true; }
+  showInstallError('FFmpeg download failed', res.error || 'FFmpeg could not be downloaded. You can install it manually from https://ffmpeg.org/download.html');
+  return false;
+}
+
 // ─── Startup Sequence ───────────────────────────────────────────
 async function runStartup() {
   const mark = (id, status) => {
@@ -197,7 +212,19 @@ async function runStartup() {
     log('Ollama not found — AI features will be unavailable');
   }
 
-  // Step 3: Backend dependencies
+  // Step 3: Check FFmpeg (auto-download if missing, after asking)
+  mark('check-ffmpeg', 'active');
+  log('Checking FFmpeg (video editor)...');
+  const ffmpegOk = await ensureFfmpeg();
+  if (ffmpegOk) {
+    mark('check-ffmpeg', 'done');
+    log('FFmpeg ready ✓');
+  } else {
+    mark('check-ffmpeg', 'error');
+    log('FFmpeg not available — video editing will be disabled');
+  }
+
+  // Step 4: Backend dependencies
   mark('check-ollama', 'active');
   log('Backend dependencies ready ✓');
   mark('check-ollama', 'done');
@@ -205,7 +232,7 @@ async function runStartup() {
   // Enable start button (only if Bun is available)
   startBtn.disabled = !bunOk;
 
-  // Step 4: Auto-start server if setting is on
+  // Step 5: Auto-start server if setting is on
   mark('check-server', 'active');
   if (state.autoStart) {
     log('Auto-start enabled — launching server...');

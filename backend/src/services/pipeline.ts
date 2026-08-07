@@ -22,7 +22,6 @@ interface PipelineOptions {
   thinkingEnabled?: boolean;
   userId?: string;
   userName?: string;
-  searchEnabled?: boolean;
   planningEnabled?: boolean;
   temperature?: number;
   top_p?: number;
@@ -151,16 +150,55 @@ async function detectIntent(messages: Message[], mode?: ConversationMode): Promi
   ];
   const wantsFileInfo = fileQueryPhrases.some((phrase) => content.includes(phrase));
 
-  // Broader code-related phrases for agent mode (catches more requests)
+  // Broader code-related phrases for agent mode (catches more requests).
+  // These are multi-word requests or strong code signals — NOT bare generic
+  // words like "app" or "file", so conversational messages like "tell me
+  // about yourself" or "what do you think of this design?" do NOT trigger
+  // the heavy code pipeline.
   const agentCodePhrases = [
-    ...['write', 'generate', 'create', 'build', 'make', 'code', 'implement',
-       'convert', 'turn', 'remake', 'recreate', 'show'],
-    'html page', 'css code', 'web page', 'app', 'website',
-    'function', 'script', 'program', 'component', 'file',
-    'project', 'template', 'ui', 'interface', 'style', 'layout',
+    'write a', 'write an', 'write the', 'write code', 'write a function',
+    'write a script', 'write a program', 'write a component', 'write a file',
+    'generate a', 'generate an', 'generate code', 'generate a function',
+    'generate a component',
+    'create a', 'create an', 'create code', 'create a function',
+    'create a script', 'create a component', 'create a file', 'create a page',
+    'build a', 'build an', 'build a website', 'build an app', 'build a page',
+    'build a component', 'build a project',
+    'make a', 'make an', 'make a website', 'make an app', 'make a page',
+    'make a component', 'make a file',
+    'implement a', 'implement an', 'implement this', 'implement the',
+    'add a', 'add an', 'add the', 'add code', 'add a function',
+    'add a component', 'add a file', 'add a button', 'add a page',
+    'update the', 'update my', 'edit the', 'edit my', 'change the',
+    'modify the', 'fix the', 'fix this', 'fix my', 'fix a bug', 'debug',
+    'refactor', 'rewrite', 'convert to', 'convert this', 'turn this into',
+    'turn it into', 'remake this', 'recreate this', 'code this',
+    'html page', 'css code', 'web page', 'website',
     'in html', 'in css', 'in javascript', 'in python', 'in typescript',
     'in react', 'in vue', 'in go', 'in rust', 'in java',
+    'the code', 'my code', 'this code', 'some code', 'a function',
+    'a script', 'a component', 'a class', 'a file', 'a page', 'a button',
+    'a modal', 'a form', 'a menu', 'a header', 'a footer', 'a navbar',
+    'a database', 'an api', 'a style', 'a layout', 'a template',
+    'typescript', 'javascript', 'python', 'react', 'vue', 'html', 'css', 'sql',
   ];
+
+  // Fallback for terse agent-mode commands ("add dark mode", "build todo app").
+  // If the message contains a code VERB and a code NOUN anywhere, treat it as
+  // a code request — without requiring articles like "add a".
+  const codeVerbs = [
+    'add', 'create', 'build', 'make', 'write', 'generate', 'fix', 'update',
+    'remove', 'delete', 'implement', 'change', 'modify', 'convert', 'turn',
+    'refactor', 'rewrite', 'style', 'code', 'debug', 'edit',
+  ];
+  const codeNouns = [
+    'app', 'website', 'web', 'page', 'button', 'form', 'component',
+    'function', 'file', 'style', 'theme', 'layout', 'header', 'footer',
+    'modal', 'menu', 'navbar', 'nav', 'database', 'api', 'ui', 'interface',
+    'template', 'script', 'program', 'project', 'class', 'todo', 'dark mode',
+  ];
+  const hasVerb = codeVerbs.some((v) => content.includes(v));
+  const hasNoun = codeNouns.some((n) => content.includes(n));
 
   // Only trigger code stage on explicit code requests
   const codePhrases = [
@@ -177,17 +215,15 @@ async function detectIntent(messages: Message[], mode?: ConversationMode): Promi
 
   let wantsCode: boolean;
   if (mode === 'agent') {
-    // In agent mode, use a broader but still sensible heuristic:
-    // trigger code pipeline for messages that look like they involve code/files
-    const isShortQuery = content.split(/\s+/).length < 4;
-    if (isShortQuery) {
-      // Short queries like "hi", "hello", "thanks" skip the code pipeline
-      // unless they match the agent code phrases
-      wantsCode = agentCodePhrases.some((phrase) => content.includes(phrase));
-    } else {
-      // Longer queries likely involve code; run the code pipeline
-      wantsCode = true;
-    }
+    // Agent mode: phrase-based detection only — there is NO blanket
+    // "message is long enough → run the code pipeline" rule. A 4+ word
+    // conversational message ("how are you doing today?", "tell me about
+    // yourself") stays in simple chat; the code pipeline only runs when the
+    // message actually asks for code/files. The verb+noun fallback catches
+    // terse commands like "add dark mode" or "build todo app" that skip
+    // articles.
+    wantsCode = agentCodePhrases.some((phrase) => content.includes(phrase)) ||
+      (hasVerb && hasNoun);
   } else {
     wantsCode = codePhrases.some((phrase) => content.includes(phrase));
   }
@@ -339,7 +375,7 @@ async function buildMemoryContext(userId?: string): Promise<string | null> {
 }
 
 export async function runPipeline(opts: PipelineOptions): Promise<string> {
-  const { model, mode, workspacePath, signal, onStage, onChunk, thinkingEnabled, userId, userName, searchEnabled, planningEnabled, temperature, top_p, max_tokens } = opts;
+  const { model, mode, workspacePath, signal, onStage, onChunk, thinkingEnabled, userId, userName, planningEnabled, temperature, top_p, max_tokens } = opts;
   let { messages } = opts;
   const intent = await detectIntent(messages, mode);
 

@@ -43,6 +43,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Folder Dialog ───────────────────────────
   openFolderDialog: () => ipcRenderer.invoke('open-folder-dialog'),
 
+  // ─── About / Legal ────────────────────────────
+  getAboutInfo: () => ipcRenderer.invoke('get-about-info'),
+  openLegalFile: (filePath) => ipcRenderer.invoke('open-legal-file', filePath),
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
+
   // ─── Network Detection ──────────────────────
   detectIPs: () => ipcRenderer.invoke('detect-ips'),
   scanSubnet: () => ipcRenderer.invoke('scan-subnet'),
@@ -50,7 +55,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Local File Operations ──────────────────
   getDefaultWorkspace: () => ipcRenderer.invoke('get-default-workspace'),
   listDir: (dirPath) => ipcRenderer.invoke('list-dir', dirPath),
-  readFile: (filePath) => ipcRenderer.invoke('read-file', filePath),
-  writeFile: (filePath, content) => ipcRenderer.invoke('write-file', filePath, content),
-  deleteFile: (filePath) => ipcRenderer.invoke('delete-file', filePath),
+  readFile: (filePath, workspacePath) => ipcRenderer.invoke('read-file', filePath, workspacePath),
+  writeFile: (filePath, content, workspacePath) => ipcRenderer.invoke('write-file', filePath, content, workspacePath),
+  deleteFile: (filePath, workspacePath) => ipcRenderer.invoke('delete-file', filePath, workspacePath),
 });

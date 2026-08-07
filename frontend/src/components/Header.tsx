@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
-import { Menu, Brain, Download, Smartphone, Wifi } from 'lucide-react';
+import { Menu, Brain, Download, Smartphone, Wifi, Info, History } from 'lucide-react';
 import type { Conversation } from '../types';
 import { isInCapacitor, clearServerUrl, getSavedServerUrl } from '../services/api';
+import { AboutModal } from './AboutModal';
+import { ChangelogModal } from './ChangelogModal';
 
 interface HeaderProps {
   onMenuClick: () => void;
@@ -15,6 +17,8 @@ export function Header({
   onMenuClick, thinkingEnabled, onToggleThinking, conversation, hideThinking
 }: HeaderProps) {
   const [exportOpen, setExportOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -154,6 +158,24 @@ export function Header({
           <span className="hidden sm:inline">Download</span>
         </a>
 
+        {/* Changelog button */}
+        <button
+          onClick={() => setChangelogOpen(true)}
+          className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
+          title="Changelog & release notes"
+        >
+          <History size={18} />
+        </button>
+
+        {/* About button */}
+        <button
+          onClick={() => setAboutOpen(true)}
+          className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
+          title="About Kasalix AI Chat"
+        >
+          <Info size={18} />
+        </button>
+
         {/* Change Server button — only in Capacitor (Android) mode */}
         {isInCapacitor() && getSavedServerUrl() && (
           <button
@@ -170,6 +192,8 @@ export function Header({
         )}
 
       </div>
+      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
+      <ChangelogModal open={changelogOpen} onClose={() => setChangelogOpen(false)} />
     </header>
   );
 }

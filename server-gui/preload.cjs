@@ -15,10 +15,12 @@ contextBridge.exposeInMainWorld('serverAPI', {
   getOllamaModels: () => ipcRenderer.invoke('get-ollama-models'),
   checkOllama: () => ipcRenderer.invoke('check-ollama'),
 
-  // ─── Bun / Ollama Auto-Install ──────────────
+  // ─── Bun / Ollama / FFmpeg Auto-Install ───────
   checkBun: () => ipcRenderer.invoke('check-bun'),
   installBun: () => ipcRenderer.invoke('install-bun'),
   installOllama: () => ipcRenderer.invoke('install-ollama'),
+  checkFfmpeg: () => ipcRenderer.invoke('check-ffmpeg'),
+  installFfmpeg: () => ipcRenderer.invoke('install-ffmpeg'),
   onInstallProgress: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('install-progress', handler);

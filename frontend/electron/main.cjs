@@ -2,7 +2,7 @@
 // Needed so the auto-updater can fetch latest.yml and the installer .exe
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 
 // Chromium command-line switch: ignore cert errors for ALL Chromium network requests
 // (auto-updater, net.fetch, net.request in any session, etc.)
@@ -311,6 +311,39 @@ function getDefaultWorkspacePath() {
     fs.mkdirSync(aiChatDir, { recursive: true });
   } catch {}
   return aiChatDir;
+}
+
+/**
+ * Workspace sandbox: file content/delete/write must stay inside the workspace
+ * root the renderer declares. The workspace must be a real subfolder (not a
+ * drive root). Listing stays open so the workspace picker can browse.
+ */
+function resolveWorkspaceRoot(ws) {
+  if (!ws || typeof ws !== 'string') return null;
+  const resolved = path.resolve(ws);
+  if (path.parse(resolved).root === resolved) return null;
+  return resolved;
+}
+
+function isPathInside(root, target) {
+  // Realpath comparison so symlinks inside the workspace cannot point outside it.
+  // For targets that don't exist yet (new file creation), resolve the real
+  // parent directory instead.
+  try {
+    let realTarget;
+    try {
+      realTarget = fs.realpathSync(target);
+    } catch {
+      const parent = path.dirname(target);
+      const realParent = fs.realpathSync(parent);
+      realTarget = path.join(realParent, path.basename(target));
+    }
+    const realRoot = fs.realpathSync(root);
+    const rel = path.relative(realRoot, realTarget);
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  } catch {
+    return false;
+  }
 }
 
 /** List directory contents */
@@ -694,7 +727,10 @@ ipcMain.handle('list-dir', async (_event, dirPath) => {
   }
 });
 
-ipcMain.handle('read-file', async (_event, filePath) => {
+ipcMain.handle('read-file', async (_event, filePath, workspacePath) => {
+  const root = resolveWorkspaceRoot(workspacePath);
+  if (!root) return { error: 'A valid workspacePath is required' };
+  if (!isPathInside(root, filePath)) return { error: 'Access denied: path is outside the workspace' };
   try {
     return readFileContent(filePath);
   } catch (err) {
@@ -703,7 +739,10 @@ ipcMain.handle('read-file', async (_event, filePath) => {
   }
 });
 
-ipcMain.handle('write-file', async (_event, filePath, content) => {
+ipcMain.handle('write-file', async (_event, filePath, content, workspacePath) => {
+  const root = resolveWorkspaceRoot(workspacePath);
+  if (!root) return { error: 'A valid workspacePath is required' };
+  if (!isPathInside(root, filePath)) return { error: 'Access denied: path is outside the workspace' };
   try {
     return writeFileContent(filePath, content);
   } catch (err) {
@@ -711,7 +750,10 @@ ipcMain.handle('write-file', async (_event, filePath, content) => {
   }
 });
 
-ipcMain.handle('delete-file', async (_event, filePath) => {
+ipcMain.handle('delete-file', async (_event, filePath, workspacePath) => {
+  const root = resolveWorkspaceRoot(workspacePath);
+  if (!root) return { error: 'A valid workspacePath is required' };
+  if (!isPathInside(root, filePath)) return { error: 'Access denied: path is outside the workspace' };
   try {
     return deleteFileOrDir(filePath);
   } catch (err) {
@@ -737,6 +779,76 @@ ipcMain.handle('open-folder-dialog', async () => {
     return { canceled: false, path: selectedPath, name };
   } catch (err) {
     return { canceled: true, error: err.message };
+  }
+});
+
+// ─── IPC Handlers: About / Legal ────────────────────────────────
+
+/**
+ * Return app identity + the bundled legal documents (LICENSE, NOTICE,
+ * THIRD_PARTY_NOTICES, GPL text) so the UI can show an About dialog.
+ * Packaged: reads from resources/ (extraResources). Dev: repo root.
+ */
+ipcMain.handle('get-about-info', () => {
+  const legalDir = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..');
+  const relFiles = ['LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'licenses/GPL-3.0.txt'];
+  const legal = relFiles.map((rel) => {
+    const full = path.join(legalDir, rel);
+    let content = null;
+    try {
+      content = fs.readFileSync(full, 'utf-8');
+    } catch {
+      content = null;
+    }
+    return { name: rel, path: full, content };
+  });
+  return {
+    name: 'Kasalix AI Chat',
+    version: app.getVersion(),
+    copyright: 'Copyright (c) 2026 Filip Kasman',
+    license: 'Apache License 2.0',
+    legal,
+  };
+});
+
+/** Open a legal document in the system default viewer (used by the About dialog).
+ *  Only paths inside the legal resources dir (or repo root in dev) are allowed. */
+ipcMain.handle('open-legal-file', async (_event, filePath) => {
+  try {
+    const legalDir = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..');
+    const resolved = path.resolve(filePath);
+    if (!resolved.startsWith(path.resolve(legalDir))) {
+      return { success: false, error: 'Access denied' };
+    }
+    if (!fs.existsSync(resolved)) {
+      return { success: false, error: 'File not found' };
+    }
+    const err = await shell.openPath(resolved);
+    return err ? { success: false, error: err } : { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── IPC Handlers: External Links ────────────────────────────────
+
+/** Open an http(s) URL in the system default browser (used by the changelog view). */
+ipcMain.handle('open-external', async (_event, url) => {
+  if (typeof url !== 'string') return { success: false, error: 'Invalid URL' };
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { success: false, error: 'Invalid URL' };
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return { success: false, error: 'Only http(s) links are allowed' };
+  }
+  try {
+    await shell.openExternal(url);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
   }
 });
 

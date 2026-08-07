@@ -128,7 +128,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
 
     // Fetch content — in Electron this uses IPC (local FS) so it works offline
     try {
-      const result = await api.getFileContent(file.path);
+      const result = await api.getFileContent(file.path, loadedPath);
       if (result.content !== null && !result.binary) {
         const newFile: OpenFile = {
           path: file.path,
@@ -196,7 +196,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
 
     let oldContent = '';
     try {
-      const result = await api.getFileContent(fullPath);
+      const result = await api.getFileContent(fullPath, loadedPath);
       if (result.content !== null) oldContent = result.content;
     } catch { /* file doesn't exist */ }
 
@@ -213,7 +213,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     if (!pendingCode) return;
     setApplying(true);
     try {
-      await api.writeFile(pendingCode.filePath, pendingCode.newContent);
+      await api.writeFile(pendingCode.filePath, pendingCode.newContent, loadedPath);
       handleFileModified(pendingCode.filePath, pendingCode.oldContent ? 'edited' : 'created', pendingCode.oldContent || undefined);
 
       // Also open/reload in editor tabs
@@ -267,11 +267,11 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
 
         let isEdit = false;
         try {
-          const result = await api.getFileContent(fullPath);
+          const result = await api.getFileContent(fullPath, loadedPath);
           if (result.content !== null) isEdit = true;
         } catch { /* new file */ }
 
-        await api.writeFile(fullPath, f.content);
+        await api.writeFile(fullPath, f.content, loadedPath);
 
         const fileName = fullPath.split('/').pop()?.split('\\\\').pop() || fullPath;
         setModifiedFiles((prev) => {
@@ -316,7 +316,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     if (!pendingDelete) return;
     setDeleting(true);
     try {
-      await api.deleteFile(pendingDelete);
+      await api.deleteFile(pendingDelete, loadedPath);
       // Close tab if open
       setOpenFiles((prev) => prev.filter((f) => f.path !== pendingDelete));
       onMessageSent();
@@ -333,9 +333,9 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     setRevertError(null);
     try {
       if (mf.changeType === 'created') {
-        await api.deleteFile(mf.filePath);
+        await api.deleteFile(mf.filePath, loadedPath);
       } else if (mf.originalContent !== undefined) {
-        await api.writeFile(mf.filePath, mf.originalContent);
+        await api.writeFile(mf.filePath, mf.originalContent, loadedPath);
       }
       setRevertedFiles((prev) => ({ ...prev, [mf.filePath]: true }));
       setTimeout(() => {
@@ -564,6 +564,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
           <div className="flex-1 overflow-y-auto">
             <FileTree
               rootPath={loadedPath}
+              workspacePath={loadedPath}
               onFileSelect={(file) => openFileInEditor(file)}
               onBrowseFolder={async () => {
                 try {
@@ -684,6 +685,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
             <CodeEditorTabs
               files={openFiles}
               activeFile={activeFilePath}
+              workspacePath={loadedPath}
               onFileSelect={setActiveFilePath}
               onFileClose={handleFileClose}
               onFileContentChange={handleFileContentChange}

@@ -5,6 +5,48 @@ import type { Variables } from '../types';
 
 const files = new Hono<{ Variables: Variables }>();
 
+// ─── Workspace sandbox ──────────────────────────────────────────
+// The files API is reachable by any authenticated client over the network,
+// so every content/delete/write request must name a workspace root and the
+// target path must resolve INSIDE it. Directory listing stays open (the
+// workspace picker needs to browse), but reading/writing/deleting is
+// confined to the workspace the client declares.
+function resolveWorkspaceRoot(ws?: string): string | null {
+  if (!ws || typeof ws !== 'string') return null;
+  const resolved = path.resolve(ws);
+  // Reject drive roots (C:\ or /) — a workspace must be a real subfolder,
+  // otherwise "workspacePath=C:\" would unlock the whole disk.
+  if (path.parse(resolved).root === resolved) return null;
+  return resolved;
+}
+
+/**
+ * Realpath-aware containment check. Comparing the REAL paths (resolving
+ * symlinks) prevents a symlink inside the workspace from pointing at files
+ * outside it (e.g. a link to ~/.ssh/id_rsa) and passing the lexical check.
+ * For targets that do not exist yet (new file creation), the parent
+ * directory's real path is resolved instead, so symlinked parents are still
+ * caught while creating files still works.
+ */
+async function isPathInside(root: string, target: string): Promise<boolean> {
+  try {
+    let realTarget: string;
+    try {
+      realTarget = await fs.realpath(target);
+    } catch {
+      // Target doesn't exist yet — resolve the real parent + basename
+      const parent = path.dirname(target);
+      const realParent = await fs.realpath(parent);
+      realTarget = path.join(realParent, path.basename(target));
+    }
+    const realRoot = await fs.realpath(root);
+    const rel = path.relative(realRoot, realTarget);
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  } catch {
+    return false;
+  }
+}
+
 const IGNORE_DIRS = new Set([
   'node_modules', '.git', '.svn', '.hg', '.DS_Store',
   '__pycache__', '.next', '.nuxt', 'dist', 'build', '.cache',
@@ -102,7 +144,15 @@ files.get('/content', async (c) => {
     return c.json({ error: 'path query parameter is required' }, 400);
   }
 
+  const workspaceRoot = resolveWorkspaceRoot(c.req.query('workspacePath'));
+  if (!workspaceRoot) {
+    return c.json({ error: 'A valid workspacePath query parameter is required' }, 403);
+  }
+
   const resolved = path.resolve(filePath);
+  if (!(await isPathInside(workspaceRoot, resolved))) {
+    return c.json({ error: 'Access denied: path is outside the workspace' }, 403);
+  }
 
   try {
     await fs.access(resolved);
@@ -154,7 +204,15 @@ files.delete('/delete', async (c) => {
     return c.json({ error: 'path query parameter is required' }, 400);
   }
 
+  const workspaceRoot = resolveWorkspaceRoot(c.req.query('workspacePath'));
+  if (!workspaceRoot) {
+    return c.json({ error: 'A valid workspacePath query parameter is required' }, 403);
+  }
+
   const resolved = path.resolve(filePath);
+  if (!(await isPathInside(workspaceRoot, resolved))) {
+    return c.json({ error: 'Access denied: path is outside the workspace' }, 403);
+  }
 
   try {
     await fs.access(resolved);
@@ -175,12 +233,20 @@ files.delete('/delete', async (c) => {
 
 files.put('/write', async (c) => {
   try {
-    const { filePath, content } = await c.req.json();
+    const { filePath, content, workspacePath } = await c.req.json();
     if (!filePath || content === undefined) {
       return c.json({ error: 'filePath and content are required' }, 400);
     }
 
+    const workspaceRoot = resolveWorkspaceRoot(workspacePath);
+    if (!workspaceRoot) {
+      return c.json({ error: 'A valid workspacePath is required in the request body' }, 403);
+    }
+
     const resolved = path.resolve(filePath);
+    if (!(await isPathInside(workspaceRoot, resolved))) {
+      return c.json({ error: 'Access denied: path is outside the workspace' }, 403);
+    }
 
     // Ensure parent directory exists
     const parentDir = path.dirname(resolved);

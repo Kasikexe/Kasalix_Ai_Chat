@@ -464,8 +464,9 @@ export const api = {
     return data;
   },
 
-  /** Read file content — uses local IPC in Electron, backend API on web */
-  async getFileContent(filePath: string): Promise<{
+  /** Read file content — uses local IPC in Electron, backend API on web.
+   *  workspacePath is the workspace root the file must live inside (sandbox). */
+  async getFileContent(filePath: string, workspacePath?: string): Promise<{
     content: string | null;
     language: string | null;
     size: number;
@@ -473,7 +474,7 @@ export const api = {
     binary: boolean;
   }> {
     if (isElectron) {
-      const result = await electronFileOp('readFile', filePath);
+      const result = await electronFileOp('readFile', filePath, workspacePath);
       // Normalize: if IPC returned an error, treat as file doesn't exist
       const normalized = {
         content: result.content ?? null,
@@ -496,32 +497,32 @@ export const api = {
       return normalized;
     }
     return handleResponse(
-      await fetch(`${API_BASE}/files/content?path=${encodeURIComponent(filePath)}`, authedFetch(`${API_BASE}/files`))
+      await fetch(`${API_BASE}/files/content?path=${encodeURIComponent(filePath)}&workspacePath=${encodeURIComponent(workspacePath || '')}`, authedFetch(`${API_BASE}/files`))
     );
   },
 
   /** Delete a file — uses local IPC in Electron, backend API on web */
-  async deleteFile(filePath: string): Promise<{ success: boolean; path: string }> {
+  async deleteFile(filePath: string, workspacePath?: string): Promise<{ success: boolean; path: string }> {
     if (isElectron) {
-      return electronFileOp('deleteFile', filePath);
+      return electronFileOp('deleteFile', filePath, workspacePath);
     }
     return handleResponse(
-      await fetch(`${API_BASE}/files/delete?path=${encodeURIComponent(filePath)}`, authedFetch(`${API_BASE}/files/delete`, {
+      await fetch(`${API_BASE}/files/delete?path=${encodeURIComponent(filePath)}&workspacePath=${encodeURIComponent(workspacePath || '')}`, authedFetch(`${API_BASE}/files/delete`, {
         method: 'DELETE',
       }))
     );
   },
 
   /** Write content to a file — uses local IPC in Electron, backend API on web */
-  async writeFile(filePath: string, content: string): Promise<{ success: boolean; path: string; isNew: boolean; size: number }> {
+  async writeFile(filePath: string, content: string, workspacePath?: string): Promise<{ success: boolean; path: string; isNew: boolean; size: number }> {
     if (isElectron) {
-      return electronFileOp('writeFile', filePath, content);
+      return electronFileOp('writeFile', filePath, content, workspacePath);
     }
     return handleResponse(
       await fetch(`${API_BASE}/files/write`, authedFetch(`${API_BASE}/files/write`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath, content }),
+        body: JSON.stringify({ filePath, content, workspacePath }),
       }))
     );
   },
@@ -572,7 +573,6 @@ streamChat(
         mode,
         workspacePath,
         thinkingEnabled: localStorage.getItem('ai-chat:thinkingEnabled') === 'true',
-        searchEnabled: true,
         temperature,
         top_p,
         max_tokens,
@@ -885,7 +885,8 @@ streamChat(
   // --- Terminal API ---
   async executeTerminal(
     command: string,
-    cwd?: string
+    cwd?: string,
+    workspacePath?: string
   ): Promise<{
     success: boolean;
     stdout: string;
@@ -898,7 +899,7 @@ streamChat(
       await fetch(`${API_BASE}/terminal`, authedFetch(`${API_BASE}/terminal`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command, cwd }),
+        body: JSON.stringify({ command, cwd, workspacePath: workspacePath || cwd }),
       }))
     );
   },

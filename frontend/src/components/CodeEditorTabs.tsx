@@ -16,6 +16,8 @@ interface OpenFile {
 interface Props {
   files: OpenFile[];
   activeFile: string | null;
+  /** Workspace root for the sandbox */
+  workspacePath?: string;
   onFileSelect: (path: string) => void;
   onFileClose: (path: string) => void;
   onFileContentChange: (path: string, content: string) => void;
@@ -172,7 +174,7 @@ function EditorWithLineNumbers({
   );
 }
 
-export function CodeEditorTabs({ files, activeFile, onFileSelect, onFileClose, onFileContentChange, onFileSave }: Props) {
+export function CodeEditorTabs({ files, activeFile, workspacePath, onFileSelect, onFileClose, onFileContentChange, onFileSave }: Props) {
   const [saving, setSaving] = useState<Record<string, boolean>>({});
 
   const activeOpenFile = files.find((f) => f.path === activeFile);
@@ -180,7 +182,7 @@ export function CodeEditorTabs({ files, activeFile, onFileSelect, onFileClose, o
   const handleSave = useCallback(async (file: OpenFile) => {
     setSaving((prev) => ({ ...prev, [file.path]: true }));
     try {
-      await api.writeFile(file.path, file.content);
+      await api.writeFile(file.path, file.content, workspacePath);
       onFileSave(file.path, file.content);
     } catch (e) {
       console.error('Save failed:', e);

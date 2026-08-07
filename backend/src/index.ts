@@ -337,9 +337,35 @@ app.post('/api/terminal', async (c) => {
   }
 
   try {
-    const { command, cwd } = await c.req.json();
+    const { command, cwd, workspacePath } = await c.req.json();
     if (!command || typeof command !== 'string') {
       return c.json({ error: 'command is required' }, 400);
+    }
+
+    // Workspace sandbox: the terminal may only run inside the declared
+    // workspace root. Reject drive roots (C:\ or /) the same way the files
+    // API does, so a malicious client cannot unlock the whole disk.
+    if (!workspacePath || typeof workspacePath !== 'string') {
+      return c.json({ error: 'A valid workspacePath is required in the request body' }, 403);
+    }
+    const workspaceRoot = path.resolve(workspacePath);
+    if (path.parse(workspaceRoot).root === workspaceRoot) {
+      return c.json({ error: 'workspacePath must be a real folder, not a drive root' }, 403);
+    }
+    const safeCwd = cwd ? path.resolve(cwd) : workspaceRoot;
+    // Realpath comparison so a symlinked cwd cannot escape the workspace
+    let isInside = false;
+    try {
+      const realRoot = await fs.realpath(workspaceRoot);
+      const realCwd = await fs.realpath(safeCwd);
+      const rel = path.relative(realRoot, realCwd);
+      isInside = rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+    } catch {
+      isInside = false;
+    }
+    if (!isInside) {
+      appLogger.warn(`[terminal] Blocked cwd outside workspace from user ${session.userId}: ${safeCwd}`);
+      return c.json({ error: 'Access denied: cwd is outside the workspace' }, 403);
     }
 
     // Input validation: block truly dangerous command patterns only
@@ -348,8 +374,6 @@ app.post('/api/terminal', async (c) => {
       appLogger.warn(`[terminal] Blocked dangerous command from user ${session.userId}`);
       return c.json({ error: 'Command blocked for security' }, 403);
     }
-
-    const safeCwd = cwd ? path.resolve(cwd) : process.cwd();
 
     const result = await execAsync(command, {
       cwd: safeCwd,
@@ -424,7 +448,7 @@ app.get('/download', async (c) => {
     }
   } catch {}
 
-  const version = process.env.APP_VERSION || '1.6.0';
+  const version = process.env.APP_VERSION || '0.9.0';
   const html = `
 <!DOCTYPE html>
 <html lang="en" class="dark">

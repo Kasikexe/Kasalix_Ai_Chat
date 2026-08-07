@@ -1,19 +1,66 @@
 import { Hono } from 'hono';
-import { promises as fs } from 'fs';
+import { promises as fs, existsSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import path from 'path';
 import { streamChat } from '../services/ollama';
 import { getModelAssignment } from '../services/model-assignments';
 import { getDataDir } from '../utils/helpers';
 import type { Message } from '../types';
+import { createRequire } from 'node:module';
 
-// @ts-ignore – ffmpeg-static and ffprobe-static have no type definitions
-import ffmpegPath from 'ffmpeg-static';
-// @ts-ignore
-import ffprobe from 'ffprobe-static';
+// ─── FFmpeg / FFprobe binary resolution ──────────────────────────
+// Priority:
+//   1. Explicit env override (FFMPEG_PATH / FFPROBE_PATH) — set by the
+//      server-gui when it downloads ffmpeg on first run.
+//   2. A local ffmpeg/ folder next to the backend (where the server
+//      installer or first-run check drops the binaries).
+//   3. ffmpeg-static / ffprobe-static (dev convenience only — the GPL
+//      binary is NOT shipped in any installer; it is downloaded at
+//      install / first-run time instead).
+//
+// ffmpeg-static / ffprobe-static are loaded lazily (not imported at the top)
+// because packaged bundles (server-gui extraResources) exclude them — a static
+// import of a missing module would crash the whole backend at startup.
+const devRequire = createRequire(import.meta.url);
 
-const FFPROBE_PATH = ffprobe.path;
-const FFMPEG_PATH = ffmpegPath;
+function resolveDevFallback(kind: 'ffmpeg' | 'ffprobe'): string | null {
+  try {
+    if (kind === 'ffmpeg') {
+      const mod: unknown = devRequire('ffmpeg-static');
+      return typeof mod === 'string' ? mod : null;
+    }
+    const mod: { path?: unknown } = devRequire('ffprobe-static');
+    return typeof mod?.path === 'string' ? mod.path : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveBinary(kind: 'ffmpeg' | 'ffprobe'): string | null {
+  const envKey = kind === 'ffmpeg' ? 'FFMPEG_PATH' : 'FFPROBE_PATH';
+  const exe = process.platform === 'win32' ? `${kind}.exe` : kind;
+  const candidates = [
+    process.env[envKey],
+    path.join(process.cwd(), 'ffmpeg', 'bin', exe),
+    path.join(process.cwd(), 'ffmpeg', exe),
+    path.join(process.cwd(), 'bin', exe),
+  ];
+  for (const c of candidates) {
+    if (c && existsSync(c)) return c;
+  }
+  return null;
+}
+
+function resolveFfmpeg(): string | null {
+  return resolveBinary('ffmpeg') ?? resolveDevFallback('ffmpeg');
+}
+
+function resolveFfprobe(): string | null {
+  return resolveBinary('ffprobe') ?? resolveDevFallback('ffprobe');
+}
+
+const FFPROBE_PATH = resolveFfprobe();
+const FFMPEG_PATH = resolveFfmpeg();
 
 const editor = new Hono();
 
@@ -167,6 +214,10 @@ editor.post('/info', async (c) => {
       return c.json({ error: 'filePath is required' }, 400);
     }
 
+    if (!FFPROBE_PATH) {
+      return c.json({ error: 'ffprobe was not found. The server app downloads it automatically on first run.' }, 500);
+    }
+
     try {
       await fs.access(filePath);
     } catch {
@@ -231,6 +282,10 @@ editor.post('/frames', async (c) => {
 
     await ensureUploadDir();
 
+    if (!FFMPEG_PATH) {
+      return c.json({ error: 'ffmpeg was not found. The server app downloads it automatically on first run.' }, 500);
+    }
+
     const outputName = `frame_${Date.now()}_${Math.round(time * 100)}.jpg`;
     const outputPath = path.join(UPLOAD_DIR, outputName);
 
@@ -271,6 +326,10 @@ editor.post('/render', async (c) => {
     }
 
     await ensureUploadDir();
+
+    if (!FFMPEG_PATH) {
+      return c.json({ error: 'ffmpeg was not found. The server app downloads it automatically on first run.' }, 500);
+    }
 
     const safeName = outputFileName.replace(/[^a-zA-Z0-9._-]/g, '_');
     const outputPath = path.join(UPLOAD_DIR, safeName);
@@ -384,6 +443,7 @@ editor.post('/upload', async (c) => {
 let frameCache = new Map<string, string>(); // cache vision analysis by video path
 
 async function extractKeyframeBase64(videoPath: string, timeSeconds: number, width: number = 640): Promise<string | null> {
+  if (!FFMPEG_PATH) return null;
   const outputPath = path.join(UPLOAD_DIR, `_vframe_${Date.now()}_${Math.round(timeSeconds * 100)}.jpg`);
   try {
     const cmd = `"${FFMPEG_PATH}" -ss ${timeSeconds} -i "${videoPath}" -vframes 1 -q:v 3 -vf "scale=${width}:-1" "${outputPath}" -y`;

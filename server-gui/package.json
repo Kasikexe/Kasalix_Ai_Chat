@@ -1,6 +1,6 @@
 {
   "name": "kasalix-server-gui",
-  "version": "1.6.0",
+  "version": "0.9.0",
   "private": true,
   "main": "main.cjs",
   "scripts": {
@@ -15,6 +15,7 @@
   "build": {
     "appId": "com.kasalix.server",
     "productName": "Kasalix AI Chat Server",
+    "license": "license.txt",
     "directories": {
       "output": "release"
     },
@@ -35,9 +36,9 @@
           "!node_modules/typescript/**",
           "!node_modules/bun-types/**",
           "!node_modules/@types/**",
-          "!node_modules/ffprobe-static/bin/darwin/**",
-          "!node_modules/ffprobe-static/bin/linux/**",
-          "!node_modules/ffprobe-static/bin/win32/ia32/**",
+          "!node_modules/ffmpeg-static/ffmpeg*",
+          "!node_modules/ffmpeg-static/**",
+          "!node_modules/ffprobe-static/bin/**",
           "!data/**",
           "!generated_images/**",
           "!.env"
@@ -54,6 +55,22 @@
       {
         "from": "../icon_server.png",
         "to": "icon.png"
+      },
+      {
+        "from": "../LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "../NOTICE",
+        "to": "NOTICE"
+      },
+      {
+        "from": "../THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      },
+      {
+        "from": "../licenses",
+        "to": "licenses"
       }
     ],
     "win": {

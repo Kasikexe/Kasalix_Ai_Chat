@@ -64,8 +64,8 @@ export function WorkspaceSetup({ defaultBasePath: propDefault, onSelect, onClose
     setCreating(true);
     try {
       const fullPath = basePath.replace(/\\/g, '/').replace(/\/$/, '') + '/' + name;
-      // Create the directory by writing a .gitkeep file
-      await api.writeFile(fullPath + '/.gitkeep', '');
+      // Create the directory by writing a .gitkeep file (sandboxed to basePath)
+      await api.writeFile(fullPath + '/.gitkeep', '', basePath);
       onSelect(fullPath, name);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create project');

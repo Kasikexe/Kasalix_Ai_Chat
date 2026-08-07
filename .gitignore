@@ -14,6 +14,12 @@ backend/generated_images/
 # Runtime data
 data/
 
+# Freebuff tool data (local conversation databases — must never be committed)
+.freebuff/
+
+# TypeScript incremental build caches
+*.tsbuildinfo
+
 # Environment
 .env
 .env.local
