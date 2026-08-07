@@ -15,7 +15,6 @@
   "build": {
     "appId": "com.kasalix.server",
     "productName": "Kasalix AI Chat Server",
-    "license": "license.txt",
     "directories": {
       "output": "release"
     },
