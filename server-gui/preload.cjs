@@ -30,6 +30,9 @@ contextBridge.exposeInMainWorld('serverAPI', {
   // ─── Downloads ─────────────────────────────
   openDownload: (url) => ipcRenderer.invoke('open-download', url),
 
+  // ─── External Links ────────────────────────
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
+
   // ─── App Info ──────────────────────────────
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
 

@@ -428,7 +428,13 @@ app.post('/api/tools/execute', async (c) => {
 // Where downloaded APK/EXE files are stored. The auto-updater and web
 // download page serve files from here.
 const RELEASE_DIR = path.join(process.cwd(), '..', 'release');
-const GITHUB_RELEASES_URL = process.env.GITHUB_RELEASES_URL || 'https://github.com/Kasikexe/Kasalix/releases';
+
+// ─── Branding / upstream repo ──────────────────────────────────
+// Override with GITHUB_REPO ("owner/name") or GITHUB_RELEASES_URL
+// when running a rebranded fork.
+const GITHUB_REPO = process.env.GITHUB_REPO || 'Kasikexe/Kasalix';
+const GITHUB_RELEASES_URL =
+  process.env.GITHUB_RELEASES_URL || `https://github.com/${GITHUB_REPO}/releases`;
 
 // ─── Download Page ────────────────────────────────
 app.get('/download', async (c) => {

@@ -2,10 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Layers, GitBranch, Calendar, Loader, Sparkles, AlertTriangle, ExternalLink, X } from 'lucide-react';
-
-const REPO = 'Kasikexe/Kasalix';
-const GITHUB_RELEASES_API = `https://api.github.com/repos/${REPO}/releases`;
-const GITHUB_RELEASES_PAGE = `https://github.com/${REPO}/releases`;
+import { openExternal } from '../utils/openExternal';
+import { GITHUB_RELEASES_API, RELEASES_URL } from '../config';
 // Cache releases briefly so the GitHub API (rate-limited) isn't hit on every open
 const CACHE_KEY = 'kasalix:changelog:releases';
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
@@ -72,16 +70,6 @@ function formatDate(dateStr: string) {
   if (diff < 86400000) return `Today, ${d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}`;
   if (diff < 172800000) return `Yesterday, ${d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}`;
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-}
-
-/** Open a URL in the system browser (Electron) or a new tab (browser). */
-function openExternal(url: string) {
-  const api = (window as any).electronAPI;
-  if (api?.openExternal) {
-    api.openExternal(url);
-    return;
-  }
-  window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 /** Read the cached entries. Returns null when the cache is empty or expired. */
@@ -218,7 +206,7 @@ export function ChangelogView({ onClose }: Props) {
               Try again
             </button>
             <button
-              onClick={() => openExternal(GITHUB_RELEASES_PAGE)}
+              onClick={() => openExternal(RELEASES_URL)}
               className="mt-4 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 transition-colors"
             >
               <ExternalLink size={12} />
@@ -233,7 +221,7 @@ export function ChangelogView({ onClose }: Props) {
               Release notes appear here as soon as a release is published on the GitHub repository.
             </p>
             <button
-              onClick={() => openExternal(GITHUB_RELEASES_PAGE)}
+              onClick={() => openExternal(RELEASES_URL)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 transition-colors"
             >
               <ExternalLink size={12} />
@@ -331,7 +319,7 @@ export function ChangelogView({ onClose }: Props) {
               {/* Footer link to the full list */}
               <div className="ml-12 mr-4 mt-1 mb-4">
                 <button
-                  onClick={() => openExternal(GITHUB_RELEASES_PAGE)}
+                  onClick={() => openExternal(RELEASES_URL)}
                   className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-purple-400 transition-colors"
                 >
                   <ExternalLink size={12} />

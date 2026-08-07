@@ -15,6 +15,13 @@ This is an **Electron desktop app** that replaces the CLI (`run-server.bat`) wit
 
 The GUI spawns the Bun backend (`bun run src/index.ts`) as a child process, monitors system resources via Node.js `os` module + `nvidia-smi`, and polls the Ollama API for running models.
 
+## Rebranding a fork
+
+- Set the `KASALIX_REPO` env var (e.g. `KASALIX_REPO=YourName/YourFork`) to change where
+  client release downloads come from (defaults to `Kasikexe/Kasalix`).
+- Edit `FEEDBACK_CONFIG` at the top of the dropdown section in `public/script.js` to point the
+  GitHub feedback menu (report bug / suggest idea / visit repo) at your own repository.
+
 ## Building
 
 Built automatically by `server-app-installer/build-setup.bat` as part of the server installer.

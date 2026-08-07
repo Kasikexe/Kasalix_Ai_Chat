@@ -415,6 +415,51 @@ $('closeBtn').addEventListener('click', () => {
   window.close();
 });
 
+// ─── Feedback Dropdown (GitHub) — configurable for forks ────
+// Edit FEEDBACK_CONFIG below to point a rebranded build at your own
+// repo instead of the original Kasalix project.
+const FEEDBACK_CONFIG = {
+  issueUrl: 'https://github.com/Kasikexe/Kasalix/issues/new',
+  ideasUrl: 'https://github.com/Kasikexe/Kasalix/discussions/categories/ideas',
+  repoUrl: 'https://github.com/Kasikexe/Kasalix',
+};
+
+const feedbackBtn = $('feedbackBtn');
+const feedbackDropdown = $('feedbackDropdown');
+
+// Render the menu from the config above
+const FEEDBACK_ITEMS = [
+  { emoji: '🐞', title: 'Report a bug', sub: 'Open a GitHub issue', url: FEEDBACK_CONFIG.issueUrl },
+  { emoji: '💡', title: 'Suggest an idea', sub: 'GitHub Discussions — Ideas', url: FEEDBACK_CONFIG.ideasUrl },
+  null,
+  { emoji: '⭐', title: 'Visit repository', sub: FEEDBACK_CONFIG.repoUrl.replace('https://', ''), url: FEEDBACK_CONFIG.repoUrl },
+];
+feedbackDropdown.innerHTML = FEEDBACK_ITEMS.map((item) =>
+  item
+    ? `<button class="dropdown-item" data-url="${item.url}">
+         <span class="dd-emoji">${item.emoji}</span>
+         <span class="dd-text"><span>${item.title}</span><span class="dd-sub">${item.sub}</span></span>
+       </button>`
+    : '<div class="dropdown-sep"></div>'
+).join('');
+
+feedbackBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  feedbackDropdown.hidden = !feedbackDropdown.hidden;
+});
+
+document.addEventListener('click', (e) => {
+  if (!(e.target instanceof Element) || !e.target.closest('#feedbackMenu')) feedbackDropdown.hidden = true;
+});
+
+feedbackDropdown.addEventListener('click', (e) => {
+  const item = e.target.closest('.dropdown-item');
+  if (!item) return;
+  const url = item.dataset.url;
+  if (url) API.openExternal(url).catch(() => {});
+  feedbackDropdown.hidden = true;
+});
+
 // ─── Install Modal Buttons ──────────────────────────────────────
 $('installYesBtn').addEventListener('click', () => answerInstall(true));
 $('installNoBtn').addEventListener('click', () => answerInstall(false));

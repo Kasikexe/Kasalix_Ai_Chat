@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
-import { Menu, Brain, Download, Smartphone, Wifi, Info, History } from 'lucide-react';
+import { Menu, Brain, Download, Smartphone, Wifi, Info, History, Bug, Lightbulb, BarChart3 } from 'lucide-react';
+import { openExternal, NEW_ISSUE_URL, IDEAS_URL, REPO_URL } from '../utils/openExternal';
 import type { Conversation } from '../types';
 import { isInCapacitor, clearServerUrl, getSavedServerUrl } from '../services/api';
 import { AboutModal } from './AboutModal';
 import { ChangelogModal } from './ChangelogModal';
+import { PollModal } from './PollModal';
 
 interface HeaderProps {
   onMenuClick: () => void;
@@ -13,18 +15,43 @@ interface HeaderProps {
   hideThinking?: boolean;
 }
 
+/** Inline GitHub mark (lucide-style) so the trigger works in every client. */
+function GithubIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+      <path d="M9 18c-4.51 2-5-2-7-2" />
+    </svg>
+  );
+}
+
 export function Header({
   onMenuClick, thinkingEnabled, onToggleThinking, conversation, hideThinking
 }: HeaderProps) {
   const [exportOpen, setExportOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [changelogOpen, setChangelogOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [pollOpen, setPollOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
+  const feedbackRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
         setExportOpen(false);
+      }
+      if (feedbackRef.current && !feedbackRef.current.contains(e.target as Node)) {
+        setFeedbackOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClick);
@@ -158,6 +185,70 @@ export function Header({
           <span className="hidden sm:inline">Download</span>
         </a>
 
+        {/* Feedback dropdown — report bugs & suggest ideas on GitHub */}
+        <div ref={feedbackRef} className="relative">
+          <button
+            onClick={() => setFeedbackOpen(!feedbackOpen)}
+            className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
+            title="Feedback — report a bug or suggest an idea"
+            aria-label="Feedback"
+            aria-expanded={feedbackOpen}
+          >
+            <GithubIcon />
+          </button>
+          {feedbackOpen && (
+            <div className="absolute right-0 top-full mt-1 w-60 bg-gray-900 border border-gray-700 rounded-lg shadow-xl py-1.5 z-50">
+              <button
+                onClick={() => { setFeedbackOpen(false); openExternal(NEW_ISSUE_URL); }}
+                className="w-full text-left px-3 py-2 hover:bg-gray-800 transition-colors group"
+              >
+                <span className="flex items-center gap-2 text-xs text-gray-300">
+                  <Bug size={14} className="text-red-400 flex-shrink-0" />
+                  Report a bug
+                </span>
+                <span className="block ml-6 mt-0.5 text-[10px] text-gray-600 group-hover:text-gray-500">
+                  Open a GitHub issue
+                </span>
+              </button>
+              <button
+                onClick={() => { setFeedbackOpen(false); openExternal(IDEAS_URL); }}
+                className="w-full text-left px-3 py-2 hover:bg-gray-800 transition-colors group"
+              >
+                <span className="flex items-center gap-2 text-xs text-gray-300">
+                  <Lightbulb size={14} className="text-amber-400 flex-shrink-0" />
+                  Suggest an idea
+                </span>
+                <span className="block ml-6 mt-0.5 text-[10px] text-gray-600 group-hover:text-gray-500">
+                  GitHub Discussions — Ideas
+                </span>
+              </button>
+              <div className="my-1 border-t border-gray-700" />
+              <button
+                onClick={() => { setFeedbackOpen(false); openExternal(REPO_URL); }}
+                className="w-full text-left px-3 py-2 hover:bg-gray-800 transition-colors group"
+              >
+                <span className="flex items-center gap-2 text-xs text-gray-300">
+                  <GithubIcon size={14} />
+                  Visit repository
+                </span>
+                <span className="block ml-6 mt-0.5 text-[10px] text-gray-600 group-hover:text-gray-500">
+                  {REPO_URL.replace('https://', '')}
+                </span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Community Poll button */}
+        <button
+          onClick={() => setPollOpen(true)}
+          className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
+          title="Community Poll — vote on what to build next"
+          aria-label="Community Poll"
+        >
+          <BarChart3 size={18} />
+        </button>
+
         {/* Changelog button */}
         <button
           onClick={() => setChangelogOpen(true)}
@@ -194,6 +285,7 @@ export function Header({
       </div>
       <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
       <ChangelogModal open={changelogOpen} onClose={() => setChangelogOpen(false)} />
+      <PollModal open={pollOpen} onClose={() => setPollOpen(false)} />
     </header>
   );
 }

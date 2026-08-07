@@ -1,9 +1,9 @@
 // Shared service for fetching release notes from the GitHub Releases API.
 // Used by the Changelog view and the update notification banner.
 
-export const GITHUB_RELEASES_PAGE = 'https://github.com/Kasikexe/Kasalix/releases';
+import { GITHUB_RELEASES_API, RELEASES_URL } from '../config';
 
-const GITHUB_RELEASES_API = 'https://api.github.com/repos/Kasikexe/Kasalix/releases';
+export const GITHUB_RELEASES_PAGE = RELEASES_URL;
 // Cache releases briefly so the GitHub API (rate-limited) isn't hit repeatedly
 const CACHE_KEY = 'kasalix:changelog:releases';
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
@@ -121,12 +121,4 @@ export async function getReleaseForVersion(version: string): Promise<ChangelogEn
   }
 }
 
-/** Open a URL in the system browser (Electron) or a new tab (browser). */
-export function openExternal(url: string) {
-  const api = (window as any).electronAPI;
-  if (api?.openExternal) {
-    api.openExternal(url);
-    return;
-  }
-  window.open(url, '_blank', 'noopener,noreferrer');
-}
+export { openExternal } from '../utils/openExternal';

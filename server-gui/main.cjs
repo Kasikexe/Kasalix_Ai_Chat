@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -33,7 +33,11 @@ function getAppDataRoot() {
 const APP_DATA_ROOT = getAppDataRoot();
 const DATA_DIR = path.join(APP_DATA_ROOT, 'data');
 const GENERATED_IMAGES_DIR = path.join(APP_DATA_ROOT, 'generated_images');
-const GITHUB_API = 'https://api.github.com/repos/Kasikexe/Kasalix/releases/latest';
+// ─── Branding / upstream repo ────────────────────────────────────
+// Where release downloads come from. Override with the KASALIX_REPO
+// env var ("owner/name") when running a rebranded fork.
+const GITHUB_REPO = process.env.KASALIX_REPO || 'Kasikexe/Kasalix';
+const GITHUB_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 
 // ─── FFmpeg (downloaded at first run, NOT shipped — the binaries are GPL) ──
 // Lives in a stable folder next to the app; FFMPEG_PATH/FFPROBE_PATH are
@@ -483,6 +487,13 @@ function getServerStatus() {
 
 // ─── IPC Handlers ────────────────────────────────────────────────
 function setupIPC() {
+  // External links (GitHub feedback) → system browser
+  ipcMain.handle('open-external', async (_event, url) => {
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+      await shell.openExternal(url);
+    }
+  });
+
   // Server control
   ipcMain.handle('server-start', async (_event, httpMode) => {
     return await startServer(httpMode);

@@ -117,6 +117,54 @@ header button, header .status-badge { -webkit-app-region: no-drag; }
 .btn-icon:hover { background: var(--bg-card); color: var(--text); }
 .btn-close:hover { background: var(--red-bg); color: var(--red); }
 
+/* ═══ Header Feedback Dropdown (GitHub) ═══ */
+.header-menu {
+  position: relative;
+  -webkit-app-region: no-drag;
+}
+
+.header-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 240px;
+  background: #111827;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  text-align: left;
+}
+
+.header-dropdown[hidden] { display: none; }
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+
+.dropdown-item:hover { background: rgba(31, 41, 55, 0.9); }
+
+.dd-emoji { font-size: 15px; flex-shrink: 0; }
+
+.dd-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dd-text > span:first-child { font-weight: 500; color: var(--text); }
+.dd-sub { font-size: 10px; color: var(--text-muted); }
+
+.dropdown-sep { height: 1px; background: var(--border); margin: 6px 4px; }
+
 /* ═══ Layout ═══ */
 .layout {
   display: grid;
