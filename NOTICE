@@ -8,5 +8,4 @@ This product includes software developed by the following third parties,
 whose licenses are listed in THIRD_PARTY_NOTICES.md:
 
   - The Apache Software Foundation (Apache License 2.0, e.g. TypeScript)
-  - FFmpeg contributors (GNU General Public License v3, via ffmpeg-static)
   - Many other open source projects under MIT, BSD, ISC and other permissive licenses

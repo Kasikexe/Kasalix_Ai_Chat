@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { MessageSquare, Plus, Trash2, Edit2, X, Check, Menu, Wrench, Search, Film, FolderOpen, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { MessageSquare, Plus, Trash2, Edit2, X, Check, Menu, Wrench, Search, FolderOpen, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import type { Conversation, ConversationMode } from '../types';
 import type { UserProfile } from '../types';
 import { UserBadge } from './UserBadge';
@@ -53,7 +53,7 @@ export function Sidebar({
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
   const isMobile = useIsMobile();
-  // Agent & Editor modes are disabled on the web — only available in the desktop app
+  // Agent mode is disabled on the web — only available in the desktop app
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
   const isWebBlocked = !isElectron;
 
@@ -213,17 +213,6 @@ export function Sidebar({
               BETA
             </span>
           </button>
-          <button
-            disabled
-            title="Planned — coming soon"
-            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all relative cursor-not-allowed opacity-50 text-gray-600"
-          >
-            <Film size={14} />
-            Video Editor
-            <span className="absolute -top-1.5 -right-1.5 px-1 py-0.5 text-[8px] font-bold bg-blue-500 text-white rounded-sm leading-none shadow-sm">
-              Planned
-            </span>
-          </button>
         </div>
 
         <button
@@ -231,7 +220,7 @@ export function Sidebar({
           className="mx-3 mt-2 flex items-center gap-2 px-3 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors border border-gray-700 text-sm"
         >
           <Plus size={16} />
-          <span>{mode === 'agent' ? 'New agent session' : mode === 'editor' ? 'New project' : 'New chat'}</span>
+          <span>{mode === 'agent' ? 'New agent session' : 'New chat'}</span>
         </button>
 
         {/* Search */}
@@ -426,7 +415,7 @@ export function Sidebar({
               );
             }
 
-            // Flat list for chat/editor modes
+            // Flat list for chat mode
             return (
               <>
                 {searchQuery && (
@@ -471,11 +460,7 @@ export function Sidebar({
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         {/* Mode icon */}
-                        {conv.mode === 'editor' ? (
-                          <Film size={14} className="flex-shrink-0 text-red-400" />
-                        ) : (
-                          <MessageSquare size={14} className="flex-shrink-0 text-gray-400" />
-                        )}
+                        <MessageSquare size={14} className="flex-shrink-0 text-gray-400" />
                         <div
                           className="w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0 shadow-sm"
                           style={{ backgroundColor: getAvatarColor(conv.id + conv.title) }}

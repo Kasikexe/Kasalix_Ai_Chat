@@ -1,11 +1,16 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { Terminal, Trash2, Loader, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { api } from '../services/api';
 
-interface TerminalEntry {
+export interface TerminalEntry {
   type: 'command' | 'stdout' | 'stderr' | 'system' | 'error';
   text: string;
   timestamp: number;
+}
+
+export interface TerminalPanelHandle {
+  /** Append an entry to the terminal (used to show the agent's run_command output). */
+  push: (entry: TerminalEntry) => void;
 }
 
 interface Props {
@@ -15,7 +20,7 @@ interface Props {
   onClose?: () => void;
 }
 
-export function TerminalPanel({ cwd, height = 200, onHeightChange, onClose }: Props) {
+export const TerminalPanel = forwardRef<TerminalPanelHandle, Props>(function TerminalPanel({ cwd, height = 200, onHeightChange, onClose }, ref) {
   const [entries, setEntries] = useState<TerminalEntry[]>([
     { type: 'system', text: `Terminal ready — ${cwd}`, timestamp: Date.now() },
   ]);
@@ -42,6 +47,11 @@ export function TerminalPanel({ cwd, height = 200, onHeightChange, onClose }: Pr
   const addEntry = useCallback((entry: TerminalEntry) => {
     setEntries((prev) => [...prev, entry]);
   }, []);
+
+  // Imperative handle so the parent can feed the agent's run_command output in.
+  useImperativeHandle(ref, () => ({
+    push: (entry: TerminalEntry) => addEntry(entry),
+  }), [addEntry]);
 
   const execute = useCallback(async (cmd: string) => {
     if (!cmd.trim() || running) return;
@@ -290,4 +300,4 @@ export function TerminalPanel({ cwd, height = 200, onHeightChange, onClose }: Pr
       </div>
     </div>
   );
-}
+});

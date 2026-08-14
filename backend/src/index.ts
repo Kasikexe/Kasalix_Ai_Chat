@@ -11,14 +11,16 @@ import chatRoutes from './routes/chat';
 import conversationsRoutes from './routes/conversations';
 import settingsRoutes from './routes/settings';
 import filesRoutes from './routes/files';
-import editorRoutes from './routes/editor';
 import memoryRoutes from './routes/memory';
 import changelogRoutes from './routes/changelog';
 import plannedRoutes from './routes/planned';
 import speedtestRoutes from './routes/speedtest';
+import pluginsRoutes from './routes/plugins';
 import { errorHandler, generateId, getGeneratedImagesDir } from './utils/helpers';
 import { registerAllTools } from './services/tools/register';
 import { getAllTools, executeTool } from './services/tools/index';
+import { loadInstalledPlugins } from './services/plugins/manager';
+import { ensureAiRulesFile } from './services/ai-rules';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { createRequire } from 'module';
@@ -37,6 +39,11 @@ const execAsync = promisify(exec);
 
 // Register built-in tools
 registerAllTools();
+
+// Load installed plugins (registers plugin tools at startup)
+loadInstalledPlugins().catch((err) => {
+  console.error('[plugins] Startup load failed:', err);
+});
 
 const app = new Hono();
 
@@ -105,6 +112,11 @@ app.use('/api/speedtest/*', async (c, next) => {
   c.set('auth', { authenticated: authCookie?.includes('settings_auth=1') || false });
   await next();
 });
+app.use('/api/plugins/*', async (c, next) => {
+  const authCookie = c.req.header('Cookie');
+  c.set('auth', { authenticated: authCookie?.includes('settings_auth=1') || false });
+  await next();
+});
 
 // ─── User session auth (protects user-facing features) ────────
 // These routes require a valid Bearer token in the Authorization header
@@ -112,7 +124,6 @@ const SESSION_PROTECTED = [
   '/api/chat/*',
   '/api/conversations/*',
   '/api/files/*',
-  '/api/editor/*',
   '/api/memory/*',
 ];
 
@@ -240,11 +251,11 @@ app.route('/api/chat', chatRoutes);
 app.route('/api/conversations', conversationsRoutes);
 app.route('/api/settings', settingsRoutes);
 app.route('/api/files', filesRoutes);
-app.route('/api/editor', editorRoutes);
 app.route('/api/memory', memoryRoutes);
 app.route('/api/changelog', changelogRoutes);
 app.route('/api/planned', plannedRoutes);
 app.route('/api/speedtest', speedtestRoutes);
+app.route('/api/plugins', pluginsRoutes);
 
 // Serve generated images
 const GENERATED_DIR = getGeneratedImagesDir();
@@ -454,7 +465,7 @@ app.get('/download', async (c) => {
     }
   } catch {}
 
-  const version = process.env.APP_VERSION || '0.9.0';
+  const version = process.env.APP_VERSION || '0.10.15';
   const html = `
 <!DOCTYPE html>
 <html lang="en" class="dark">
@@ -707,6 +718,13 @@ if (useHttps) {
   } catch (err) {
     appLogger.warn(`[server] SSL certificates not found and could not be generated — falling back to HTTP: ${(err as Error).message}`);
   }
+}
+
+// Create the AI rules file on first boot (user-editable single ruleset)
+try {
+  await ensureAiRulesFile();
+} catch (err) {
+  appLogger.warn(`[server] Could not create AI rules file: ${(err as Error).message}`);
 }
 
 if (httpsServerOptions) {

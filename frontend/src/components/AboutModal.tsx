@@ -25,7 +25,6 @@ function docLabel(name: string): string {
   if (name === 'LICENSE') return 'Apache License 2.0';
   if (name === 'NOTICE') return 'NOTICE (attributions)';
   if (name === 'THIRD_PARTY_NOTICES.md') return 'Third-Party Notices';
-  if (name === 'licenses/GPL-3.0.txt') return 'GNU GPL v3 (FFmpeg)';
   return name;
 }
 

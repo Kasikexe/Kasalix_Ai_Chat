@@ -1,15 +1,17 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import { streamChat } from './ollama';
+import { streamChat, streamChatWithTools, modelSupportsTools, modelSupportsThinking } from './ollama';
+import type { ToolLoopMessage } from './ollama';
 import { getMemory } from './memory';
 import { getModelAssignment } from './model-assignments';
 import { getWebContext } from './search';
 import { generateImage } from './image';
-import { executeTool, detectTool } from './tools/index';
+import { executeTool, detectTool, getAllTools, isProbablyMathExpression } from './tools/index';
+import type { ToolResult } from './tools/index';
+import { runAgentLoop, collectReferencedFiles } from './agent';
+import { withAiRules } from './ai-rules';
+import { findDangerousRequest, DANGEROUS_REPLY } from './content-guard';
 import type { ConversationMode, Message } from '../types';
-
-// Global default for thinking mode. Can be overridden per-request.
-const THINKING_ENABLED = process.env.THINKING_MODE === 'true';
 
 interface PipelineOptions {
   model: string;
@@ -19,13 +21,34 @@ interface PipelineOptions {
   signal?: AbortSignal;
   onStage: (stage: string) => void;
   onChunk: (chunk: string) => void;
+  /** @deprecated use thinkingMode — kept for backward compatibility */
   thinkingEnabled?: boolean;
+  /** 'auto' (default): think only when the message needs reasoning. 'off': never. */
+  thinkingMode?: 'auto' | 'off';
   userId?: string;
   userName?: string;
   planningEnabled?: boolean;
   temperature?: number;
   top_p?: number;
   max_tokens?: number;
+  /** Agent mode: whether the AI may write/delete files directly (tool loop) */
+  autoApply?: boolean;
+  /** Agent mode: fired when the AI writes/deletes a file (for live UI updates) */
+  onFileWritten?: (write: { path: string; changeType: string; originalContent?: string }) => void;
+  /** Agent mode: fired when the AI starts a tool call */
+  onAgentTool?: (call: { tool: string; args: Record<string, unknown> }) => void;
+  /** Fired with each reasoning chunk from thinking models (qwen3, deepseek-r1, etc.) */
+  onThinking?: (chunk: string) => void;
+  /** Agent mode: fired when the AI runs a shell command or auto-verify (terminal feed) */
+  onAgentCommand?: (cmd: { command: string; output: string; failed: boolean }) => void;
+  /** Agent mode: fired when the AI asks the user a clarifying question (ask_user) */
+  onQuestion?: (key: string, question: string) => void;
+  /** Agent mode: fired when a run is stopped/capped so the caller can persist resume state */
+  onResumeState?: (state: { history: { role: string; content: string }[] }) => void;
+  /** Agent mode: resume a previously stopped run */
+  resumeState?: { history: { role: string; content: string }[] };
+  /** Routing key for ask_user answers (usually the conversation id) */
+  conversationId?: string;
 }
 
 interface DetectedIntent {
@@ -45,6 +68,8 @@ const LIST_IGNORE_DIRS = new Set([
   'node_modules', '.git', '.svn', '.hg', '.DS_Store',
   '__pycache__', '.next', '.nuxt', 'dist', 'build', '.cache',
   'target', 'vendor', '.venv', 'venv', 'env',
+  // Server internals — the agent must never see or touch these (workspace = app repo).
+  'backend', '.freebuff', 'certs', 'server-gui', 'release',
 ]);
 
 /**
@@ -66,12 +91,70 @@ function needsWebSearch(userMessage: string): boolean {
   const conversationalFollowUps = /(tell me more|continue|go on|what else|can you elaborate|can you explain further|that makes sense|good point|i agree|you('| a)re right|fair enough)/i;
   if (conversationalFollowUps.test(lower)) return false;
 
+  // Skip personal / self-referential questions. The user is asking about
+  // THEMSELVES — their body, looks, life, or the AI's opinion of them.
+  // These never need a web search: the AI answers from its own judgment and
+  // persona. Searching them both wastes time AND derails the answer, because
+  // the search results get injected as "primary source of truth" — the
+  // resulting answer then reads like a dry stats dump, or worse, a
+  // safety-tuned search model's refusal text becomes the "answer".
+  const selfReferential =
+    /\bam i\b/i.test(lower) ||
+    /\bdo you think\b.*\b(i'?m|i am|we|my|me)\b/i.test(lower) ||
+    /\brate\b.*\b(my|me)\b/i.test(lower) ||
+    /\bhow do i look\b/i.test(lower) ||
+    /\bhow (?:big|small|long|tall|old|good|bad|attractive|pretty|handsome|smart) (?:am i|is my)\b/i.test(lower) ||
+    /\bis my\b.*\b(big|small|long|tall|good|bad|attractive|pretty|handsome|smart|nice|ok|okay|normal|weird|fine)\b/i.test(lower);
+  if (selfReferential) return false;
+
   // Search when there's a clear question about external information
   const isQuestion = lower.includes('?');
   const startsWithQuestionWord = /^(what|who|where|when|why|how)\b/i.test(lower.trim());
   const containsFactualNeed = /\b(current|latest|recent|news|update|today'?s|population|weather|price|cost|distance|temperature|forecast|schedule|deadline|release|announcement|election|president|ceo|founder|invented|discovered)\b/i.test(lower);
 
   return isQuestion || startsWithQuestionWord || containsFactualNeed;
+}
+
+/**
+ * Adaptive thinking: decide whether a single message actually benefits from
+ * reasoning (thinking mode). Simple chit-chat and quick recall do NOT — math,
+ * logic, multi-step problems, comparisons and causal "why/how" questions do.
+ * This keeps thinking off for things that don't need it (faster, and small
+ * models often answer worse when forced to reason unnecessarily).
+ */
+export function needsThinking(userMessage: string): boolean {
+  const text = (userMessage || '').replace(/\[image:[^\]]+\]/g, '').trim();
+  if (!text || text.length < 4) return false;
+  const lower = text.toLowerCase();
+
+  // Pure acknowledgments / pleasantries — never think.
+  if (/^(hi|hello|hey|thanks|thank you|ok|okay|yes|no|yeah|nope|sure|great|cool|good|lol|haha|awesome|perfect|nice|bye|goodbye|alright|got it|understood|makes sense|thanks a lot)$/i.test(lower)) {
+    return false;
+  }
+
+  // Math: math vocabulary, or the message is (mostly) a bare math expression.
+  // A range like "scale 1-10" inside a sentence is NOT math.
+  const hasMathVocab =
+    /\b(calculate|compute|solve|equation|algebra|geometry|probability|statistics?|percentage|fraction|derivative|integral)\b/.test(lower);
+  const exprCandidate = text.replace(/^(calculate|what (?:is|'s)|compute|solve|evaluate)\s+/i, '').trim();
+  if (hasMathVocab || isProbablyMathExpression(exprCandidate)) return true;
+
+  // Reasoning vocabulary — analysis, comparison, causality, judgment.
+  const reasoningVocab =
+    /\b(analy[sz]e|compare|contrast|explain why|prove|deduce|derive|predict|justify|logic|puzzle|hypothes|evaluate|interpret|implications|consequences|trade-offs?|pros and cons|should (i|you|we)|is it (better|worse|ethical|fair|correct)|what would happen|how (would|can|should)|why (is|are|does|do|would|should))\b/;
+  if (reasoningVocab.test(lower)) return true;
+
+  // "which X is better/worse/best" — a judgment/comparison question.
+  if (/\bwhich\b.*\b(better|worse|best|cheaper|faster|stronger|more reliable)\b/i.test(text)) return true;
+
+  // Multiple questions in one message = multi-step reasoning.
+  const questionCount = (text.match(/\?/g) || []).length;
+  if (questionCount >= 2) return true;
+
+  // Long, involved questions with at least one question mark.
+  if (text.length > 100 && questionCount >= 1) return true;
+
+  return false;
 }
 
 async function listWorkspaceFiles(wsPath: string): Promise<string> {
@@ -242,7 +325,8 @@ async function runInternalStage(
   messages: Message[],
   think: boolean,
   signal?: AbortSignal,
-  extraOpts: { temperature?: number; top_p?: number; max_tokens?: number } = {}
+  extraOpts: { temperature?: number; top_p?: number; max_tokens?: number } = {},
+  onThinking?: (chunk: string) => void
 ): Promise<string> {
   console.log(`[pipeline] Internal stage "${stageName}" — model: ${model}, think: ${think}`);
   let output = '';
@@ -253,7 +337,7 @@ async function runInternalStage(
       (chunk) => {
         output += chunk;
       },
-      { signal, think, ...extraOpts }
+      { signal, think, ...extraOpts, onThinking }
     );
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') {
@@ -274,7 +358,8 @@ async function runVisibleStage(
   think: boolean,
   onChunk: (chunk: string) => void,
   signal?: AbortSignal,
-  extraOpts: { temperature?: number; top_p?: number; max_tokens?: number } = {}
+  extraOpts: { temperature?: number; top_p?: number; max_tokens?: number } = {},
+  onThinking?: (chunk: string) => void
 ): Promise<string> {
   console.log(`[pipeline] Visible stage "${stageName}" — model: ${model}, think: ${think}`);
   let output = '';
@@ -286,7 +371,7 @@ async function runVisibleStage(
         output += chunk;
         onChunk(chunk);
       },
-      { signal, think, ...extraOpts }
+      { signal, think, ...extraOpts, onThinking }
     );
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') {
@@ -303,6 +388,94 @@ async function runVisibleStage(
  * Detect programming language/framework from user text and search for documentation.
  * Only runs in agent mode before code generation.
  */
+// ─── Model-driven tool calling ────────────────────────────
+
+const MAX_TOOL_ROUNDS = 4;
+
+/** Convert the registered tool definitions into Ollama's tool schema. */
+function toOllamaTools(): Record<string, unknown>[] {
+  return getAllTools().map((t) => {
+    const required = t.params.filter((p) => p.required).map((p) => p.name);
+    const schema: Record<string, unknown> = {
+      type: 'function',
+      function: {
+        name: t.id,
+        description: t.description,
+        parameters: {
+          type: 'object',
+          properties: Object.fromEntries(
+            t.params.map((p) => [p.name, { type: p.type, description: p.description }])
+          ),
+        },
+      },
+    };
+    if (required.length) (schema.function as Record<string, unknown>).required = required;
+    return schema;
+  });
+}
+
+/**
+ * Run a chat turn with the MODEL deciding when to call tools (Ollama tool_calls).
+ * Executed tools get their results fed back to the model; a failed tool is just
+ * another result, so the model can answer naturally instead of the raw error
+ * becoming the user-visible answer. Stops when the model produces content with
+ * no tool calls, or after MAX_TOOL_ROUNDS (then one final plain pass).
+ */
+async function runChatToolLoop(
+  stageName: string,
+  model: string,
+  messages: Message[],
+  think: boolean,
+  onChunk: (chunk: string) => void,
+  signal?: AbortSignal,
+  extraOpts: { temperature?: number; top_p?: number; max_tokens?: number } = {},
+  onThinking?: (chunk: string) => void,
+  onStage?: (stage: string) => void
+): Promise<string> {
+  const tools = toOllamaTools();
+  const loopMessages: ToolLoopMessage[] = messages.map((m) => ({ role: m.role, content: m.content }));
+  const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
+  const userInput = lastUserMsg?.content ?? '';
+
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    onStage?.(round === 0 ? 'chat:thinking' : 'tool:executing');
+    console.log(`[pipeline] Tool round ${round + 1}/${MAX_TOOL_ROUNDS} — ${model}`);
+    const { content, toolCalls } = await streamChatWithTools(model, loopMessages, tools, onChunk, {
+      signal,
+      think,
+      ...extraOpts,
+      onThinking,
+    });
+
+    if (!toolCalls.length) return content;
+
+    // Record what the model wanted to do, then feed the results back.
+    loopMessages.push({ role: 'assistant', content, tool_calls: toolCalls });
+    for (const tc of toolCalls) {
+      const name = tc.function?.name ?? 'unknown';
+      const args = tc.function?.arguments ?? {};
+      let result: ToolResult;
+      try {
+        result = await executeTool(name, args, { userInput });
+      } catch (e) {
+        result = { success: false, output: `Tool "${name}" crashed: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      console.log(`[pipeline] Tool "${name}" → ${result.success ? 'ok' : 'error'}: ${result.output.substring(0, 80)}`);
+      loopMessages.push({ role: 'tool', content: result.output });
+    }
+  }
+
+  // Cap reached — one final pass without tools so the user still gets an answer.
+  console.log(`[pipeline] Tool loop cap (${MAX_TOOL_ROUNDS}) reached — final plain pass`);
+  const final = await streamChatWithTools(model, loopMessages, [], onChunk, {
+    signal,
+    think,
+    ...extraOpts,
+    onThinking,
+  });
+  return final.content;
+}
+
 const DOCS_QUERY_MAP: Record<string, string[]> = {
   react: ['react', 'reactjs', 'jsx', 'tsx', 'nextjs', 'next.js'],
   vue: ['vue', 'vuejs', 'nuxt', 'nuxtjs'],
@@ -375,13 +548,72 @@ async function buildMemoryContext(userId?: string): Promise<string | null> {
 }
 
 export async function runPipeline(opts: PipelineOptions): Promise<string> {
-  const { model, mode, workspacePath, signal, onStage, onChunk, thinkingEnabled, userId, userName, planningEnabled, temperature, top_p, max_tokens } = opts;
+  let model = opts.model;
+  const { mode, workspacePath, signal, onStage, onChunk, userId, userName, planningEnabled, temperature, top_p, max_tokens, onThinking } = opts;
   let { messages } = opts;
   const intent = await detectIntent(messages, mode);
 
-  // Determine thinking mode: request override > env default
-  // Agent mode always uses fast mode (thinking disabled)
-  const think = mode === 'agent' ? false : (thinkingEnabled !== undefined ? thinkingEnabled : THINKING_ENABLED);
+  // ─── Dangerous-content guard ──────────────────────────────
+  // App-level safety net: refuse genuinely illegal/dangerous requests BEFORE
+  // they reach the model. The check runs for every chat model — the app
+  // enforces this line itself, independent of model behavior.
+  const dangerousRequest = findDangerousRequest(messages);
+  if (dangerousRequest) {
+    console.log(`[pipeline] Blocked dangerous request (${dangerousRequest})`);
+    onChunk?.(DANGEROUS_REPLY);
+    return DANGEROUS_REPLY;
+  }
+
+  // ─── Adaptive thinking ────────────────────────────────────
+  // 'off' never thinks; otherwise (default 'auto') decide per message whether
+  // reasoning actually helps. When thinking IS needed but the base chat model
+  // can't think, route to the dedicated Chat (Thinking) model instead.
+  const thinkingMode: 'auto' | 'off' = opts.thinkingMode ?? (opts.thinkingEnabled === false ? 'off' : 'auto');
+  const lastUserMsgForThink = [...messages].reverse().find((m) => m.role === 'user');
+  const think = thinkingMode === 'off' ? false : needsThinking(lastUserMsgForThink?.content ?? '');
+  console.log(`[pipeline] Thinking mode: ${thinkingMode} → think: ${think}`);
+  if (think && !modelSupportsThinking(model)) {
+    const thinkingModel = await getModelAssignment('chat_thinking');
+    if (thinkingModel && thinkingModel !== model) {
+      console.log(`[pipeline] Auto-thinking: ${model} can't think → using ${thinkingModel}`);
+      model = thinkingModel;
+    }
+  }
+
+  // ─── AGENT LOOP (auto-apply mode) ─────────────────────────
+  // In auto-apply mode the AI is autonomous: it can read files, run
+  // commands, write and delete files, and iterate until the task is done.
+  // Image/vision requests stay on the regular pipeline (they need the
+  // vision-analysis and image-generation stages).
+  if (mode === 'agent' && opts.autoApply === true && !intent.hasImage && !intent.wantsImage) {
+    console.log('[pipeline] Agent mode with auto-apply — running autonomous loop');
+    const memoryContext = await buildMemoryContext(userId);
+    return await runAgentLoop({
+      model,
+      messages,
+      workspacePath,
+      autoApply: true,
+      userName,
+      signal,
+      think,
+      askKey: opts.conversationId,
+      resumeState: opts.resumeState,
+      callbacks: {
+        onStage,
+        onChunk,
+        onToolStart: opts.onAgentTool,
+        onFileWritten: opts.onFileWritten,
+        onThinking,
+        onAgentCommand: opts.onAgentCommand,
+        onQuestion: opts.onQuestion,
+        onResumeState: opts.onResumeState,
+      },
+      temperature,
+      top_p,
+      max_tokens,
+      extraContext: memoryContext || undefined,
+    });
+  }
 
   console.log(`[pipeline] Intent: hasImage=${intent.hasImage}, wantsCode=${intent.wantsCode}, wantsFileInfo=${intent.wantsFileInfo}, wantsImage=${intent.wantsImage}, wantsTool=${intent.wantsTool}, think=${think}`);
 
@@ -442,9 +674,12 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   // Tool output variables — declared here so both the TOOL STAGE and simple chat can use them
   let toolOutput: string | undefined;
   let toolStageHandled = false;
+  let toolSucceeded = false;
 
-  // TOOL STAGE: If the user wants to use a tool, execute it and inject result
-  if (intent.wantsTool && intent.toolId) {
+  // TOOL STAGE (heuristic fallback) — only runs when the chat model can't call
+  // tools itself. Tool-capable models use the model-driven loop further down.
+  const chatSupportsTools = mode !== 'agent' && modelSupportsTools(model);
+  if (!chatSupportsTools && intent.wantsTool && intent.toolId) {
     onStage('tool:executing');
     const lastMsg = messages[messages.length - 1];
     const userInput = lastMsg.content;
@@ -452,18 +687,22 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
       const result = await executeTool(intent.toolId, intent.toolParams || {}, { userInput });
       toolOutput = result.output;
       toolStageHandled = true;
+      toolSucceeded = result.success;
       console.log(`[pipeline] Tool "${intent.toolId}" result: ${result.output.substring(0, 100)}`);
     } catch (e) {
       console.error(`[pipeline] Tool "${intent.toolId}" failed:`, e);
       toolOutput = `Sorry, the ${intent.toolId} tool encountered an error.`;
       toolStageHandled = true;
+      toolSucceeded = false;
     }
   }
 
   // Simple chat — no pipeline needed (injects agent awareness in agent mode)
   if (!intent.hasImage && !intent.wantsCode && !intent.wantsImage) {
-    // If we have tool output, inject it into the conversation (skip AI for tools)
-    if (toolStageHandled && toolOutput) {
+    // A SUCCESSFUL heuristic tool result is returned directly (e.g. "2 + 2 = 4").
+    // A FAILED tool never becomes the answer — it's passed to the AI below so
+    // the conversation stays answerable.
+    if (toolStageHandled && toolSucceeded && toolOutput) {
       // Send tool output through onChunk so the client receives it AND fullResponse is populated
       onChunk(toolOutput);
       return toolOutput;
@@ -475,32 +714,35 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
         : 'You cannot read files or list directories directly. If asked about files, say you cannot see them and offer to generate code instead.';
 
       const agentSystem = withContext(
-        'You are an AI coding agent helping ' + (userName || 'a user') + ' build projects in their workspace.\n' +
-        'Your workspace is at: ' + (workspacePath || '(not set)') + '\n\n' +
-        fileInfo +
-        '\n\nCRITICAL RULES FOR CODE BLOCKS:\n' +
-        '1) ALWAYS start EVERY code block with a file path comment on the FIRST LINE.\n' +
-        '   Example: `// index.html` then the HTML on the next line.\n' +
-        '   Example: `# main.py` then Python code.\n' +
-        '   Example: `<!-- app.component.html -->` then Angular template.\n' +
-        '2) The file path MUST include a file extension (.html, .py, .ts, .css, etc.).\n' +
-        '3) Use relative paths like src/index.ts, components/Button.tsx, etc.\n' +
-        '4) NEVER output a code block without a file path comment on the first line.\n' +
-        '\n' +
-        'CRITICAL — You MUST output the COMPLETE file content in every code block. NEVER use placeholders like "# rest of the code", "...", "// remaining code unchanged", or similar shortcuts. Every code block must be the ENTIRE file from start to finish.\n' +
-        '\n' +
-        'To DELETE a file, output a code block with the first line as: `// DELETE: path/to/file.ext`\n' +
-        'and NO other content in the code block.\n' +
-        '\n' +
-        'If asked a question, answer conversationally.\n' +
-        'All file operations are limited to your workspace. Do NOT reference files outside it.'
+        await withAiRules(
+          'You are an AI coding agent helping ' + (userName || 'a user') + ' build projects in their workspace.\n' +
+          'Your workspace is at: ' + (workspacePath || '(not set)') + '\n\n' +
+          fileInfo +
+          '\n\nCRITICAL RULES FOR CODE BLOCKS:\n' +
+          '1) ALWAYS start EVERY code block with a file path comment on the FIRST LINE.\n' +
+          '   Example: `// index.html` then the HTML on the next line.\n' +
+          '   Example: `# main.py` then Python code.\n' +
+          '   Example: `<!-- app.component.html -->` then Angular template.\n' +
+          '2) The file path MUST include a file extension (.html, .py, .ts, .css, etc.).\n' +
+          '3) Use relative paths like src/index.ts, components/Button.tsx, etc.\n' +
+          '4) NEVER output a code block without a file path comment on the first line.\n' +
+          '\n' +
+          'CRITICAL — You MUST output the COMPLETE file content in every code block. NEVER use placeholders like "# rest of the code", "...", "// remaining code unchanged", or similar shortcuts. Every code block must be the ENTIRE file from start to finish.\n' +
+          '\n' +
+          'To DELETE a file, output a code block with the first line as: `// DELETE: path/to/file.ext`\n' +
+          'and NO other content in the code block.\n' +
+          '\n' +
+          'If asked a question, answer conversationally.\n' +
+          'All file operations are limited to your workspace. Do NOT reference files outside it.',
+          'agent'
+        )
       );
 
       const agentMessages: Message[] = [
         { role: 'system', content: agentSystem },
         ...messages,
       ];
-      return await runVisibleStage('chat', model, agentMessages, think, onChunk, signal, { temperature, top_p, max_tokens });
+      return await runVisibleStage('chat', model, agentMessages, think, onChunk, signal, { temperature, top_p, max_tokens }, onThinking);
     }
 
     // Build context messages for plain chat
@@ -513,20 +755,49 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
     }
     const combinedContext = contextParts.length > 0 ? contextParts.join('\n\n---\n\n') : null;
 
-    if (combinedContext) {
-      const chatMessages: Message[] = [
-        { role: 'system', content: combinedContext },
-        ...messages,
-      ];
-      return await runVisibleStage('chat', model, chatMessages, think, onChunk, signal, { temperature, top_p, max_tokens });
+    // Chat rules apply to every plain-chat message (core + chat section only).
+    // The persona below is the anti-robot layer: no meta-commentary, no
+    // clinical phrasing — the AI should read like a friend having a chat.
+    const chatSystem = await withAiRules(
+      `You are a real person — a friend the user is chatting with, not a chatbot or a customer-service rep.
+
+HOW TO TALK (this matters more than anything):
+- Sound human: use contractions ("I'm", "don't", "that's") and natural, conversational phrasing.
+- Lead with the answer. NEVER open with meta-commentary like "I can provide some context", "Based on available data", "Here is what I found", "According to studies", "As an AI", "I'd be happy to help", or "Great question!".
+- Match the user's tone and length. A short question gets a short answer. Don't write essays or pad with filler.
+- Skip the robot tells: no "It's important to note", "In conclusion", "Overall,", "Research suggests that", and no clinical bullet lists unless the user asked for one.
+- Answer the user's ACTUAL question. Never respond with something that belongs to a different topic.
+- Facts: never invent numbers, statistics, dimensions, prices, dates, names, quotes, or sources. If asked a factual question you genuinely don't know, say "I don't know" plainly. If you have a web search tool and need a fact you can't verify from memory, look it up.
+- Refuse genuinely illegal or dangerous requests — making bombs or weapons, doxxing, fraud, malware — in one calm, short sentence, no sermon, then offer the closest legal alternative if one exists.`,
+      'chat'
+    );
+    const chatSystemMessages: Message[] = [
+      {
+        role: 'system',
+        content: chatSystem + (toolStageHandled && !toolSucceeded
+          ? `\n\n[A tool was attempted but failed: ${toolOutput}. Answer the user's question normally — don't dwell on the tool unless it genuinely helps.]`
+          : ''),
+      },
+      ...(combinedContext ? [{ role: 'system' as const, content: combinedContext }] : []),
+    ];
+    const chatMessages: Message[] = [...chatSystemMessages, ...messages];
+
+    if (chatSupportsTools) {
+      try {
+        return await runChatToolLoop('chat', model, chatMessages, think, onChunk, signal, { temperature, top_p, max_tokens }, onThinking, onStage);
+      } catch (e) {
+        if (e instanceof Error && e.name === 'AbortError') throw e;
+        console.warn(`[pipeline] Tool calling failed, falling back to plain chat: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
-    return await runVisibleStage('chat', model, messages, think, onChunk, signal, { temperature, top_p, max_tokens });
+    return await runVisibleStage('chat', model, chatMessages, think, onChunk, signal, { temperature, top_p, max_tokens }, onThinking);
   }
 
   let imageDescription = '';
   let planOutput = '';
   let codeOutput = '';
   let generatedImageFilename: string | undefined;
+  let imageGenNote = '';
 
   // STAGE 1: Vision analysis (INTERNAL — user doesn't see this)
   if (intent.hasImage && intent.imageDataUrl) {
@@ -615,16 +886,23 @@ Output ONLY the plan — no introductory text, no conclusion, no code blocks.`,
 
     // Try to generate image
     try {
-      onStage('image:generating');
+      if (!imageModel) {
+        // No image model assigned (set to None in the Server App) — tell the
+        // user instead of calling Ollama with an empty model name.
+        console.log('[pipeline] Image generation skipped: no model assigned');
+        imageGenNote = '\n\n(Image generation is not set up — assign an image model in the Server App → Models to enable it.)';
+      } else {
+        onStage('image:generating');
 
-      // We run this as a visible stage that sends status updates
-      // but the actual image data is returned via the done event
-      console.log(`[pipeline] Generating image with model: ${imageModel}`);
+        // We run this as a visible stage that sends status updates
+        // but the actual image data is returned via the done event
+        console.log(`[pipeline] Generating image with model: ${imageModel}`);
 
-      const result = await generateImage(userText, imageModel, signal);
-      generatedImageFilename = result.filename;
+        const result = await generateImage(userText, imageModel, signal);
+        generatedImageFilename = result.filename;
 
-      console.log(`[pipeline] Image generated: ${result.filename}`);
+        console.log(`[pipeline] Image generated: ${result.filename}`);
+      }
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') throw e;
       console.error('[pipeline] Image generation failed:', e);
@@ -652,6 +930,12 @@ Output ONLY the plan — no introductory text, no conclusion, no code blocks.`,
           docsContext = `\n\n---\n\n${docs}`;
         }
       }
+
+      // Read referenced files so the model edits REAL contents, not guesses.
+      const refContents = await collectReferencedFiles(userText, workspacePath);
+      if (refContents) {
+        docsContext += refContents;
+      }
     }
 
     const codeContext = imageDescription
@@ -662,7 +946,7 @@ Output ONLY the plan — no introductory text, no conclusion, no code blocks.`,
       ? `\n\n---\n\nA plan has already been created and shared with the user above. Follow this plan EXACTLY when generating code:\n${planOutput}\n\nGenerate code that implements this plan precisely. Do NOT deviate from the plan unless the user explicitly asks for changes.`
       : '';
 
-    const codeSystemPrompt = mode === 'agent'
+    let codeSystemPrompt = mode === 'agent'
       ? `You are an expert developer working in a code agent workspace for ${userName || 'a user'}.
 Your workspace directory is: ${workspacePath || '(not set)'}
 
@@ -689,10 +973,29 @@ Use the appropriate comment syntax for each language:
 - ; for INI
 - -- for SQL
 
-CRITICAL — COMPLETE FILES ONLY: Every code block MUST contain the ENTIRE file from start to finish. NEVER use placeholders like "# rest of the code", "...", "// remaining code unchanged", or similar shortcuts. Partial code with placeholders will corrupt the user's files.
+EDIT vs NEW FILES:
+- For a NEW file: output a code block with the path comment on the first line (e.g. "// src/app.ts") and the ENTIRE new file content.
+- For an EXISTING file that you only partially change: use an EDIT block instead — first line "// EDIT: path/to/file.ext" (with the appropriate comment prefix for the language), then the exact old lines under "OLD:", then a line with only ---, then the replacement lines under "NEW:". Example:
+
+// EDIT: src/app.ts
+OLD:
+const x = 1;
+const y = 2;
+---
+NEW:
+const x = 10;
+const y = 20;
+
+- The OLD: section must match the CURRENT file content exactly (read it from the provided file contents). Only include the lines you are changing. This keeps edits surgical and fast — do NOT rewrite entire existing files when only part changes.
+- For a COMPLETE rewrite of an existing file (most of the file changes), a full code block is acceptable.
+
+CRITICAL — COMPLETE FILES ONLY for new files and rewrites: Every full-file code block MUST contain the ENTIRE file from start to finish. NEVER use placeholders like "# rest of the code", "...", "// remaining code unchanged", or similar shortcuts. Partial code with placeholders will corrupt the user's files.
 
 After the code blocks, write a 1-2 sentence technical summary.${planInstructions}`
       : `You are an expert developer. Generate clean, working code in markdown code blocks with language tags. After the code, write a 1-2 sentence technical summary of what you built.${planInstructions}`;
+
+    // Inject the AI ruleset — agent mode gets core + agent rules, chat gets core + chat rules
+    codeSystemPrompt = await withAiRules(codeSystemPrompt, mode === 'agent' ? 'agent' : 'chat');
 
     const codeMessages: Message[] = [
       {
@@ -706,6 +1009,10 @@ After the code blocks, write a 1-2 sentence technical summary.${planInstructions
     try {
       // Code model doesn't need thinking mode either
       const codeModel = await getModelAssignment('code');
+      // Tell the UI the code model is now running. It streams internally, so
+      // without this stage the previous one (often 'search:docs') stays on
+      // screen for the entire generation.
+      onStage('code:generating');
       codeOutput = await runInternalStage('code', codeModel, codeMessages, false, signal, { temperature, top_p, max_tokens });
       // After code generation completes, show writing stage
       onStage('writing:files');
@@ -806,11 +1113,16 @@ Your job: Write a brief, friendly response (2-3 sentences) that describes what's
   }
 
   // Run the final visible stage
-  let finalOutput = await runVisibleStage('final', model, finalMessages, think, onChunk, signal, { temperature, top_p, max_tokens });
+  let finalOutput = await runVisibleStage('final', model, finalMessages, think, onChunk, signal, { temperature, top_p, max_tokens }, onThinking);
 
   // Programmatically append the generated image tag (reliable — not left to AI discretion)
   if (generatedImageFilename) {
     finalOutput += `\n\n[generated_image:${generatedImageFilename}]`;
+  }
+
+  // Append a note when image generation was requested but no model is assigned.
+  if (imageGenNote) {
+    finalOutput += imageGenNote;
   }
 
   return finalOutput;

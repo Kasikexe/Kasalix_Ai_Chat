@@ -36,11 +36,23 @@ for /f "usebackq delims=" %%a in (`node -e "const p=require('../frontend/package
 if not defined CURRENT_VERSION set "CURRENT_VERSION=1.0.0"
 echo   Current version: %CURRENT_VERSION%
 
-set /p "NEW_VERSION=Enter new version (press Enter to keep %CURRENT_VERSION%): "
-if not defined NEW_VERSION set "NEW_VERSION=%CURRENT_VERSION%"
+:: Auto-bump the patch (x.y.z -> x.y.(z+1)) when the user presses Enter,
+:: so each build gets a fresh artifact name and never overwrites the previous one.
+set "AUTO_VERSION=%CURRENT_VERSION%"
+for /f "tokens=1,2,3 delims=." %%a in ("%CURRENT_VERSION%") do (
+    if "%%c"=="" (
+        set "AUTO_VERSION=%%a.%%b.1"
+    ) else (
+        set /a "AUTO_PATCH=%%c+1"
+        set "AUTO_VERSION=%%a.%%b.!AUTO_PATCH!"
+    )
+)
+
+set /p "NEW_VERSION=Enter new version (press Enter to auto-bump to %AUTO_VERSION%): "
+if not defined NEW_VERSION set "NEW_VERSION=%AUTO_VERSION%"
 set "NEW_VERSION=%NEW_VERSION: =%"
-if not defined NEW_VERSION set "NEW_VERSION=%CURRENT_VERSION%"
-if "%NEW_VERSION%"=="" set "NEW_VERSION=%CURRENT_VERSION%"
+if not defined NEW_VERSION set "NEW_VERSION=%AUTO_VERSION%"
+if "%NEW_VERSION%"=="" set "NEW_VERSION=%AUTO_VERSION%"
 
 :: Validate version format (x.y or x.y.z)
 echo !NEW_VERSION!| findstr /r "^[0-9][0-9]*\.[0-9][0-9]*$" >nul 2>nul

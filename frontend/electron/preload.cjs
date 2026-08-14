@@ -57,5 +57,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listDir: (dirPath) => ipcRenderer.invoke('list-dir', dirPath),
   readFile: (filePath, workspacePath) => ipcRenderer.invoke('read-file', filePath, workspacePath),
   writeFile: (filePath, content, workspacePath) => ipcRenderer.invoke('write-file', filePath, content, workspacePath),
+  editFile: (filePath, oldString, newString, workspacePath) => ipcRenderer.invoke('edit-file', filePath, oldString, newString, workspacePath),
   deleteFile: (filePath, workspacePath) => ipcRenderer.invoke('delete-file', filePath, workspacePath),
 });

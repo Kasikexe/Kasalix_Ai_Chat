@@ -1,7 +1,10 @@
-import { useState, useRef, useMemo, useCallback } from 'react';
+import { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 import { X, AlertTriangle, Save, Check, Undo2, Redo2, FileCode } from 'lucide-react';
 import { api } from '../services/api';
 import { getHighlightedHtml } from '../utils/format';
+
+// Agent-mode setting: auto-save instead of requiring Ctrl+S (toggle in Settings → Agent)
+const AUTO_SAVE_KEY = 'ai-chat:agentAutoSave';
 
 interface OpenFile {
   path: string;
@@ -11,6 +14,8 @@ interface OpenFile {
   originalContent: string;
   saved: boolean;
   dirty: boolean;
+  /** True when the agent wrote this file to disk while the tab had unsaved edits */
+  conflicted?: boolean;
 }
 
 interface Props {
@@ -22,6 +27,9 @@ interface Props {
   onFileClose: (path: string) => void;
   onFileContentChange: (path: string, content: string) => void;
   onFileSave: (path: string, content: string) => void;
+  /** Agent wrote this file to disk while the tab had unsaved edits — user resolves */
+  onReloadFromDisk?: (path: string) => void;
+  onKeepChanges?: (path: string) => void;
 }
 
 function EditorWithLineNumbers({
@@ -174,7 +182,7 @@ function EditorWithLineNumbers({
   );
 }
 
-export function CodeEditorTabs({ files, activeFile, workspacePath, onFileSelect, onFileClose, onFileContentChange, onFileSave }: Props) {
+export function CodeEditorTabs({ files, activeFile, workspacePath, onFileSelect, onFileClose, onFileContentChange, onFileSave, onReloadFromDisk, onKeepChanges }: Props) {
   const [saving, setSaving] = useState<Record<string, boolean>>({});
 
   const activeOpenFile = files.find((f) => f.path === activeFile);
@@ -188,7 +196,25 @@ export function CodeEditorTabs({ files, activeFile, workspacePath, onFileSelect,
       console.error('Save failed:', e);
     }
     setSaving((prev) => ({ ...prev, [file.path]: false }));
-  }, [onFileSave]);
+  }, [onFileSave, workspacePath]);
+
+  // Auto-save (Settings → Agent): when enabled, dirty files are saved
+  // automatically (debounced) instead of requiring Ctrl+S / the Save button.
+  // The setting is re-read on every content change so toggling it in Settings
+  // applies live, even to already-open tabs. Defaults to ON.
+  const [autoSave, setAutoSave] = useState(true);
+  useEffect(() => {
+    let enabled = true;
+    try { enabled = localStorage.getItem(AUTO_SAVE_KEY) !== 'false'; } catch { enabled = true; }
+    setAutoSave(enabled);
+    if (!enabled) return;
+    // Conflicted tabs are never auto-saved — their on-disk version is the agent's
+    // change, and auto-saving would overwrite it without the user's say-so.
+    const dirty = files.filter((f) => f.dirty && !f.conflicted);
+    if (dirty.length === 0) return;
+    const timers = dirty.map((f) => setTimeout(() => handleSave(f), 800));
+    return () => timers.forEach((t) => clearTimeout(t));
+  }, [files, handleSave]);
 
   if (files.length === 0) {
     return (
@@ -251,8 +277,24 @@ export function CodeEditorTabs({ files, activeFile, workspacePath, onFileSelect,
               />
             </div>
 
-            {/* Save bar */}
-            {activeOpenFile.dirty && (
+            {/* Conflict banner — agent changed the file on disk while this tab had unsaved edits */}
+            {activeOpenFile.conflicted && (
+              <div className="flex items-center gap-2 px-4 py-1.5 bg-orange-950/40 border-t border-orange-800/40 flex-shrink-0">
+                <AlertTriangle size={12} className="text-orange-400 flex-shrink-0" />
+                <span className="text-xs text-orange-300/90 flex-1">The AI changed this file on disk — the editor kept your unsaved version</span>
+                <button
+                  onClick={() => onKeepChanges?.(activeOpenFile.path)}
+                  className="px-2 py-0.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px] font-medium rounded-lg border border-gray-700 transition-colors"
+                >Keep mine</button>
+                <button
+                  onClick={() => onReloadFromDisk?.(activeOpenFile.path)}
+                  className="px-2 py-0.5 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-medium rounded-lg transition-colors"
+                >Load disk version</button>
+              </div>
+            )}
+
+            {/* Save bar — hidden when auto-save is on (files save themselves) */}
+            {activeOpenFile.dirty && !autoSave && (
               <div className="flex items-center gap-2 px-4 py-1.5 bg-amber-950/30 border-t border-amber-800/30 flex-shrink-0">
                 <AlertTriangle size={12} className="text-amber-400" />
                 <span className="text-xs text-amber-300/80 flex-1">Unsaved changes</span>

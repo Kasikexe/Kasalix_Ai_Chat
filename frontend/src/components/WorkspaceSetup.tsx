@@ -58,14 +58,22 @@ export function WorkspaceSetup({ defaultBasePath: propDefault, onSelect, onClose
     loadDirs(basePath);
   }, [basePath]);
 
+  // Create the folder by writing a .gitkeep file inside it. The write is
+  // sandboxed to `base` — and it returns { error } on failure instead of
+  // throwing, so we MUST check the result or a failed folder creation would
+  // silently set the workspace to a path that doesn't exist.
+  const ensureProjectFolder = async (fullPath: string, base: string): Promise<void> => {
+    const result: any = await api.writeFile(fullPath + '/.gitkeep', '', base);
+    if (result?.error) throw new Error(result.error);
+  };
+
   const handleCreateProject = async () => {
     const name = newName.trim();
     if (!name) return;
     setCreating(true);
     try {
       const fullPath = basePath.replace(/\\/g, '/').replace(/\/$/, '') + '/' + name;
-      // Create the directory by writing a .gitkeep file (sandboxed to basePath)
-      await api.writeFile(fullPath + '/.gitkeep', '', basePath);
+      await ensureProjectFolder(fullPath, basePath);
       onSelect(fullPath, name);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create project');
@@ -101,12 +109,21 @@ export function WorkspaceSetup({ defaultBasePath: propDefault, onSelect, onClose
     onSelect(fullPath, entry.name);
   };
 
-  const handleCustomSubmit = () => {
+  const handleCustomSubmit = async () => {
     const path = customPath.trim();
     if (!path) return;
+    const normalized = path.replace(/\\/g, '/');
     // Extract folder name from path
-    const name = path.replace(/\\/g, '/').split('/').filter(Boolean).pop() || 'Workspace';
-    onSelect(path.replace(/\\/g, '/'), name);
+    const name = normalized.split('/').filter(Boolean).pop() || 'Workspace';
+    setCreating(true);
+    try {
+      // Make sure the folder actually exists before selecting it.
+      await ensureProjectFolder(normalized, normalized);
+      onSelect(normalized, name);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create folder at that path');
+    }
+    setCreating(false);
   };
 
   const dirPathStack = [

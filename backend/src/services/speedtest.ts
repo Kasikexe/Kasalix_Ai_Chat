@@ -9,7 +9,7 @@ import type { Message } from '../types';
 // ─── Model Assignment Keys ──────────────────────────────────
 // These match the keys in model-assignments.ts
 export type ModelAssignmentKey =
-  | 'chat_fast'
+  | 'chat'
   | 'chat_thinking'
   | 'code'
   | 'vision'
@@ -17,7 +17,7 @@ export type ModelAssignmentKey =
   | 'extraction';
 
 const ASSIGNMENT_LABELS: Record<ModelAssignmentKey, string> = {
-  chat_fast: 'Chat (Fast)',
+  chat: 'Chat',
   chat_thinking: 'Chat (Thinking)',
   code: 'Code Generation',
   vision: 'Vision Analysis',
@@ -26,7 +26,7 @@ const ASSIGNMENT_LABELS: Record<ModelAssignmentKey, string> = {
 };
 
 const ASSIGNMENT_ICONS: Record<ModelAssignmentKey, string> = {
-  chat_fast: '⚡',
+  chat: '💬',
   chat_thinking: '🧠',
   code: '💻',
   vision: '👁️',
@@ -212,12 +212,12 @@ export interface SpeedTestDefinition {
 }
 
 export const SPEED_TESTS: SpeedTestDefinition[] = [
-  // ─── Chat Fast (⚡) — simple, fast responses ─────────────
+  // ─── Chat (💬) — general conversation (thinking toggle applies) ──
   {
     id: 'greeting',
     name: 'Greeting',
-    description: 'Basic welcome message — tests fast chat response time',
-    assignmentKey: 'chat_fast',
+    description: 'Basic welcome message — tests chat response time',
+    assignmentKey: 'chat',
     category: 'simple',
     messages: [
       { role: 'system', content: 'You are a helpful AI assistant. Respond concisely in 1-2 sentences.' },
@@ -228,7 +228,7 @@ export const SPEED_TESTS: SpeedTestDefinition[] = [
     id: 'quick-fact',
     name: 'Quick Fact',
     description: 'Simple factual question — tests basic knowledge retrieval',
-    assignmentKey: 'chat_fast',
+    assignmentKey: 'chat',
     category: 'simple',
     messages: [
       { role: 'system', content: 'You are a helpful AI assistant. Respond concisely.' },
@@ -239,7 +239,7 @@ export const SPEED_TESTS: SpeedTestDefinition[] = [
     id: 'follow-up',
     name: 'Short Follow-up',
     description: 'Short conversational response — tests context handling',
-    assignmentKey: 'chat_fast',
+    assignmentKey: 'chat',
     category: 'simple',
     messages: [
       { role: 'system', content: 'You are a helpful AI assistant. Respond concisely.' },
@@ -247,11 +247,12 @@ export const SPEED_TESTS: SpeedTestDefinition[] = [
     ],
   },
 
-  // ─── Chat Thinking (🧠) — reasoning-heavy ────────────────
+  // ─── Chat Thinking (🧠) — reasoning-heavy (used when the chat
+  // model itself lacks thinking support) ─────────────────────
   {
     id: 'logic-puzzle',
     name: 'Logic Puzzle',
-    description: 'A reasoning problem — tests thinking model depth',
+    description: 'A reasoning problem — tests the thinking model\'s depth',
     assignmentKey: 'chat_thinking',
     category: 'long',
     messages: [

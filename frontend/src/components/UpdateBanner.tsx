@@ -1,5 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Download, X, RefreshCw, CheckCircle, ArrowUpCircle, AlertCircle, AlertTriangle } from 'lucide-react';
+import { Download, X, RefreshCw, CheckCircle, ArrowUpCircle, AlertCircle, AlertTriangle, ChevronDown } from 'lucide-react';
+import { getReleaseForVersion, type ChangelogEntry } from '../services/githubReleases';
+import { openExternal } from '../utils/openExternal';
+import { RELEASES_URL } from '../config';
+import { ReleaseNotesMarkdown } from './ReleaseNotesMarkdown';
 
 interface UpdateInfo {
   version: string;
@@ -30,6 +34,9 @@ function isCriticalUpdate(info: UpdateInfo | undefined): boolean {
 export function UpdateBanner() {
   const [state, setState] = useState<UpdateState>({ status: 'idle' });
   const [dismissed, setDismissed] = useState(false);
+  const [releaseNotes, setReleaseNotes] = useState<ChangelogEntry | null>(null);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
 
   useEffect(() => {
@@ -63,6 +70,53 @@ export function UpdateBanner() {
       cleanupError();
     };
   }, [isElectron]);
+
+  // Fetch the GitHub release notes for the available version (falling back to
+  // the updater-provided releaseNotes when the GitHub lookup comes up empty).
+  const availableVersion = state.status === 'available' ? state.info?.version : undefined;
+  const availableReleaseNotes = state.status === 'available' ? state.info?.releaseNotes : undefined;
+  useEffect(() => {
+    if (!availableVersion) return;
+    let cancelled = false;
+    setNotesLoading(true);
+    setNotesOpen(false);
+    getReleaseForVersion(availableVersion).then((entry) => {
+      if (cancelled) return;
+      if (entry) {
+        setReleaseNotes(entry);
+      } else if (availableReleaseNotes) {
+        // electron-updater feeds releaseNotes as HTML — strip tags so it
+        // renders cleanly through the shared Markdown renderer.
+        const stripped = String(availableReleaseNotes)
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/&nbsp;/g, ' ')
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/\s+/g, ' ')
+          .trim();
+        setReleaseNotes({
+          version: availableVersion,
+          title: `v${availableVersion}`,
+          description: stripped || '_No release notes provided._',
+          date: '',
+          type: 'patch',
+          prerelease: false,
+          url: `${RELEASES_URL}/tag/v${availableVersion}`,
+        });
+      } else {
+        setReleaseNotes(null);
+      }
+    }).catch(() => {
+      if (cancelled) return;
+      setReleaseNotes(null);
+    }).finally(() => {
+      if (!cancelled) setNotesLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [availableVersion, availableReleaseNotes]);
 
   const handleDownload = useCallback(async () => {
     if (!isElectron) return;
@@ -107,6 +161,41 @@ export function UpdateBanner() {
                   ? `Version ${state.info.version} is a critical update.`
                   : `You're on v${state.info.currentVersion}. Get the latest features.`}
               </p>
+              {/* Release notes toggle */}
+              {(releaseNotes || notesLoading) && (
+                <div className="mt-2">
+                  <button
+                    onClick={() => setNotesOpen(!notesOpen)}
+                    aria-expanded={notesOpen}
+                    aria-controls="update-banner-release-notes"
+                    className={`inline-flex items-center gap-1 text-[11px] font-medium transition-colors ${
+                      isCritical ? 'text-red-300/80 hover:text-red-200' : 'text-emerald-300/80 hover:text-emerald-200'
+                    }`}
+                  >
+                    <ChevronDown size={12} className={`transition-transform duration-200 ${notesOpen ? 'rotate-180' : ''}`} />
+                    {notesLoading ? 'Loading release notes…' : notesOpen ? 'Hide what\'s new' : 'What\'s new in this version'}
+                  </button>
+                  {notesOpen && releaseNotes && (
+                    <div
+                      id="update-banner-release-notes"
+                      className={`mt-2 max-h-48 overflow-y-auto rounded-lg border p-3 bg-black/20 ${isCritical ? 'border-red-800/50' : 'border-emerald-800/50'}`}
+                    >
+                      <p className={`text-[11px] font-semibold mb-1.5 ${isCritical ? 'text-red-100' : 'text-emerald-100'}`}>
+                        {releaseNotes.title}
+                      </p>
+                      <div className={`leading-relaxed ${isCritical ? 'text-red-100/70' : 'text-emerald-100/70'}`}>
+                        <ReleaseNotesMarkdown content={releaseNotes.description} accent={isCritical ? 'red' : 'emerald'} />
+                      </div>
+                      <button
+                        onClick={() => openExternal(releaseNotes.url)}
+                        className={`mt-2 text-[10px] underline transition-colors ${isCritical ? 'text-red-300/70 hover:text-red-200' : 'text-emerald-300/70 hover:text-emerald-200'}`}
+                      >
+                        View release on GitHub →
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-1.5">
               <button

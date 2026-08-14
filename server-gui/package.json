@@ -1,6 +1,6 @@
 {
   "name": "kasalix-server-gui",
-  "version": "0.9.0",
+  "version": "0.10.15",
   "private": true,
   "main": "main.cjs",
   "scripts": {
@@ -35,9 +35,6 @@
           "!node_modules/typescript/**",
           "!node_modules/bun-types/**",
           "!node_modules/@types/**",
-          "!node_modules/ffmpeg-static/ffmpeg*",
-          "!node_modules/ffmpeg-static/**",
-          "!node_modules/ffprobe-static/bin/**",
           "!data/**",
           "!generated_images/**",
           "!.env"
@@ -66,10 +63,6 @@
       {
         "from": "../THIRD_PARTY_NOTICES.md",
         "to": "THIRD_PARTY_NOTICES.md"
-      },
-      {
-        "from": "../licenses",
-        "to": "licenses"
       }
     ],
     "win": {

@@ -3,7 +3,9 @@ import path from 'path';
 import type { Conversation, ConversationMode, Message } from '../types';
 import { generateId, truncate, getDataDir } from '../utils/helpers';
 
-function migrate(conv: any): Conversation {
+function migrate(conv: any): Conversation | null {
+  // The video editor mode was removed — drop any leftover editor conversations
+  if (conv.mode && conv.mode !== 'chat' && conv.mode !== 'agent') return null;
   return {
     ...conv,
     mode: conv.mode || 'chat',
@@ -66,9 +68,12 @@ async function loadFromFile(): Promise<void> {
     await ensureDir();
     const data = await fs.readFile(STORAGE_FILE, 'utf-8');
     const parsed = JSON.parse(data);
-    conversations = new Map(
-      Object.entries(parsed).map(([k, v]) => [k, migrate(v)])
-    );
+    const cleaned: [string, Conversation][] = [];
+    for (const [k, v] of Object.entries(parsed)) {
+      const conv = migrate(v);
+      if (conv) cleaned.push([k, conv]);
+    }
+    conversations = new Map(cleaned);
   } catch {
     conversations = new Map();
   }
@@ -121,7 +126,7 @@ export async function createConversation(
 export async function updateConversation(
   id: string,
   ownerId: string,
-  updates: Partial<Pick<Conversation, 'title' | 'model' | 'mode' | 'workspacePath'>>
+  updates: Partial<Pick<Conversation, 'title' | 'model' | 'mode' | 'workspacePath' | 'agentState'>>
 ): Promise<Conversation | null> {
   await loadFromFile();
   const conv = conversations.get(id);

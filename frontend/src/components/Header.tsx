@@ -1,8 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import { Menu, Brain, Download, Smartphone, Wifi, Info, History, Bug, Lightbulb, BarChart3 } from 'lucide-react';
+import { Menu, Brain, Download, Smartphone, Wifi, Info, History, Bug, Lightbulb, BarChart3, MoreVertical } from 'lucide-react';
 import { openExternal, NEW_ISSUE_URL, IDEAS_URL, REPO_URL } from '../utils/openExternal';
 import type { Conversation } from '../types';
-import { isInCapacitor, clearServerUrl, getSavedServerUrl } from '../services/api';
 import { AboutModal } from './AboutModal';
 import { ChangelogModal } from './ChangelogModal';
 import { PollModal } from './PollModal';
@@ -13,6 +12,10 @@ interface HeaderProps {
   onToggleThinking: () => void;
   conversation?: Conversation | null;
   hideThinking?: boolean;
+  /** False when the chat model can't do thinking — hides the toggle entirely */
+  thinkingSupported?: boolean;
+  /** Open the server-configuration screen (both desktop + mobile clients) */
+  onConfigureServer?: () => void;
 }
 
 /** Inline GitHub mark (lucide-style) so the trigger works in every client. */
@@ -35,15 +38,17 @@ function GithubIcon({ size = 18 }: { size?: number }) {
 }
 
 export function Header({
-  onMenuClick, thinkingEnabled, onToggleThinking, conversation, hideThinking
+  onMenuClick, thinkingEnabled, onToggleThinking, conversation, hideThinking, thinkingSupported, onConfigureServer
 }: HeaderProps) {
   const [exportOpen, setExportOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [changelogOpen, setChangelogOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [pollOpen, setPollOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -52,6 +57,9 @@ export function Header({
       }
       if (feedbackRef.current && !feedbackRef.current.contains(e.target as Node)) {
         setFeedbackOpen(false);
+      }
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
+        setMoreOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClick);
@@ -116,6 +124,7 @@ export function Header({
   };
 
   return (
+    <>
     <header className="border-b border-gray-800 bg-gray-900/80 backdrop-blur-sm sticky top-0 z-20">
       <div className="flex items-center justify-between px-3 md:px-4 py-3 gap-2">
         <button
@@ -128,9 +137,9 @@ export function Header({
         <h1 className="md:hidden text-sm font-medium text-gray-300">Kasalix AI Chat</h1>
         <div className="flex-1" />
 
-        {/* Export dropdown */}
+        {/* Export dropdown — desktop only (mobile: in the ⋯ menu) */}
         {conversation && conversation.messages.length > 0 && (
-          <div ref={exportRef} className="relative">
+          <div ref={exportRef} className="relative hidden md:block">
             <button
               onClick={() => setExportOpen(!exportOpen)}
               className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
@@ -157,8 +166,8 @@ export function Header({
           </div>
         )}
 
-        {/* Thinking mode toggle — hidden in agent mode */}
-        {!hideThinking && (
+        {/* Thinking mode toggle — hidden in agent mode or when the chat model has no thinking support */}
+        {!hideThinking && thinkingSupported !== false && (
           <button
             onClick={onToggleThinking}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
@@ -166,27 +175,27 @@ export function Header({
                 ? 'bg-purple-900/40 text-purple-300 border border-purple-700'
                 : 'bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700'
             }`}
-            title={thinkingEnabled ? 'Thinking mode ON (slower, smarter)' : 'Thinking mode OFF (faster, direct)'}
+            title={thinkingEnabled ? 'Thinking: Auto — activates only when a question needs reasoning' : 'Thinking: Off — always direct answers'}
           >
             <Brain size={14} />
             <span className="hidden sm:inline">
-              {thinkingEnabled ? 'Thinking' : 'Fast'}
+              {thinkingEnabled ? 'Auto' : 'Off'}
             </span>
           </button>
         )}
 
-        {/* Download client apps button */}
+        {/* Download client apps button — desktop only (mobile: in the ⋯ menu) */}
         <a
           href="/download"
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors bg-blue-900/30 text-blue-300 border border-blue-700/50 hover:bg-blue-800/40"
+          className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors bg-blue-900/30 text-blue-300 border border-blue-700/50 hover:bg-blue-800/40"
           title="Download Android APK or Windows EXE"
         >
           <Smartphone size={14} />
           <span className="hidden sm:inline">Download</span>
         </a>
 
-        {/* Feedback dropdown — report bugs & suggest ideas on GitHub */}
-        <div ref={feedbackRef} className="relative">
+        {/* Feedback dropdown — desktop only (mobile: in the ⋯ menu) */}
+        <div ref={feedbackRef} className="relative hidden md:block">
           <button
             onClick={() => setFeedbackOpen(!feedbackOpen)}
             className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
@@ -239,53 +248,142 @@ export function Header({
           )}
         </div>
 
-        {/* Community Poll button */}
+        {/* Community Poll button — desktop only (mobile: in the ⋯ menu) */}
         <button
           onClick={() => setPollOpen(true)}
-          className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
+          className="hidden md:flex p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
           title="Community Poll — vote on what to build next"
           aria-label="Community Poll"
         >
           <BarChart3 size={18} />
         </button>
 
-        {/* Changelog button */}
+        {/* Changelog button — desktop only (mobile: in the ⋯ menu) */}
         <button
           onClick={() => setChangelogOpen(true)}
-          className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
+          className="hidden md:flex p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
           title="Changelog & release notes"
         >
           <History size={18} />
         </button>
 
-        {/* About button */}
+        {/* About button — desktop only (mobile: in the ⋯ menu) */}
         <button
           onClick={() => setAboutOpen(true)}
-          className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
+          className="hidden md:flex p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
           title="About Kasalix AI Chat"
         >
           <Info size={18} />
         </button>
 
-        {/* Change Server button — only in Capacitor (Android) mode */}
-        {isInCapacitor() && getSavedServerUrl() && (
+        {/* Change Server button — available in both desktop (Electron) and mobile (Capacitor) */}
+        {onConfigureServer && (
           <button
-            onClick={() => {
-              clearServerUrl();
-              window.location.reload();
-            }}
+            onClick={onConfigureServer}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors bg-amber-900/30 text-amber-300 border border-amber-700/50 hover:bg-amber-800/40"
-            title="Change the server connection"
+            title="Change the server connection (address, http/https)"
           >
             <Wifi size={14} />
             <span className="hidden sm:inline">Server</span>
           </button>
         )}
 
+        {/* More ⋯ menu — mobile only, holds the secondary actions that don't
+            fit in one row on narrow screens */}
+        <div ref={moreRef} className="relative md:hidden">
+          <button
+            onClick={() => setMoreOpen(!moreOpen)}
+            className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
+            title="More options"
+            aria-label="More options"
+            aria-expanded={moreOpen}
+          >
+            <MoreVertical size={18} />
+          </button>
+          {moreOpen && (
+            <div className="absolute right-0 top-full mt-1 w-56 bg-gray-900 border border-gray-700 rounded-lg shadow-xl py-1.5 z-50 max-h-[70vh] overflow-y-auto">
+              {conversation && conversation.messages.length > 0 && (
+                <>
+                  <button
+                    onClick={() => { setMoreOpen(false); formatMessages('markdown'); }}
+                    className="w-full text-left px-3 py-2 hover:bg-gray-800 transition-colors text-xs text-gray-300"
+                  >
+                    Export as Markdown
+                  </button>
+                  <button
+                    onClick={() => { setMoreOpen(false); formatMessages('json'); }}
+                    className="w-full text-left px-3 py-2 hover:bg-gray-800 transition-colors text-xs text-gray-300"
+                  >
+                    Export as JSON
+                  </button>
+                  <div className="my-1 border-t border-gray-700" />
+                </>
+              )}
+              <a
+                href="/download"
+                onClick={() => setMoreOpen(false)}
+                className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-gray-800 transition-colors text-xs text-gray-300"
+              >
+                <Smartphone size={14} className="text-blue-400 flex-shrink-0" />
+                Download apps
+              </a>
+              <button
+                onClick={() => { setMoreOpen(false); openExternal(NEW_ISSUE_URL); }}
+                className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-gray-800 transition-colors text-xs text-gray-300"
+              >
+                <Bug size={14} className="text-red-400 flex-shrink-0" />
+                Report a bug
+              </button>
+              <button
+                onClick={() => { setMoreOpen(false); openExternal(IDEAS_URL); }}
+                className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-gray-800 transition-colors text-xs text-gray-300"
+              >
+                <Lightbulb size={14} className="text-amber-400 flex-shrink-0" />
+                Suggest an idea
+              </button>
+              <button
+                onClick={() => { setMoreOpen(false); openExternal(REPO_URL); }}
+                className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-gray-800 transition-colors text-xs text-gray-300"
+              >
+                <GithubIcon size={14} />
+                Visit repository
+              </button>
+              <div className="my-1 border-t border-gray-700" />
+              <button
+                onClick={() => { setMoreOpen(false); setPollOpen(true); }}
+                className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-gray-800 transition-colors text-xs text-gray-300"
+              >
+                <BarChart3 size={14} className="text-purple-400 flex-shrink-0" />
+                Community Poll
+              </button>
+              <button
+                onClick={() => { setMoreOpen(false); setChangelogOpen(true); }}
+                className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-gray-800 transition-colors text-xs text-gray-300"
+              >
+                <History size={14} className="text-gray-400 flex-shrink-0" />
+                Changelog
+              </button>
+              <button
+                onClick={() => { setMoreOpen(false); setAboutOpen(true); }}
+                className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-gray-800 transition-colors text-xs text-gray-300"
+              >
+                <Info size={14} className="text-gray-400 flex-shrink-0" />
+                About
+              </button>
+            </div>
+          )}
+        </div>
+
       </div>
-      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
-      <ChangelogModal open={changelogOpen} onClose={() => setChangelogOpen(false)} />
-      <PollModal open={pollOpen} onClose={() => setPollOpen(false)} />
     </header>
+
+    {/* Modals must render OUTSIDE the <header> element: the header's
+        backdrop-blur (backdrop-filter) makes it the containing block for
+        position:fixed descendants, which would shrink the modal overlays
+        to the header strip instead of the full viewport. */}
+    <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
+    <ChangelogModal open={changelogOpen} onClose={() => setChangelogOpen(false)} />
+    <PollModal open={pollOpen} onClose={() => setPollOpen(false)} />
+    </>
   );
 }

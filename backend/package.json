@@ -1,15 +1,14 @@
 {
   "name": "ai-chat-backend",
-  "version": "0.9.0",
+  "version": "0.10.15",
   "type": "module",
   "scripts": {
     "dev": "bun run --hot src/index.ts",
-    "start": "bun run src/index.ts"
+    "start": "bun run src/index.ts",
+    "test": "bun test"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
-    "ffmpeg-static": "^5.3.0",
-    "ffprobe-static": "^3.1.0",
     "hono": "^4.6.0"
   },
   "devDependencies": {

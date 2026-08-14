@@ -78,9 +78,6 @@ function promptInstall(component) {
     if (component === 'bun') {
       $('installModalTitle').textContent = 'Bun is missing';
       $('installModalMsg').textContent = 'The Bun runtime is required to run the AI server. I can install it for you. May I?';
-    } else if (component === 'ffmpeg') {
-      $('installModalTitle').textContent = 'FFmpeg is missing';
-      $('installModalMsg').textContent = 'FFmpeg is used by the built-in video editor. I can download it for you (~100 MB). May I?';
     } else {
       $('installModalTitle').textContent = 'Ollama is missing';
       $('installModalMsg').textContent = 'Ollama is required for AI model responses. I can install it for you. May I?';
@@ -154,18 +151,6 @@ async function ensureOllama() {
   return false;
 }
 
-async function ensureFfmpeg() {
-  const check = await API.checkFfmpeg();
-  if (check.installed) return true;
-  const yes = await promptInstall('ffmpeg');
-  if (!yes) return false;
-  showInstallProgress('Downloading FFmpeg...', 'FFmpeg powers the video editor. Downloading the official build (~100 MB). This may take a minute.');
-  const res = await API.installFfmpeg();
-  if (res.success && res.installed) { hideInstallProgress(); return true; }
-  showInstallError('FFmpeg download failed', res.error || 'FFmpeg could not be downloaded. You can install it manually from https://ffmpeg.org/download.html');
-  return false;
-}
-
 // ─── Startup Sequence ───────────────────────────────────────────
 async function runStartup() {
   const mark = (id, status) => {
@@ -212,19 +197,8 @@ async function runStartup() {
     log('Ollama not found — AI features will be unavailable');
   }
 
-  // Step 3: Check FFmpeg (auto-download if missing, after asking)
-  mark('check-ffmpeg', 'active');
-  log('Checking FFmpeg (video editor)...');
-  const ffmpegOk = await ensureFfmpeg();
-  if (ffmpegOk) {
-    mark('check-ffmpeg', 'done');
-    log('FFmpeg ready ✓');
-  } else {
-    mark('check-ffmpeg', 'error');
-    log('FFmpeg not available — video editing will be disabled');
-  }
 
-  // Step 4: Backend dependencies
+  // Step 3: Backend dependencies
   mark('check-ollama', 'active');
   log('Backend dependencies ready ✓');
   mark('check-ollama', 'done');
@@ -232,7 +206,7 @@ async function runStartup() {
   // Enable start button (only if Bun is available)
   startBtn.disabled = !bunOk;
 
-  // Step 5: Auto-start server if setting is on
+  // Step 4: Auto-start server if setting is on
   mark('check-server', 'active');
   if (state.autoStart) {
     log('Auto-start enabled — launching server...');
@@ -674,6 +648,7 @@ const views = {
   dashboard: $('view-dashboard'),
   models: $('view-models'),
   speedtest: $('view-speedtest'),
+  plugins: $('view-plugins'),
 };
 
 function switchView(name) {
@@ -683,6 +658,7 @@ function switchView(name) {
   tabs.forEach((t) => t.classList.toggle('active', t.dataset.view === name));
   if (name === 'models') enterModelsView();
   if (name === 'speedtest') enterSpeedTestView();
+  if (name === 'plugins') enterPluginsView();
 }
 
 tabs.forEach((t) => t.addEventListener('click', () => switchView(t.dataset.view)));
@@ -694,38 +670,35 @@ function refreshAuthedView() {
   if (!activeTab) return;
   if (activeTab.dataset.view === 'models') enterModelsView();
   if (activeTab.dataset.view === 'speedtest') enterSpeedTestView();
+  if (activeTab.dataset.view === 'plugins') enterPluginsView();
 }
 
 // ══════════════════════════════════════════════════════
 // Models View — Model Assignments
 // ══════════════════════════════════════════════════════
 const MODEL_KEYS = [
-  'chat_thinking', 'chat_fast', 'code', 'vision', 'extraction',
-  'editor', 'editor_vision', 'search', 'image_generation',
+  'chat', 'chat_thinking', 'code', 'vision', 'extraction',
+  'search', 'image_generation',
 ];
 const MODEL_LABELS = {
+  chat: 'Chat',
   chat_thinking: 'Chat (Thinking)',
-  chat_fast: 'Chat (Fast)',
   code: 'Code Generation',
   vision: 'Vision Analysis',
   extraction: 'Memory Extraction',
-  editor: 'Video Editor',
-  editor_vision: 'Editor Vision',
   search: 'Web Search',
   image_generation: 'Image Generation',
 };
 const MODEL_ICONS = {
-  chat_thinking: '🧠', chat_fast: '⚡', code: '💻', vision: '👁️',
-  extraction: '🧠', editor: '🎬', editor_vision: '👁️', search: '🌐', image_generation: '🎨',
+  chat: '💬', chat_thinking: '🧠', code: '💻', vision: '👁️',
+  extraction: '🧠', search: '🌐', image_generation: '🎨',
 };
 const DEFAULT_ASSIGNMENTS = {
+  chat: 'qwen3:4b',
   chat_thinking: 'qwen3:4b',
-  chat_fast: 'qwen2.5:3b',
   code: 'qwen2.5-coder:7b',
   vision: 'qwen2.5vl:3b',
   extraction: 'qwen2.5:3b',
-  editor: 'qwen2.5:3b',
-  editor_vision: 'qwen2.5vl:3b',
   search: 'qwen2.5:3b',
   image_generation: 'x/flux2-klein',
 };
@@ -753,13 +726,19 @@ async function loadModelsView() {
   installedModels = (mRes && mRes.models) || [];
   const saved = (sRes && sRes.modelAssignments) || {};
   localAssignments = { ...DEFAULT_ASSIGNMENTS };
-  for (const k of MODEL_KEYS) if (saved[k]) localAssignments[k] = saved[k];
+  // An explicit value wins — including an empty string, which is how the host
+  // sets a category to "None" (must NOT fall back to the default on reload).
+  for (const k of MODEL_KEYS) if (k in saved) localAssignments[k] = saved[k] ?? '';
+  // Legacy: older settings stored separate thinking/fast chat models —
+  // migrate the old "thinking" choice to the single chat role.
+  if (!saved.chat && saved.chat_thinking) localAssignments.chat = saved.chat_thinking;
+  else if (!saved.chat && saved.chat_fast) localAssignments.chat = saved.chat_fast;
   $('modelsCount').textContent = installedModels.length + ' model' + (installedModels.length === 1 ? '' : 's') + ' installed';
   renderModelsGrid();
 }
 
 function suggestFor(key) {
-  if (key === 'vision' || key === 'editor_vision') {
+  if (key === 'vision') {
     const v = installedModels.find((m) => /vl|vision|llava/i.test(m.name));
     if (v) return v.name;
   }
@@ -767,11 +746,11 @@ function suggestFor(key) {
     const c = installedModels.find((m) => /coder|deepseek-coder/i.test(m.name));
     if (c) return c.name;
   }
-  if (key === 'chat_thinking') {
+  if (key === 'chat' || key === 'chat_thinking') {
     const t = installedModels.find((m) => /qwen3|deepseek-r1|qwq/i.test(m.name));
     if (t) return t.name;
   }
-  if (key === 'extraction' || key === 'editor') {
+  if (key === 'extraction') {
     const small = installedModels
       .filter((m) => m.details && m.details.parameter_size)
       .sort((a, b) => {
@@ -785,7 +764,12 @@ function suggestFor(key) {
 
 function renderModelsGrid() {
   const grid = $('modelsGrid');
-  grid.innerHTML = MODEL_KEYS.map((key) => {
+  // The dedicated Chat (Thinking) card only matters when the base Chat model
+  // can't think — when Chat supports thinking, the toggle just flips the flag
+  // on that same model and there's nothing extra to configure.
+  const chatSupportsThinking = !!installedModels.find((m) => m.name === localAssignments.chat)?.supportsThinking;
+  const visibleKeys = MODEL_KEYS.filter((k) => k !== 'chat_thinking' || !chatSupportsThinking);
+  grid.innerHTML = visibleKeys.map((key) => {
     const cur = localAssignments[key];
     const suggestion = suggestFor(key);
     const chips = installedModels
@@ -794,12 +778,25 @@ function renderModelsGrid() {
         const size = m.details && m.details.parameter_size
           ? `<span class="chip-size">${esc(m.details.parameter_size)}</span>`
           : '';
-        return `<button class="model-chip${sel ? ' selected' : ''}" data-key="${key}" data-model="${m.name}">${esc(m.name)}${size}</button>`;
+        // Only relevant for chat roles — other roles never use thinking.
+        const noThink = (key === 'chat' || key === 'chat_thinking') && m.supportsThinking === false;
+        return `<button class="model-chip${sel ? ' selected' : ''}" data-key="${key}" data-model="${m.name}">${esc(m.name)}${noThink ? '<span class="chip-nothink">no thinking</span>' : ''}${size}</button>`;
       })
       .join('');
+    // Warn the host when the selected chat model can't think — and explain
+    // what happens instead (a separate Thinking model is used while the
+    // toggle is on).
+    const thinkingNote = key === 'chat' && cur && !installedModels.find((m) => m.name === cur)?.supportsThinking
+      ? '<div class="model-note">⚠️ This model has no thinking mode — a separate Thinking model below is used while the Thinking toggle is on.</div>'
+      : '';
+    // Explain when the thinking model is used.
+    const thinkingRoleNote = key === 'chat_thinking'
+      ? '<div class="model-note">Used only when the Thinking toggle is ON, because the Chat model above can\'t think.</div>'
+      : '';
     const suggBtn = suggestion && suggestion !== cur
       ? `<button class="model-chip suggestion" data-key="${key}" data-model="${suggestion}">✨ ${esc(suggestion)}</button>`
       : '';
+    const noneBtn = `<button class="model-chip none${cur === '' ? ' selected' : ''}" data-key="${key}" data-model="" title="Clear this category — no model used">None</button>`;
     return `<div class="model-card">
       <div class="model-card-head">
         <span class="model-card-icon">${MODEL_ICONS[key]}</span>
@@ -807,9 +804,12 @@ function renderModelsGrid() {
           <div class="model-card-label">${MODEL_LABELS[key]}</div>
           <div class="model-card-key">${key.replace(/_/g, ' ')}</div>
         </div>
-        ${cur ? `<span class="model-card-current" title="${esc(cur)}">${esc(cur)}</span>` : ''}
+        <span class="model-card-current" title="${cur ? esc(cur) : 'No model assigned'}">${cur ? esc(cur) : 'None'}</span>
       </div>
+      ${thinkingNote}
+      ${thinkingRoleNote}
       <div class="model-chips">
+        ${noneBtn}
         ${installedModels.length ? chips : '<span style="font-size:11px;color:var(--text-muted)">No models installed</span>'}
         ${suggBtn}
       </div>
@@ -854,8 +854,7 @@ $('modelsResetBtn').addEventListener('click', () => {
 // Speed Test View — timeline + detail modal
 // ══════════════════════════════════════════════════════
 const MODEL_STYLES = {
-  chat_fast: { color: '#34d399', bg: 'rgba(52,211,153,0.12)' },
-  chat_thinking: { color: '#c084fc', bg: 'rgba(168,85,247,0.15)' },
+  chat: { color: '#c084fc', bg: 'rgba(168,85,247,0.15)' },
   code: { color: '#60a5fa', bg: 'rgba(59,130,246,0.15)' },
   vision: { color: '#fbbf24', bg: 'rgba(251,191,36,0.12)' },
   search: { color: '#22d3ee', bg: 'rgba(34,211,238,0.12)' },
@@ -1123,6 +1122,155 @@ function openSpeedDetail(r) {
 $('speedModalClose').addEventListener('click', () => { $('speedModal').style.display = 'none'; });
 $('speedModal').addEventListener('click', (e) => { if (e.target === $('speedModal')) $('speedModal').style.display = 'none'; });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('speedModal').style.display = 'none'; });
+
+// ══════════════════════════════════════════════════════
+// Plugins View — CURATED CATALOG. Shows only plugins from the official
+// catalog repo (Kasikexe/Kasalix-AI-Plugins). The backend gates installs to
+// catalog entries, so the host can never install an arbitrary third-party
+// repo. Listing + catalog are public reads; mutations require admin auth.
+let pluginsLoaded = false;
+let pluginsRenderedAuthed = null;
+
+async function enterPluginsView() {
+  const $locked = $('pluginsLocked');
+  if ($locked) $locked.style.display = settingsAuthed ? 'none' : 'block';
+  // Re-render when the admin-lock state changes (unlock/lock while on the tab)
+  // so the action buttons appear/disappear immediately.
+  if (pluginsLoaded && pluginsRenderedAuthed === settingsAuthed) return;
+  pluginsLoaded = true;
+  pluginsRenderedAuthed = settingsAuthed;
+  await loadPluginCatalog();
+}
+
+async function loadPluginCatalog() {
+  const $catalog = $('pluginsCatalog');
+  if (!$catalog) return;
+  const $count = $('pluginsCount');
+  $catalog.innerHTML = '<div class="plugins-loading">Loading catalog…</div>';
+  try {
+    const data = await API.getPluginCatalog();
+    if (data && data.error) {
+      $catalog.innerHTML = `<div class="plugins-empty">
+        <p>${escapeHtml(data.error)}</p>
+        <p class="plugins-empty-sub">Create the <code>${escapeHtml(data.repo || 'plugins catalog')}</code> repo with a <code>catalog.json</code> at its root listing your plugins, then hit Refresh.</p>
+      </div>`;
+      if ($count) $count.textContent = '0 available';
+      return;
+    }
+    const plugins = (data && data.plugins) || [];
+    if ($count) $count.textContent = plugins.length + ' available';
+    if (plugins.length === 0) {
+      $catalog.innerHTML = `<div class="plugins-empty">
+        <p>No plugins in the catalog yet.</p>
+        <p class="plugins-empty-sub">Add entries to <code>catalog.json</code> in <code>${escapeHtml((data && data.repo) || 'the catalog repo')}</code> and hit Refresh.</p>
+      </div>`;
+      return;
+    }
+    $catalog.innerHTML = plugins.map((p) => pluginCard(p, settingsAuthed)).join('');
+    bindPluginActions(plugins);
+  } catch (e) {
+    $catalog.innerHTML = `<div class="plugins-empty"><p>Failed to load the plugin catalog: ${escapeHtml(e instanceof Error ? e.message : 'unknown error')}</p></div>`;
+  }
+}
+
+function pluginCard(p, authed) {
+  const isEnabled = p.enabled === true;
+  const badge = p.installed
+    ? `<span class="plugin-badge plugin-badge-installed" title="Installed v${escapeHtml(p.installedVersion || p.version)}">${isEnabled ? '✓ Enabled' : '⏸ Disabled'}</span>`
+    : `<span class="plugin-badge">${escapeHtml(p.version)}</span>`;
+  const actions = p.installed
+    ? (authed
+        ? `<button class="btn btn-small btn-ghost" data-act="toggle" data-id="${escapeHtml(p.id)}" data-enabled="${isEnabled ? 'true' : 'false'}">${isEnabled ? 'Disable' : 'Enable'}</button>
+           <button class="btn btn-small btn-ghost" data-act="update" data-id="${escapeHtml(p.id)}">Update</button>
+           <button class="btn btn-small btn-danger" data-act="uninstall" data-id="${escapeHtml(p.id)}">Remove</button>`
+        : `<span class="plugin-installed-note">Installed — unlock admin to manage</span>`)
+    : (authed
+        ? `<button class="btn btn-small btn-primary" data-act="install" data-id="${escapeHtml(p.id)}" data-source="${escapeHtml(p.source)}">Install</button>`
+        : `<span class="plugin-installed-note">🔒 Unlock admin to install</span>`);
+  return `<div class="plugin-card">
+    <div class="plugin-icon">${p.icon ? escapeHtml(p.icon) : '🧩'}</div>
+    <div class="plugin-body">
+      <div class="plugin-title-row">
+        <span class="plugin-name">${escapeHtml(p.name)}</span>
+        ${badge}
+      </div>
+      <p class="plugin-desc">${escapeHtml(p.description || 'No description provided.')}</p>
+      <p class="plugin-meta">${escapeHtml(p.author ? p.author + ' · ' : '')}${escapeHtml(p.source)}</p>
+    </div>
+    <div class="plugin-actions">${actions}</div>
+  </div>`;
+}
+
+async function bindPluginActions(plugins) {
+  document.querySelectorAll('#pluginsCatalog [data-act]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const act = btn.dataset.act;
+      const id = btn.dataset.id;
+      btn.disabled = true;
+      const status = $('pluginsStatus');
+      try {
+        let res;
+        if (act === 'install') {
+          status.textContent = 'Installing…';
+          res = await API.installPlugin(btn.dataset.source);
+          if (res && res.success) {
+            status.textContent = 'Installed ✓';
+            pluginsLoaded = false; // re-fetch next time so badge flips
+            await loadPluginCatalog();
+            return;
+          }
+          status.textContent = '';
+          alert((res && res.error) || 'Install failed');
+        } else if (act === 'toggle') {
+          const enable = btn.dataset.enabled !== 'true';
+          status.textContent = enable ? 'Enabling…' : 'Disabling…';
+          res = await API.togglePlugin(id, enable);
+          if (res && res.success) status.textContent = enable ? 'Enabled ✓' : 'Disabled ✓';
+          else { status.textContent = ''; alert((res && res.error) || 'Failed to toggle'); }
+        } else if (act === 'update') {
+          status.textContent = 'Updating…';
+          res = await API.updatePlugin(id);
+          if (res && res.success) status.textContent = 'Updated ✓';
+          else { status.textContent = ''; alert((res && res.error) || 'Update failed'); }
+        } else if (act === 'uninstall') {
+          if (!confirm(`Remove the "${id}" plugin?`)) return;
+          status.textContent = 'Removing…';
+          res = await API.uninstallPlugin(id);
+          if (res && res.success) status.textContent = 'Removed ✓';
+          else { status.textContent = ''; alert((res && res.error) || 'Uninstall failed'); }
+        }
+        // Refresh after any successful mutation so installed badges stay accurate.
+        if (res && res.success) {
+          pluginsLoaded = false;
+          await loadPluginCatalog();
+        }
+      } catch (e) {
+        status.textContent = '';
+        alert(e instanceof Error ? e.message : 'Plugin action failed');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+
+// Refresh button + re-render when the admin panel is unlocked.
+const pluginsRefreshBtn = $('pluginsRefreshBtn');
+if (pluginsRefreshBtn) {
+  pluginsRefreshBtn.addEventListener('click', async () => {
+    pluginsLoaded = false;
+    pluginsRenderedAuthed = null;
+    await loadPluginCatalog();
+    const $locked = $('pluginsLocked');
+    if ($locked) $locked.style.display = settingsAuthed ? 'none' : 'block';
+  });
+}
 
 // Check GitHub release version on init
 async function checkLatestRelease() {

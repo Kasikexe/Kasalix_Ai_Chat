@@ -18,7 +18,7 @@
         </svg>
         <div>
           <h1>Kasalix AI Chat</h1>
-          <span class="header-version" id="versionDisplay">v1.6.0</span>
+          <span class="header-version" id="versionDisplay">v0.10.15</span>
         </div>
       </div>
     </div>
@@ -60,6 +60,10 @@
     <button class="tab" data-view="speedtest">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
       Speed Test
+    </button>
+    <button class="tab" data-view="plugins">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="8" height="8" rx="1"/><rect x="14" y="2" width="8" height="8" rx="1"/><rect x="2" y="14" width="8" height="8" rx="1"/><rect x="14" y="14" width="8" height="8" rx="1"/></svg>
+      Plugins
     </button>
   </nav>
 
@@ -312,6 +316,29 @@
     </div>
   </div>
 
+  <!-- ═══ PLUGINS VIEW (curated catalog) ═══ -->
+  <div class="view" id="view-plugins" style="display:none">
+    <div class="view-header">
+      <div class="view-title-row">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="8" height="8" rx="1"/><rect x="14" y="2" width="8" height="8" rx="1"/><rect x="2" y="14" width="8" height="8" rx="1"/><rect x="14" y="14" width="8" height="8" rx="1"/></svg>
+        <div>
+          <h2>Plugins</h2>
+          <p>Official plugins from the curated catalog · <span id="pluginsCount">…</span></p>
+        </div>
+      </div>
+      <div class="view-actions">
+        <span class="save-status" id="pluginsStatus"></span>
+        <button class="btn btn-small btn-ghost" id="pluginsRefreshBtn">Refresh</button>
+      </div>
+    </div>
+    <div class="view-locked" id="pluginsLocked" style="display:none">
+      <p>🔒 Unlock the admin panel (Settings Password on the Dashboard) to install, enable, or remove plugins.</p>
+    </div>
+    <div class="plugins-catalog" id="pluginsCatalog">
+      <div class="plugins-loading">Loading catalog…</div>
+    </div>
+  </div>
+
   <!-- ═══ SPEED TEST DETAIL MODAL ═══ -->
   <div class="modal-overlay" id="speedModal" style="display:none">
     <div class="modal">
@@ -368,10 +395,6 @@
         <div class="check-item" id="check-ollama">
           <span class="check-spinner"></span>
           <span>Checking Ollama...</span>
-        </div>
-        <div class="check-item" id="check-ffmpeg">
-          <span class="check-spinner"></span>
-          <span>Checking FFmpeg (video editor)...</span>
         </div>
         <div class="check-item" id="check-server">
           <span class="check-spinner"></span>

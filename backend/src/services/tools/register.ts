@@ -10,6 +10,7 @@ import { registerJSONTool } from './json';
 import { registerColorTool } from './color';
 import { registerDateTimeTool } from './datetime';
 import { registerHashTool } from './hash';
+import { registerSearchTool } from './search';
 import { getAllTools } from './index';
 
 export function registerAllTools(): void {
@@ -21,6 +22,7 @@ export function registerAllTools(): void {
   registerColorTool();
   registerDateTimeTool();
   registerHashTool();
+  registerSearchTool();
 
   const tools = getAllTools();
   console.log(`[tools] ${tools.length} tool(s) registered: ${tools.map((t) => t.name).join(', ')}`);

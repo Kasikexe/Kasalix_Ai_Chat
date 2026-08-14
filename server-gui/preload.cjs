@@ -15,12 +15,10 @@ contextBridge.exposeInMainWorld('serverAPI', {
   getOllamaModels: () => ipcRenderer.invoke('get-ollama-models'),
   checkOllama: () => ipcRenderer.invoke('check-ollama'),
 
-  // ─── Bun / Ollama / FFmpeg Auto-Install ───────
+  // ─── Bun / Ollama Auto-Install ───────
   checkBun: () => ipcRenderer.invoke('check-bun'),
   installBun: () => ipcRenderer.invoke('install-bun'),
   installOllama: () => ipcRenderer.invoke('install-ollama'),
-  checkFfmpeg: () => ipcRenderer.invoke('check-ffmpeg'),
-  installFfmpeg: () => ipcRenderer.invoke('install-ffmpeg'),
   onInstallProgress: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('install-progress', handler);
@@ -80,6 +78,14 @@ contextBridge.exposeInMainWorld('serverAPI', {
   getInstalledModels: () => ipcRenderer.invoke('get-installed-models'),
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (payload) => ipcRenderer.invoke('save-settings', payload),
+
+  // ─── Plugins ────────────────────────────────────────
+  getPlugins: () => ipcRenderer.invoke('plugins-list'),
+  getPluginCatalog: () => ipcRenderer.invoke('plugins-catalog'),
+  installPlugin: (repo) => ipcRenderer.invoke('plugins-install', repo),
+  uninstallPlugin: (id) => ipcRenderer.invoke('plugins-uninstall', id),
+  togglePlugin: (id, enabled) => ipcRenderer.invoke('plugins-toggle', id, enabled),
+  updatePlugin: (id) => ipcRenderer.invoke('plugins-update', id),
 
   // ─── Speed Test ─────────────────────────────────
   runSpeedTests: () => ipcRenderer.invoke('speedtest-run'),

@@ -1,6 +1,9 @@
 import { Hono } from 'hono';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { applySearchReplace, changedLineCount } from '../utils/edits';
+import { isProtectedPath, isProtectedDirName } from '../utils/protected-dirs';
+import { isPathInside } from '../utils/containment';
 import type { Variables } from '../types';
 
 const files = new Hono<{ Variables: Variables }>();
@@ -18,33 +21,6 @@ function resolveWorkspaceRoot(ws?: string): string | null {
   // otherwise "workspacePath=C:\" would unlock the whole disk.
   if (path.parse(resolved).root === resolved) return null;
   return resolved;
-}
-
-/**
- * Realpath-aware containment check. Comparing the REAL paths (resolving
- * symlinks) prevents a symlink inside the workspace from pointing at files
- * outside it (e.g. a link to ~/.ssh/id_rsa) and passing the lexical check.
- * For targets that do not exist yet (new file creation), the parent
- * directory's real path is resolved instead, so symlinked parents are still
- * caught while creating files still works.
- */
-async function isPathInside(root: string, target: string): Promise<boolean> {
-  try {
-    let realTarget: string;
-    try {
-      realTarget = await fs.realpath(target);
-    } catch {
-      // Target doesn't exist yet — resolve the real parent + basename
-      const parent = path.dirname(target);
-      const realParent = await fs.realpath(parent);
-      realTarget = path.join(realParent, path.basename(target));
-    }
-    const realRoot = await fs.realpath(root);
-    const rel = path.relative(realRoot, realTarget);
-    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-  } catch {
-    return false;
-  }
 }
 
 const IGNORE_DIRS = new Set([
@@ -107,7 +83,7 @@ files.get('/', async (c) => {
 
     const result = await Promise.all(
       entries
-        .filter((entry) => !entry.name.startsWith('.') && !IGNORE_DIRS.has(entry.name))
+        .filter((entry) => !entry.name.startsWith('.') && !IGNORE_DIRS.has(entry.name) && !isProtectedDirName(entry.name))
         .map(async (entry) => {
           const fullPath = path.join(resolved, entry.name);
           let size: number | undefined;
@@ -150,6 +126,9 @@ files.get('/content', async (c) => {
   }
 
   const resolved = path.resolve(filePath);
+  if (isProtectedPath(workspaceRoot, resolved)) {
+    return c.json({ error: 'Access denied: path is in a protected server directory' }, 403);
+  }
   if (!(await isPathInside(workspaceRoot, resolved))) {
     return c.json({ error: 'Access denied: path is outside the workspace' }, 403);
   }
@@ -210,6 +189,9 @@ files.delete('/delete', async (c) => {
   }
 
   const resolved = path.resolve(filePath);
+  if (isProtectedPath(workspaceRoot, resolved)) {
+    return c.json({ error: 'Access denied: path is in a protected server directory' }, 403);
+  }
   if (!(await isPathInside(workspaceRoot, resolved))) {
     return c.json({ error: 'Access denied: path is outside the workspace' }, 403);
   }
@@ -231,6 +213,50 @@ files.delete('/delete', async (c) => {
   }
 });
 
+files.post('/edit', async (c) => {
+  try {
+    const { filePath, oldString, newString, workspacePath } = await c.req.json();
+    if (!filePath || typeof oldString !== 'string' || typeof newString !== 'string') {
+      return c.json({ error: 'filePath, oldString and newString are required' }, 400);
+    }
+
+    const workspaceRoot = resolveWorkspaceRoot(workspacePath);
+    if (!workspaceRoot) {
+      return c.json({ error: 'A valid workspacePath is required in the request body' }, 403);
+    }
+
+    const resolved = path.resolve(filePath);
+    if (isProtectedPath(workspaceRoot, resolved)) {
+      return c.json({ error: 'Access denied: path is in a protected server directory' }, 403);
+    }
+    if (!(await isPathInside(workspaceRoot, resolved))) {
+      return c.json({ error: 'Access denied: path is outside the workspace' }, 403);
+    }
+
+    let oldContent: string;
+    try {
+      oldContent = await fs.readFile(resolved, 'utf-8');
+    } catch {
+      return c.json({ error: 'File does not exist' }, 404);
+    }
+
+    const result = applySearchReplace(oldContent, oldString, newString);
+    if (!result.ok || result.newContent === undefined) {
+      return c.json({ error: result.error || 'Edit failed' }, 400);
+    }
+
+    await fs.writeFile(resolved, result.newContent, 'utf-8');
+
+    return c.json({
+      success: true,
+      path: resolved,
+      size: Buffer.byteLength(result.newContent, 'utf-8'),
+    });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Failed to edit file' }, 500);
+  }
+});
+
 files.put('/write', async (c) => {
   try {
     const { filePath, content, workspacePath } = await c.req.json();
@@ -244,6 +270,9 @@ files.put('/write', async (c) => {
     }
 
     const resolved = path.resolve(filePath);
+    if (isProtectedPath(workspaceRoot, resolved)) {
+      return c.json({ error: 'Access denied: path is in a protected server directory' }, 403);
+    }
     if (!(await isPathInside(workspaceRoot, resolved))) {
       return c.json({ error: 'Access denied: path is outside the workspace' }, 403);
     }
@@ -259,12 +288,38 @@ files.put('/write', async (c) => {
       oldContent = oldBuffer.toString('utf-8');
     } catch { /* file doesn't exist yet */ }
 
+    if (oldContent !== null) {
+      // EXISTING FILE: apply a SURGICAL diff so the write only changes the
+      // lines that actually differ (same rule as the agent's write_file tool).
+      // A version that rewrites most of the file is refused — otherwise a
+      // slightly-off full-file re-emit would silently clobber the user's work.
+      const { count: changed, total } = changedLineCount(
+        oldContent.replace(/\r\n/g, '\n'),
+        content.replace(/\r\n/g, '\n')
+      );
+      const isSmallEdit = changed <= Math.max(20, Math.floor(total * 0.4));
+      if (!isSmallEdit) {
+        return c.json({ error: `Refusing to overwrite ${filePath}: your version changes ${changed} of ${total} lines — that is a full rewrite, not an edit. To rewrite the whole file on purpose, delete it first (or use the edit/EDIT flow with a small old_string).` }, 409);
+      }
+      // Preserve the file's existing line-ending style.
+      const finalContent = oldContent.includes('\r\n')
+        ? content.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
+        : content;
+      await fs.writeFile(resolved, finalContent, 'utf-8');
+      return c.json({
+        success: true,
+        path: resolved,
+        isNew: false,
+        size: Buffer.byteLength(finalContent, 'utf-8'),
+      });
+    }
+
     await fs.writeFile(resolved, content, 'utf-8');
 
     return c.json({
       success: true,
       path: resolved,
-      isNew: oldContent === null,
+      isNew: true,
       size: Buffer.byteLength(content, 'utf-8'),
     });
   } catch (e) {

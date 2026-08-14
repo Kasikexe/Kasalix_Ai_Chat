@@ -1,10 +1,17 @@
 export type Role = 'user' | 'assistant' | 'system';
-export type ConversationMode = 'chat' | 'agent' | 'editor';
+export type ConversationMode = 'chat' | 'agent';
+
+/** Serializable agent-loop state saved when a run is stopped/capped, so a later message can resume. */
+export interface AgentResumeState {
+  history: { role: string; content: string }[];
+}
 
 export interface Message {
   role: Role;
   content: string;
   timestamp?: number;
+  /** Reasoning/thinking text from models like qwen3, deepseek-r1 (collapsible in UI) */
+  thinking?: string;
 }
 
 export interface Conversation {
@@ -14,6 +21,8 @@ export interface Conversation {
   model: string;
   mode: ConversationMode;
   workspacePath?: string;
+  /** Agent loop state saved when a run is stopped/capped — lets "continue" resume instead of restarting. */
+  agentState?: AgentResumeState | null;
   ownerId: string;
   createdAt: number;
   updatedAt: number;
@@ -24,6 +33,8 @@ export interface OllamaModel {
   size?: number;
   modified_at?: string;
   digest?: string;
+  /** Whether the model family supports the think flag (qwen3, deepseek-r1, etc.) */
+  supportsThinking?: boolean;
   details?: {
     format?: string;
     family?: string;

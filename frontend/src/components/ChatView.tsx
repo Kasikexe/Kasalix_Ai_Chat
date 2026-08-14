@@ -17,14 +17,16 @@ interface Props {
   onSearchPrev?: () => void;
   onForkConversation?: (messages: Message[]) => void;
   onConversationUpdate?: (id: string, updates: Partial<{ title: string }>) => void;
+  /** Fired the moment a new chat's stream starts and the backend assigns its id. */
+  onConversationStarted?: (id: string) => void;
 }
 
 export function ChatView({
   initialMessages, conversationId, model, thinkingEnabled = false, onMessageSent, onConversationCreated,
-  searchQuery, onSearchChange, onSearchNext, onSearchPrev, onForkConversation, onConversationUpdate,
+  searchQuery, onSearchChange, onSearchNext, onSearchPrev, onForkConversation, onConversationUpdate, onConversationStarted,
 }: Props) {
   const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, conversationId: convId, currentStage, liveDuration } = useChat(
-    model, initialMessages, conversationId, thinkingEnabled, 'chat', undefined, onConversationUpdate
+    model, initialMessages, conversationId, thinkingEnabled, 'chat', undefined, onConversationUpdate, false, false, undefined, undefined, undefined, undefined, onConversationStarted
   );
 
   // Multi-message selection state
@@ -131,7 +133,7 @@ export function ChatView({
         selectable={selectMode}
         onFork={selectMode ? undefined : handleFork}
       />
-      <InputBar onSend={handleSend} onStop={stopGeneration} isStreaming={isStreaming} />
+      <InputBar onSend={handleSend} onStop={stopGeneration} isStreaming={isStreaming} draftKey={conversationId ?? 'new'} />
     </>
   );
 }

@@ -1,33 +1,68 @@
 import { useState, useEffect } from 'react';
 import { getSavedServerUrl, saveServerUrl, isInCapacitor } from '../services/api';
-import { Wifi, Server, Plug, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { Wifi, Server, Plug, Loader2, CheckCircle, XCircle, Settings } from 'lucide-react';
+import { ServerConfig } from './ServerConfig';
 
 interface ServerConnectProps {
   onConnected: () => void;
 }
 
+/** Parse a saved URL (e.g. http://192.168.1.50:3001) into the form fields. */
+function parseSavedUrl(saved: string): { protocol: 'http' | 'https'; ip: string; port: string } | null {
+  try {
+    const u = new URL(saved.includes('://') ? saved : `http://${saved}`);
+    if (!u.hostname) return null;
+    return {
+      protocol: u.protocol === 'https:' ? 'https' : 'http',
+      ip: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? '443' : '3001'),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function ServerConnect({ onConnected }: ServerConnectProps) {
+  const [protocol, setProtocol] = useState<'http' | 'https'>('http');
   const [ip, setIp] = useState('');
   const [port, setPort] = useState('3001');
   const [testing, setTesting] = useState(false);
   const [status, setStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
   const [showTip, setShowTip] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
 
-  // Check if already configured
+  // Check if already configured — but verify the remembered server actually works
+  // before skipping, so a stale/broken URL doesn't lock the user out.
   useEffect(() => {
-    const saved = getSavedServerUrl();
-    if (saved) {
-      onConnected();
-    }
-  }, [onConnected]);
-
-  // If not in Capacitor (desktop browser), auto-skip
-  useEffect(() => {
-    if (!isInCapacitor() && !getSavedServerUrl()) {
-      // Not on mobile and no config needed — skip
-      onConnected();
-    }
+    let cancelled = false;
+    (async () => {
+      const saved = getSavedServerUrl();
+      if (!saved) {
+        // Not in Capacitor (desktop browser) and no config needed — skip
+        if (!isInCapacitor()) onConnected();
+        return;
+      }
+      // Prefill the form with the remembered address so the user can fix it
+      const parsed = parseSavedUrl(saved);
+      if (parsed) {
+        setProtocol(parsed.protocol);
+        setIp(parsed.ip);
+        setPort(parsed.port);
+      }
+      try {
+        const res = await fetch(`${saved}/api/health`, { signal: AbortSignal.timeout(4000) });
+        if (!cancelled && res.ok) {
+          onConnected();
+          return;
+        }
+      } catch {}
+      if (!cancelled) {
+        setStatus('error');
+        setErrorMsg('The saved server is not reachable. Update the address below or use Server settings and try again.');
+      }
+    })();
+    return () => { cancelled = true; };
   }, [onConnected]);
 
   const handleTest = async () => {
@@ -39,7 +74,7 @@ export function ServerConnect({ onConnected }: ServerConnectProps) {
     
     const cleanIp = ip.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
     const cleanPort = port.trim() || '3001';
-    const url = `http://${cleanIp}:${cleanPort}`;
+    const url = `${protocol}://${cleanIp}:${cleanPort}`;
     
     try {
       const res = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(5000) });
@@ -84,6 +119,40 @@ export function ServerConnect({ onConnected }: ServerConnectProps) {
 
         {/* Connection Card */}
         <div className="bg-gray-900/80 backdrop-blur-sm rounded-2xl border border-gray-800 p-6 space-y-5">
+          {/* Protocol selector — http for plain servers, https for secure ones */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1.5">
+              Connection Type
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setProtocol('http')}
+                className={`px-4 py-2.5 rounded-xl text-sm font-medium border transition-all duration-200 ${
+                  protocol === 'http'
+                    ? 'bg-purple-600/30 border-purple-500/60 text-purple-300'
+                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'
+                }`}
+              >
+                http://
+              </button>
+              <button
+                onClick={() => setProtocol('https')}
+                className={`px-4 py-2.5 rounded-xl text-sm font-medium border transition-all duration-200 ${
+                  protocol === 'https'
+                    ? 'bg-purple-600/30 border-purple-500/60 text-purple-300'
+                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'
+                }`}
+              >
+                https://
+              </button>
+            </div>
+            <p className="text-[11px] text-gray-600 mt-1.5">
+              Use <span className="text-gray-400 font-mono">http://</span> if your server runs plain
+              HTTP (no certificate). Use <span className="text-gray-400 font-mono">https://</span> for
+              the secure server.
+            </p>
+          </div>
+
           {/* IP Input */}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1.5">
@@ -157,14 +226,24 @@ export function ServerConnect({ onConnected }: ServerConnectProps) {
           )}
         </div>
 
-        {/* How to find IP tip */}
-        <div className="mt-6 text-center">
+        {/* How to find IP tip + server settings */}
+        <div className="mt-6 text-center space-y-3">
           <button
             onClick={() => setShowTip(!showTip)}
             className="text-sm text-gray-500 hover:text-gray-300 transition-colors"
           >
             {showTip ? 'Hide instructions' : 'How to find my PC IP?'}
           </button>
+
+          <div>
+            <button
+              onClick={() => setConfigOpen(true)}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-purple-400 hover:text-purple-300 transition-colors"
+            >
+              <Settings size={14} />
+              Server settings
+            </button>
+          </div>
           
           {showTip && (
             <div className="mt-3 p-4 bg-gray-900/60 rounded-xl border border-gray-800 text-left space-y-2 text-sm text-gray-400">
@@ -178,6 +257,15 @@ export function ServerConnect({ onConnected }: ServerConnectProps) {
           )}
         </div>
       </div>
+
+      {/* Full server configuration modal (works on Android + desktop) */}
+      {configOpen && (
+        <ServerConfig
+          onSaved={() => { window.location.reload(); }}
+          showClose
+          onClose={() => setConfigOpen(false)}
+        />
+      )}
     </div>
   );
 }

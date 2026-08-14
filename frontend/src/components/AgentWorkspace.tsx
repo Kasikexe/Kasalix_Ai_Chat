@@ -4,7 +4,7 @@ import { ChatWindow } from './ChatWindow';
 import { InputBar } from './InputBar';
 import { FileTree } from './FileTree';
 import { CodeEditorTabs } from './CodeEditorTabs';
-import { TerminalPanel } from './TerminalPanel';
+import { TerminalPanel, type TerminalPanelHandle, type TerminalEntry } from './TerminalPanel';
 import { DiffView } from './DiffView';
 import { ErrorBoundary } from './ErrorBoundary';
 import { WorkspaceSetup } from './WorkspaceSetup';
@@ -14,12 +14,21 @@ import {
   Undo2, Pencil, PanelRightClose, PanelRightOpen,
   Trash2, Play, Lightbulb, ClipboardList,
   MessageSquare, Terminal, GripVertical, Circle, CheckCircle2,
+  Zap, Bot, FileDown, Eye, AlertTriangle,
 } from 'lucide-react';
 import { ServerDownInline } from './ServerDownInline';
 import { useServerStatus } from '../hooks/useServerStatus';
 import { api } from '../services/api';
 import { useToast } from '../hooks/useToast';
 import type { Conversation, FileEntry, ModifiedFile, Message } from '../types';
+
+// Per-conversation editor state — survives remounts/conversation switches so the
+// Modified list and open tabs aren't lost when you switch conversations.
+const modifiedFilesCache = new Map<string, ModifiedFile[]>();
+const openFilesCache = new Map<string, OpenFile[]>();
+
+// Normalize Windows backslashes so file paths compare/display consistently.
+const normPath = (p: string) => p.replace(/\\/g, '/');
 
 interface OpenFile {
   path: string;
@@ -29,6 +38,8 @@ interface OpenFile {
   originalContent: string;
   saved: boolean;
   dirty: boolean;
+  /** True when the agent wrote this file to disk while the tab had unsaved edits */
+  conflicted?: boolean;
 }
 
 interface Props {
@@ -39,15 +50,162 @@ interface Props {
   thinkingEnabled?: boolean;
   onMessageSent: () => void;
   onConversationCreated: (id: string) => void;
+  /** Fired the moment a new chat's stream starts and the backend assigns its id. */
+  onConversationStarted?: (id: string) => void;
   onForkConversation?: (messages: Message[]) => void;
 }
 
-export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, model, thinkingEnabled = false, onMessageSent, onConversationCreated, onForkConversation }: Props) {
+export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, model, thinkingEnabled = false, onMessageSent, onConversationCreated, onConversationStarted, onForkConversation }: Props) {
+  const convKey = conversation?.id || 'offline';
   const [workspacePath, setWorkspacePath] = useState(offlineWorkspace || conversation?.workspacePath || '');
   const [loadedPath, setLoadedPath] = useState(offlineWorkspace || conversation?.workspacePath || '');
   const [planningEnabled, setPlanningEnabled] = useState(false);
 
-  const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, currentStage, liveDuration } = useChat(
+  // Auto-apply: when ON the AI writes/deletes files directly (revertible via
+  // the Modified list). When OFF the AI proposes files and you approve each.
+  const [autoApply, setAutoApply] = useState(() => {
+    try {
+      return localStorage.getItem('ai-chat:agentAutoApply') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+
+  // Live agent activity feed (tool calls the AI is making right now)
+  const [agentActivity, setAgentActivity] = useState<{ tool: string; args: Record<string, unknown>; time: number }[]>([]);
+  // Bump to refresh the file tree when the agent writes files
+  const [treeRefreshToken, setTreeRefreshToken] = useState(0);
+
+  // Refs to setters declared later in the component (used by agent callbacks)
+  const modifiedFilesSetterRef = useRef<(fn: (prev: ModifiedFile[]) => ModifiedFile[]) => void>(() => {});
+  const openFilesSetterRef = useRef<(fn: (prev: OpenFile[]) => OpenFile[]) => void>(() => {});
+  // Live mirror of openFiles so callbacks can read current content without re-render
+  const openFilesRef = useRef<OpenFile[]>([]);
+  const modifiedFilesRef = useRef<ModifiedFile[]>([]);
+  const { toast } = useToast();
+
+  // Agent run_command output is fed into the visible terminal so the agent isn't
+  // a black box — you see exactly which commands it ran and their output.
+  const terminalRef = useRef<TerminalPanelHandle>(null);
+
+  const handleAgentTool = useCallback((call: { tool: string; args: Record<string, unknown> }) => {
+    setAgentActivity((prev) => {
+      // Batch consecutive identical tool calls into one row instead of a flood.
+      const last = prev[prev.length - 1];
+      if (last && last.tool === call.tool && JSON.stringify(last.args) === JSON.stringify(call.args)) {
+        return prev;
+      }
+      return [...prev.slice(-9), { tool: call.tool, args: call.args, time: Date.now() }];
+    });
+  }, []);
+
+  const handleFileWritten = useCallback((write: { path: string; changeType: string; originalContent?: string }) => {
+    const filePath = normPath(write.path);
+    const fileName = filePath.split('/').pop() || filePath;
+    // Deleted files keep their changeType so revert RESTORES them; created/edited
+    // keep the pre-write content so revert can put the old version back.
+    modifiedFilesSetterRef.current((prev) => {
+      const filtered = prev.filter((f) => f.filePath !== filePath);
+      return [{
+        filePath,
+        fileName,
+        changeType: write.changeType === 'deleted' ? 'deleted' : (write.changeType === 'edited' ? 'edited' : 'created'),
+        originalContent: write.originalContent,
+        timestamp: Date.now(),
+      }, ...filtered];
+    });
+    setTreeRefreshToken((t) => t + 1);
+    if (write.changeType === 'deleted') {
+      // Close the tab if the file was deleted — stale content would mislead.
+      openFilesSetterRef.current((prev) => prev.filter((f) => f.path !== filePath));
+      return;
+    }
+    // Open the written file in the editor so the user sees the result — re-read
+    // from disk so the tab shows the NEW content (the event only carries old).
+    api.getFileContent(filePath, loadedPath).then((result) => {
+      if (result.content === null || result.binary) return;
+      openFilesSetterRef.current((prev) => {
+        const existing = prev.find((f) => f.path === filePath);
+        if (existing) {
+          if (existing.dirty) {
+            // DATA-LOSS GUARD: the user has unsaved edits in this tab — never
+            // clobber them with the agent's on-disk version. Keep the user's
+            // content and flag the tab so they can review/reload if they want.
+            toast('warning', `The AI changed ${fileName} on disk, but this tab has unsaved changes — your edits were kept.`);
+            return prev.map((f) => (f.path === filePath ? { ...f, conflicted: true } : f));
+          }
+          return prev.map((f) => f.path === filePath
+            ? { ...f, content: result.content!, originalContent: result.content!, saved: true, dirty: false, conflicted: false }
+            : f);
+        }
+        const lang = (filePath.split('.').pop() || null);
+        return [...prev, {
+          path: filePath,
+          name: fileName,
+          language: lang,
+          content: result.content!,
+          originalContent: result.content!,
+          saved: true,
+          dirty: false,
+        }];
+      });
+    }).catch(() => { /* file gone — tree refresh handles it */ });
+  }, [loadedPath, toast]);
+
+  // Agent command/verify output → visible terminal feed.
+  const handleAgentCommand = useCallback((cmd: { command: string; output: string; failed: boolean }) => {
+    const push = (entry: TerminalEntry) => terminalRef.current?.push(entry);
+    push({ type: 'command', text: `$ ${cmd.command}`, timestamp: Date.now() });
+    if (cmd.output) {
+      for (const line of cmd.output.split('\n')) {
+        if (line.trim()) push({ type: cmd.failed ? 'stderr' : 'stdout', text: line, timestamp: Date.now() });
+      }
+    }
+  }, []);
+
+  // ask_user: the agent paused the run to ask a question — show a modal.
+  const [pendingQuestion, setPendingQuestion] = useState<{ key: string; question: string } | null>(null);
+  const [questionInput, setQuestionInput] = useState('');
+  const [sendingAnswer, setSendingAnswer] = useState(false);
+
+  const handleQuestion = useCallback((q: { key: string; question: string }) => {
+    setPendingQuestion(q);
+    setQuestionInput('');
+  }, []);
+
+  const submitAnswer = async (answer: string) => {
+    if (!pendingQuestion || sendingAnswer) return;
+    setSendingAnswer(true);
+    try {
+      await api.answerAgentQuestion(pendingQuestion.key, answer);
+    } catch (e: any) {
+      console.error('Failed to send answer:', e);
+      const msg = e?.message || '';
+      // If the run already ended/stopped, the question is gone — no need to nag.
+      if (msg && !/no pending question|not found/i.test(msg)) {
+        toast('error', 'Could not send your answer — the agent may have moved on');
+      }
+    }
+    setSendingAnswer(false);
+    setPendingQuestion(null);
+  };
+
+  const closeQuestion = () => {
+    if (pendingQuestion) submitAnswer('(user chose to skip this question)');
+  };
+
+  const handleAutoApplyToggle = useCallback(() => {
+    setAutoApply((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('ai-chat:agentAutoApply', String(next));
+      } catch { /* ignore */ }
+      return next;
+    });
+    setAgentActivity([]);
+  }, []);
+
+  const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, currentStage, stageHistory, liveDuration } = useChat(
     model,
     conversation?.messages || [],
     conversation?.id,
@@ -55,7 +213,13 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     'agent',
     workspacePath,
     undefined,
-    planningEnabled
+    planningEnabled,
+    autoApply,
+    handleAgentTool,
+    handleFileWritten,
+    handleAgentCommand,
+    handleQuestion,
+    onConversationStarted
   );
 
   // ─── Layout State ──────────────────────────────────────────
@@ -69,20 +233,40 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
   const dragRef = useRef<{ type: 'left' | 'right'; startX: number; startSize: number } | null>(null);
 
   // ─── File Editor State ─────────────────────────────────────
-  const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
+  const [openFiles, setOpenFiles] = useState<OpenFile[]>(() => openFilesCache.get(convKey) || []);
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
 
   // ─── Existing State ────────────────────────────────────────
   const [selectedFile, setSelectedFile] = useState<FileEntry | null>(null);
-  const [pendingCode, setPendingCode] = useState<{ filePath: string; oldContent: string; newContent: string; fileName: string } | null>(null);
+  const [pendingCode, setPendingCode] = useState<{ filePath: string; oldContent: string; newContent: string; fileName: string; isEdit?: boolean; editOldString?: string } | null>(null);
   const [applying, setApplying] = useState(false);
   const [applied, setApplied] = useState(false);
-  const [modifiedFiles, setModifiedFiles] = useState<ModifiedFile[]>([]);
+  const [modifiedFiles, setModifiedFiles] = useState<ModifiedFile[]>(() => modifiedFilesCache.get(convKey) || []);
+  // Wire the refs to the real setters so agent callbacks can update state
+  modifiedFilesSetterRef.current = setModifiedFiles;
+  openFilesSetterRef.current = setOpenFiles;
+  openFilesRef.current = openFiles;
+  modifiedFilesRef.current = modifiedFiles;
+
+  // Persist per-conversation editor state across remounts/conversation switches.
+  const prevConvRef = useRef<string>(convKey);
+  useEffect(() => {
+    const prev = prevConvRef.current;
+    if (prev !== convKey) {
+      modifiedFilesCache.set(prev, modifiedFilesRef.current);
+      openFilesCache.set(prev, openFilesRef.current);
+      setModifiedFiles(modifiedFilesCache.get(convKey) || []);
+      setOpenFiles(openFilesCache.get(convKey) || []);
+      prevConvRef.current = convKey;
+    }
+  }, [convKey]);
   const [showModified, setShowModified] = useState(false);
+  const [diffPreview, setDiffPreview] = useState<{ filePath: string; fileName: string; oldContent: string; newContent: string } | null>(null);
   const [revertingFile, setRevertingFile] = useState<string | null>(null);
   const [revertedFiles, setRevertedFiles] = useState<Record<string, boolean>>({});
   const [revertError, setRevertError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [pendingCloseFile, setPendingCloseFile] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [planPending, setPlanPending] = useState(false);
   const approveBtnRef = useRef<HTMLButtonElement>(null);
@@ -90,7 +274,6 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
   const wasStreamingRef = useRef(false);
   const planActionTakenRef = useRef(false);
 
-  const { toast } = useToast();
   const { online } = useServerStatus();
 
   // ─── Chat Handlers ─────────────────────────────────────────
@@ -119,19 +302,20 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
 
   // ─── File Opening / Code Apply ─────────────────────────────
   const openFileInEditor = useCallback(async (file: FileEntry) => {
+    const path = normPath(file.path);
     // Check if already open
-    const existing = openFiles.find((f) => f.path === file.path);
+    const existing = openFiles.find((f) => f.path === path);
     if (existing) {
-      setActiveFilePath(file.path);
+      setActiveFilePath(path);
       return;
     }
 
     // Fetch content — in Electron this uses IPC (local FS) so it works offline
     try {
-      const result = await api.getFileContent(file.path, loadedPath);
+      const result = await api.getFileContent(path, loadedPath);
       if (result.content !== null && !result.binary) {
         const newFile: OpenFile = {
-          path: file.path,
+          path,
           name: file.name,
           language: result.language || file.name.split('.').pop() || null,
           content: result.content,
@@ -140,7 +324,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
           dirty: false,
         };
         setOpenFiles((prev) => [...prev, newFile]);
-        setActiveFilePath(file.path);
+        setActiveFilePath(path);
         setSelectedFile(file);
       } else if (result.binary) {
         toast('error', 'Cannot edit binary files');
@@ -157,36 +341,119 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
   const handleFileContentChange = useCallback((path: string, content: string) => {
     setOpenFiles((prev) => prev.map((f) =>
       f.path === path
-        ? { ...f, content, dirty: content !== f.originalContent, saved: false }
+        ? { ...f, content, dirty: content !== f.originalContent, saved: false, conflicted: false }
         : f
     ));
   }, []);
 
   const handleFileSave = useCallback((path: string, savedContent: string) => {
+    // Capture the pre-edit content so Revert can restore it (user edits were
+    // previously not revertable because originalContent was never stored).
+    const prevFile = openFilesRef.current.find((f) => f.path === path);
+    const prevOriginal = prevFile?.originalContent;
     setOpenFiles((prev) => prev.map((f) =>
       f.path === path
-        ? { ...f, originalContent: savedContent, saved: true, dirty: false }
+        ? { ...f, originalContent: savedContent, saved: true, dirty: false, conflicted: false }
         : f
     ));
     // Also track in modified files
     const fileName = path.split('/').pop()?.split('\\').pop() || path;
     setModifiedFiles((prev) => {
       const filtered = prev.filter((f) => f.filePath !== path);
-      return [{ filePath: path, fileName, changeType: 'edited', timestamp: Date.now() }, ...filtered];
+      return [{ filePath: path, fileName, changeType: 'edited', originalContent: prevOriginal, timestamp: Date.now() }, ...filtered];
     });
     onMessageSent();
   }, [onMessageSent]);
 
   const handleFileClose = useCallback((path: string) => {
+    const file = openFilesRef.current.find((f) => f.path === path);
+    if (file?.dirty) {
+      // Unsaved-changes guard: never silently drop the user's edits.
+      setPendingCloseFile(path);
+      return;
+    }
     setOpenFiles((prev) => prev.filter((f) => f.path !== path));
   }, []);
 
+  const handleConfirmClose = () => {
+    if (!pendingCloseFile) return;
+    setOpenFiles((prev) => prev.filter((f) => f.path !== pendingCloseFile));
+    setPendingCloseFile(null);
+  };
+
+  // Discard local edits and reload the file as it exists on disk right now.
+  const handleReloadFromDisk = useCallback(async (path: string) => {
+    try {
+      const result = await api.getFileContent(path, loadedPath);
+      if (result.content === null || result.binary) {
+        toast('error', 'Could not reload file from disk');
+        return;
+      }
+      setOpenFiles((prev) => prev.map((f) =>
+        f.path === path
+          ? { ...f, content: result.content!, originalContent: result.content!, saved: true, dirty: false, conflicted: false }
+          : f
+      ));
+    } catch (e) {
+      console.error('Reload failed:', e);
+      toast('error', 'Could not reload file from disk');
+    }
+  }, [loadedPath, toast]);
+
+  // User chose to keep their local edits — dismiss the conflict banner.
+  const handleKeepChanges = useCallback((path: string) => {
+    setOpenFiles((prev) => prev.map((f) => (f.path === path ? { ...f, conflicted: false } : f)));
+  }, []);
+
   // ─── AI Code Apply Handlers (from chat) ────────────────────
+  // Resolve a code-block path to the REAL file inside the workspace. Models
+  // often emit a bare basename ("# main.py") when the file actually lives in a
+  // subfolder ("Test1/main.py") — joining it onto the workspace root would
+  // create a brand-new wrong file instead of editing the existing one. When
+  // the exact path doesn't exist, search the workspace tree by basename.
+  const resolveApplyPath = useCallback(async (candidate: string): Promise<string> => {
+    const workspaceBase = loadedPath.replace(/\\\\/g, '/').replace(/\/$/, '');
+    const fullPath = loadedPath && !candidate.startsWith('/') && !candidate.includes(':')
+      ? workspaceBase + '/' + candidate
+      : candidate;
+    // If the file exists at the exact path, use it as-is.
+    try {
+      const result = await api.getFileContent(fullPath, loadedPath);
+      if (result.content !== null) return fullPath;
+    } catch { /* missing */ }
+    // Exact path missing — find the unique file in the workspace with the
+    // same basename (shallow recursive walk, mirrors the backend behavior).
+    const baseName = fullPath.split('/').pop()?.split('\\\\').pop()?.toLowerCase();
+    if (!baseName || !workspaceBase) return fullPath;
+    const matches: string[] = [];
+    const ignoredDirs = new Set(['node_modules', '.git', 'dist', 'build', '.cache', 'coverage', 'target', 'vendor', '.venv', 'venv', '.next', '.nuxt']);
+    const walk = async (dir: string, depth: number) => {
+      if (depth > 4 || matches.length > 10) return;
+      let entries: FileEntry[] = [];
+      try {
+        const data = await api.getFiles(dir);
+        entries = data.entries || [];
+      } catch { return; }
+      for (const e of entries) {
+        if (e.type === 'directory') {
+          if (e.name.startsWith('.') || ignoredDirs.has(e.name)) continue;
+          await walk(e.path.replace(/\\/g, '/'), depth + 1);
+        } else if (e.name.toLowerCase() === baseName) {
+          matches.push(e.path.replace(/\\/g, '/'));
+        }
+      }
+    };
+    await walk(workspaceBase, 0);
+    if (matches.length === 1) {
+      toast('info', `The file is at ${matches[0]} — applying there instead of ${fullPath}`);
+      return matches[0];
+    }
+    return fullPath;
+  }, [loadedPath, toast]);
+
   const handleApplyCode = useCallback(async (filePath: string, codeContent: string) => {
     const workspaceBase = loadedPath.replace(/\\\\/g, '/').replace(/\/$/, '');
-    const fullPath = loadedPath && !filePath.startsWith('/') && !filePath.includes(':')
-      ? workspaceBase + '/' + filePath
-      : filePath;
+    const fullPath = await resolveApplyPath(filePath);
 
     const normalizedFull = fullPath.replace(/\\\\/g, '/');
     if (workspaceBase && !normalizedFull.startsWith(workspaceBase)) {
@@ -207,13 +474,45 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
       fileName: filePath.split('/').pop()?.split('\\\\').pop() || filePath,
     });
     setApplied(false);
-  }, [loadedPath, toast]);
+  }, [loadedPath, toast, resolveApplyPath]);
+
+  // Surgical edit approval — fetches the current file so the diff + revert work
+  const handleApplyEdit = useCallback(async (filePath: string, oldString: string, newString: string) => {
+    const workspaceBase = loadedPath.replace(/\\\\/g, '/').replace(/\/$/, '');
+    const fullPath = await resolveApplyPath(filePath);
+
+    const normalizedFull = fullPath.replace(/\\\\/g, '/');
+    if (workspaceBase && !normalizedFull.startsWith(workspaceBase)) {
+      toast('error', `Cannot edit outside workspace: ${filePath}`);
+      return;
+    }
+
+    let oldContent = '';
+    try {
+      const result = await api.getFileContent(fullPath, loadedPath);
+      if (result.content !== null) oldContent = result.content;
+    } catch { /* file doesn't exist */ }
+
+    setPendingCode({
+      filePath: fullPath,
+      oldContent,
+      newContent: newString,
+      editOldString: oldString,
+      isEdit: true,
+      fileName: filePath.split('/').pop()?.split('\\\\').pop() || filePath,
+    });
+    setApplied(false);
+  }, [loadedPath, toast, resolveApplyPath]);
 
   const handleApproveSave = async () => {
     if (!pendingCode) return;
     setApplying(true);
     try {
-      await api.writeFile(pendingCode.filePath, pendingCode.newContent, loadedPath);
+      if (pendingCode.isEdit) {
+        await api.editFile(pendingCode.filePath, pendingCode.editOldString!, pendingCode.newContent, loadedPath);
+      } else {
+        await api.writeFile(pendingCode.filePath, pendingCode.newContent, loadedPath);
+      }
       handleFileModified(pendingCode.filePath, pendingCode.oldContent ? 'edited' : 'created', pendingCode.oldContent || undefined);
 
       // Also open/reload in editor tabs
@@ -242,8 +541,9 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
       setApplied(true);
       setTimeout(() => { setPendingCode(null); setApplied(false); }, 2000);
       onMessageSent();
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to save file:', e);
+      toast('error', (e?.message || e?.error || 'Failed to save file').slice(0, 200));
     }
     setApplying(false);
   };
@@ -253,30 +553,34 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     setApplied(false);
   }, []);
 
-  const handleApplyAll = useCallback(async (files: { filePath: string; content: string }[]) => {
+  const handleApplyAll = useCallback(async (files: { filePath: string; content: string; oldString?: string; newString?: string }[]) => {
     let successCount = 0;
     let failCount = 0;
     for (const f of files) {
       try {
         const workspaceBase = loadedPath.replace(/\\\\/g, '/').replace(/\/$/, '');
-        const fullPath = loadedPath && !f.filePath.startsWith('/') && !f.filePath.includes(':')
-          ? workspaceBase + '/' + f.filePath
-          : f.filePath;
+        const fullPath = await resolveApplyPath(f.filePath);
         const normalizedFull = fullPath.replace(/\\\\/g, '/');
         if (workspaceBase && !normalizedFull.startsWith(workspaceBase)) { failCount++; continue; }
 
-        let isEdit = false;
+        let oldContent: string | undefined;
         try {
           const result = await api.getFileContent(fullPath, loadedPath);
-          if (result.content !== null) isEdit = true;
+          if (result.content !== null) oldContent = result.content;
         } catch { /* new file */ }
 
-        await api.writeFile(fullPath, f.content, loadedPath);
+        if (f.oldString !== undefined && f.newString !== undefined) {
+          // Surgical edit
+          await api.editFile(fullPath, f.oldString, f.newString, loadedPath);
+        } else {
+          await api.writeFile(fullPath, f.content, loadedPath);
+        }
 
         const fileName = fullPath.split('/').pop()?.split('\\\\').pop() || fullPath;
+        const changeType: 'created' | 'edited' = oldContent !== undefined ? 'edited' : 'created';
         setModifiedFiles((prev) => {
           const filtered = prev.filter((mf) => mf.filePath !== fullPath);
-          return [{ filePath: fullPath, fileName, changeType: isEdit ? 'edited' : 'created', timestamp: Date.now() }, ...filtered];
+          return [{ filePath: fullPath, fileName, changeType, originalContent: oldContent, timestamp: Date.now() }, ...filtered];
         });
         successCount++;
       } catch {
@@ -289,7 +593,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
       toast('error', `Applied ${successCount}, ${failCount} failed`);
     }
     onMessageSent();
-  }, [loadedPath, onMessageSent, toast]);
+  }, [loadedPath, onMessageSent, toast, resolveApplyPath]);
 
   const handleFileModified = useCallback((filePath: string, changeType: 'created' | 'edited', originalContent?: string) => {
     const fileName = filePath.split('/').pop()?.split('\\\\').pop() || filePath;
@@ -301,16 +605,14 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
 
   const handleDeleteFile = useCallback(async (filePath: string) => {
     const workspaceBase = loadedPath.replace(/\\\\/g, '/').replace(/\/$/, '');
-    const fullPath = loadedPath && !filePath.startsWith('/') && !filePath.includes(':')
-      ? workspaceBase + '/' + filePath
-      : filePath;
+    const fullPath = await resolveApplyPath(filePath);
     const normalizedFull = fullPath.replace(/\\\\/g, '/');
     if (workspaceBase && !normalizedFull.startsWith(workspaceBase)) {
       toast('error', `Cannot delete outside workspace: ${filePath}`);
       return;
     }
     setPendingDelete(fullPath);
-  }, [loadedPath, toast]);
+  }, [loadedPath, toast, resolveApplyPath]);
 
   const handleConfirmDelete = async () => {
     if (!pendingDelete) return;
@@ -328,14 +630,51 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     setDeleting(false);
   };
 
+  // Show exactly what the agent changed: diff the pre-write content against
+  // the current file on disk (the file_written event only carries the old).
+  const handleViewDiff = useCallback(async (mf: ModifiedFile) => {
+    try {
+      const result = await api.getFileContent(mf.filePath, loadedPath);
+      if (result.content === null || result.binary) {
+        toast('error', 'Cannot show a diff for this file (binary or unreadable)');
+        return;
+      }
+      setDiffPreview({
+        filePath: mf.filePath,
+        fileName: mf.fileName,
+        oldContent: mf.originalContent ?? '',
+        newContent: result.content,
+      });
+    } catch (e) {
+      console.error('Failed to load diff:', e);
+      toast('error', 'Could not load the file to diff');
+    }
+  }, [loadedPath, toast]);
+
   const handleRevert = async (mf: ModifiedFile) => {
     setRevertingFile(mf.filePath);
     setRevertError(null);
     try {
       if (mf.changeType === 'created') {
         await api.deleteFile(mf.filePath, loadedPath);
+      } else if (mf.changeType === 'deleted') {
+        // Agent deleted it — restore the pre-delete content
+        if (mf.originalContent !== undefined) {
+          await api.writeFile(mf.filePath, mf.originalContent, loadedPath);
+        }
       } else if (mf.originalContent !== undefined) {
         await api.writeFile(mf.filePath, mf.originalContent, loadedPath);
+      }
+      // After a successful revert, sync the editor tab so it shows the restored version.
+      if (mf.changeType === 'created') {
+        // File is gone — close its tab if it is open.
+        setOpenFiles((prev) => prev.filter((f) => f.path !== mf.filePath));
+      } else if (mf.originalContent !== undefined) {
+        setOpenFiles((prev) => prev.map((f) =>
+          f.path === mf.filePath
+            ? { ...f, content: mf.originalContent!, originalContent: mf.originalContent!, saved: true, dirty: false, conflicted: false }
+            : f
+        ));
       }
       setRevertedFiles((prev) => ({ ...prev, [mf.filePath]: true }));
       setTimeout(() => {
@@ -455,9 +794,16 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
 
   // ─── Stage → TODO Progress ───────────────────────────────
   const STAGE_TODOS: { key: string; label: string }[] = [
+    { key: 'agent:thinking', label: 'Think through the task' },
+    { key: 'agent:reading', label: 'Read workspace files' },
+    { key: 'agent:tool', label: 'Use workspace tools' },
+    { key: 'agent:verify', label: 'Verify changes' },
+    { key: 'agent:working', label: 'Work through the task' },
+    { key: 'agent:done', label: 'Finish up' },
     { key: 'reading:workspace', label: 'Read workspace files' },
     { key: 'search:web', label: 'Search the web' },
     { key: 'search:docs', label: 'Search documentation' },
+    { key: 'code:generating', label: 'Write code' },
     { key: 'tool:executing', label: 'Execute tools' },
     { key: 'chat:thinking', label: 'Think through the problem' },
     { key: 'vision:analyzing', label: 'Analyze images' },
@@ -468,7 +814,17 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     { key: 'summary:writing', label: 'Write summary' },
   ];
 
-  const currentTodoIdx = currentStage ? STAGE_TODOS.findIndex((t) => t.key === currentStage) : -1;
+  // Honest progress: a todo is DONE only if its stage actually fired this turn;
+  // the CURRENT one is the last fired stage that maps to a todo. Skipped steps
+  // stay pending instead of being marked done by position.
+  const firedKeys = new Set(stageHistory);
+  const currentTodoIdx = (() => {
+    for (let i = stageHistory.length - 1; i >= 0; i--) {
+      const idx = STAGE_TODOS.findIndex((t) => t.key === stageHistory[i]);
+      if (idx !== -1) return idx;
+    }
+    return -1;
+  })();
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -565,6 +921,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
             <FileTree
               rootPath={loadedPath}
               workspacePath={loadedPath}
+              refreshToken={treeRefreshToken}
               onFileSelect={(file) => openFileInEditor(file)}
               onBrowseFolder={async () => {
                 try {
@@ -606,13 +963,25 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
                     <div key={mf.filePath + mf.timestamp}
                       className="flex items-center gap-1 px-2 py-0.5 hover:bg-gray-800 transition-colors group text-[10px]"
                     >
-                      <FileCode size={8} className="text-blue-400 flex-shrink-0" />
-                      <span className="truncate text-gray-400 flex-1">{mf.fileName}</span>
+                      <button onClick={() => handleViewDiff(mf)}
+                        className="flex items-center gap-1 min-w-0 flex-1 text-left"
+                        title="View changes"
+                      >
+                        <FileCode size={8} className="text-blue-400 flex-shrink-0" />
+                        <span className="truncate text-gray-400">{mf.fileName}</span>
+                      </button>
+                      <button onClick={() => handleViewDiff(mf)}
+                        className="p-0.5 rounded text-gray-600 hover:text-purple-400 opacity-0 group-hover:opacity-100 transition-all"
+                        title="View diff"
+                      >
+                        <Eye size={9} />
+                      </button>
                       {isReverted ? (
                         <Check size={8} className="text-green-400" />
                       ) : (
                         <button onClick={() => handleRevert(mf)} disabled={isReverting}
                           className="p-0.5 rounded text-gray-600 hover:text-amber-400 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-30"
+                          title="Revert"
                         >
                           {isReverting ? <Loader size={8} className="animate-spin" /> : <Undo2 size={8} />}
                         </button>
@@ -656,6 +1025,23 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
             <FolderOpen size={12} className="text-purple-400 flex-shrink-0" />
             <span className="text-xs text-gray-400 truncate flex-1">{workspacePath}</span>
 
+            {/* Auto-apply toggle */}
+            <button
+              onClick={handleAutoApplyToggle}
+              disabled={isStreaming}
+              className={`flex items-center gap-1 px-2 py-1 rounded transition-colors disabled:opacity-50 ${
+                autoApply
+                  ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/50 hover:bg-emerald-900/60'
+                  : 'bg-gray-800 text-gray-500 border border-gray-700 hover:text-gray-300'
+              }`}
+              title={autoApply
+                ? 'Auto-apply ON — the AI writes and deletes files directly (revertible in the Modified list)'
+                : 'Auto-apply OFF — the AI proposes files and you approve each one'}
+            >
+              <Zap size={11} />
+              <span className="text-[10px] font-medium">Auto-apply</span>
+            </button>
+
             {/* Toggle buttons */}
             <button onClick={() => setLeftPanelOpen(!leftPanelOpen)}
               className={`p-1 rounded transition-colors ${leftPanelOpen ? 'bg-gray-700 text-gray-200' : 'text-gray-500 hover:text-gray-300'}`}
@@ -690,12 +1076,15 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
               onFileClose={handleFileClose}
               onFileContentChange={handleFileContentChange}
               onFileSave={handleFileSave}
+              onReloadFromDisk={handleReloadFromDisk}
+              onKeepChanges={handleKeepChanges}
             />
           </div>
 
           {/* Terminal */}
           {showTerminal && (
             <TerminalPanel
+              ref={terminalRef}
               cwd={workspacePath}
               height={terminalHeight}
               onHeightChange={setTerminalHeight}
@@ -748,6 +1137,43 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
             </button>
           </div>
 
+          {/* Agent activity feed — live tool calls during auto-apply runs */}
+          {agentActivity.length > 0 && (
+            <div className="border-b border-gray-800 bg-gray-900/60 px-3 py-2 max-h-32 overflow-y-auto">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <Bot size={11} className="text-emerald-400" />
+                <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Agent activity</span>
+                {isStreaming && <span className="ml-auto flex items-center gap-1 text-[10px] text-emerald-400">
+                  <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+                  working
+                </span>}
+              </div>
+              <div className="space-y-1">
+                {agentActivity.map((act, idx) => {
+                  const isLast = idx === agentActivity.length - 1;
+                  const argPreview = typeof act.args?.path === 'string'
+                    ? act.args.path
+                    : typeof act.args?.command === 'string'
+                      ? act.args.command
+                      : typeof act.args?.query === 'string'
+                        ? act.args.query
+                        : '';
+                  return (
+                    <div key={act.time + '-' + idx} className={`flex items-center gap-1.5 text-[10px] font-mono ${isLast ? 'text-emerald-300' : 'text-gray-500'}`}>
+                      {isLast && isStreaming ? (
+                        <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse flex-shrink-0" />
+                      ) : (
+                        <span className="w-1.5 h-1.5 bg-gray-600 rounded-full flex-shrink-0" />
+                      )}
+                      <span className="text-emerald-400 flex-shrink-0">{act.tool}</span>
+                      <span className="truncate text-gray-400">{argPreview}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* TODO Progress Panel — shows when streaming */}
           {isStreaming && currentStage && (
             <div className="border-b border-gray-800 bg-gray-900/60 px-3 py-2">
@@ -757,9 +1183,9 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
               </div>
               <div className="space-y-1">
                 {STAGE_TODOS.map((todo, idx) => {
-                  const isDone = idx < currentTodoIdx;
+                  const isDone = firedKeys.has(todo.key);
                   const isCurrent = idx === currentTodoIdx;
-                  const isPending = idx > currentTodoIdx;
+                  const isPending = !isDone && !isCurrent;
                   return (
                     <div key={todo.key} className={`flex items-center gap-2 text-[10px] transition-all ${
                       isDone ? 'text-emerald-500' : isCurrent ? 'text-purple-300' : 'text-gray-600'
@@ -779,8 +1205,8 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
             </div>
           )}
 
-          {/* Chat messages */}
-          <div className="flex-1 min-h-0">
+          {/* Chat messages — flex column so ChatWindow's flex-1 overflow-y-auto gets a bounded height and can scroll */}
+          <div className="flex-1 min-h-0 flex flex-col">
             {!online && messages.length === 0 ? (
               <ServerDownInline
                 compact
@@ -797,6 +1223,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
               onDelete={deleteMessage}
               onRegenerate={handleRegenerate}
               onApplyCode={handleApplyCode}
+              onApplyEdit={handleApplyEdit}
               onDeleteFile={handleDeleteFile}
               onApplyAll={handleApplyAll}
               onFork={handleFork}
@@ -836,6 +1263,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
             isStreaming={isStreaming}
             planningEnabled={planningEnabled}
             onPlanningToggle={() => setPlanningEnabled(!planningEnabled)}
+            draftKey={convKey}
           />
         </div>
       )}
@@ -851,14 +1279,18 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
         <div className="w-full max-w-2xl max-h-[85vh] flex flex-col bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl animate-fade-in">
           <div className="flex items-center justify-between p-4 border-b border-gray-800">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-amber-600/20 rounded-xl">
+              <div className={`p-2 rounded-xl ${pendingCode.isEdit ? 'bg-amber-600/20' : 'bg-amber-600/20'}`}>
                 <FilePlus2 size={20} className="text-amber-400" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-white">Approve File Change</h3>
+                <h3 className="text-base font-semibold text-white">{pendingCode.isEdit ? 'Approve Edit' : 'Approve File Change'}</h3>
                 <p className="text-xs text-gray-500 mt-0.5">
                   <FileCode size={10} className="inline" /> {pendingCode.fileName}
-                  <span className="ml-2 text-gray-600">{pendingCode.oldContent ? '✏️ Edit' : '✨ New'}</span>
+                  <span className="ml-2 text-gray-600">
+                    {pendingCode.isEdit
+                      ? '✂️ Surgical edit'
+                      : pendingCode.oldContent ? '✏️ Rewrite' : '✨ New'}
+                  </span>
                 </p>
               </div>
             </div>
@@ -870,7 +1302,11 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
             <code className="text-xs text-gray-400 font-mono break-all select-all">{pendingCode.filePath}</code>
           </div>
           <div className="flex-1 overflow-y-auto p-4">
-            <DiffView oldContent={pendingCode.oldContent} newContent={pendingCode.newContent} filename={pendingCode.fileName} />
+            {pendingCode.isEdit ? (
+              <DiffView oldContent={pendingCode.editOldString || ''} newContent={pendingCode.newContent} filename={pendingCode.fileName} />
+            ) : (
+              <DiffView oldContent={pendingCode.oldContent} newContent={pendingCode.newContent} filename={pendingCode.fileName} />
+            )}
           </div>
           <div className="flex items-center justify-end gap-2 p-4 border-t border-gray-800 bg-gray-950/50">
             <button onClick={handleReject}
@@ -881,6 +1317,117 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
             >
               {applying ? <Loader size={16} className="animate-spin" /> : <Check size={16} />}
               {applying ? 'Saving...' : 'Approve & Save'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Diff preview modal — click a file in the Modified list to see what the agent changed */}
+    {diffPreview && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        onClick={(e) => { if (e.target === e.currentTarget) setDiffPreview(null); }}
+      >
+        <div className="w-full max-w-3xl max-h-[85vh] flex flex-col bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl animate-fade-in">
+          <div className="flex items-center justify-between p-4 border-b border-gray-800">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-blue-600/20"><FileCode size={20} className="text-blue-400" /></div>
+              <div>
+                <h3 className="text-base font-semibold text-white">File Changes</h3>
+                <p className="text-xs text-gray-500 mt-0.5">{diffPreview.fileName}</p>
+              </div>
+            </div>
+            <button onClick={() => setDiffPreview(null)}
+              className="p-2 hover:bg-gray-800 rounded-xl text-gray-400 hover:text-gray-200 transition-colors"
+            ><X size={18} /></button>
+          </div>
+          <div className="px-4 py-2 bg-gray-950/30 border-b border-gray-800">
+            <code className="text-xs text-gray-400 font-mono break-all select-all">{diffPreview.filePath}</code>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            {diffPreview.oldContent === '' && diffPreview.newContent !== '' && (
+              <p className="text-xs text-gray-500 mb-2">New file — no previous version to compare against.</p>
+            )}
+            <DiffView oldContent={diffPreview.oldContent} newContent={diffPreview.newContent} filename={diffPreview.fileName} />
+          </div>
+          <div className="flex items-center justify-end p-4 border-t border-gray-800 bg-gray-950/50">
+            <button onClick={() => setDiffPreview(null)}
+              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-medium rounded-xl transition-colors border border-gray-700"
+            >Close</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Agent question modal — the agent paused the run and needs an answer */}
+    {pendingQuestion && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        onClick={(e) => { if (e.target === e.currentTarget) closeQuestion(); }}
+      >
+        <div className="w-full max-w-lg bg-gray-900 border border-purple-800/50 rounded-2xl shadow-2xl animate-fade-in">
+          <div className="flex items-center justify-between p-4 border-b border-gray-800">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-purple-600/20 rounded-xl"><Bot size={20} className="text-purple-400" /></div>
+              <div><h3 className="text-base font-semibold text-white">The AI needs your input</h3><p className="text-xs text-gray-500 mt-0.5">The run is paused until you answer</p></div>
+            </div>
+            <button onClick={closeQuestion}
+              className="p-2 hover:bg-gray-800 rounded-xl text-gray-400 hover:text-gray-200 transition-colors"
+            ><X size={18} /></button>
+          </div>
+          <div className="p-4 space-y-3">
+            <p className="text-sm text-gray-200 leading-relaxed">{pendingQuestion.question}</p>
+            <input
+              type="text"
+              value={questionInput}
+              onChange={(e) => setQuestionInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && questionInput.trim()) submitAnswer(questionInput.trim()); }}
+              placeholder="Type your answer..."
+              autoFocus
+              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-sm text-white placeholder-gray-500 outline-none focus:border-purple-600 focus:ring-1 focus:ring-purple-600/30 transition-all"
+            />
+          </div>
+          <div className="flex items-center justify-end gap-2 p-4 border-t border-gray-800 bg-gray-950/50">
+            <button onClick={() => submitAnswer('(user chose to skip this question)')} disabled={sendingAnswer}
+              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-medium rounded-xl transition-colors border border-gray-700 disabled:opacity-50"
+            >Skip</button>
+            <button onClick={() => submitAnswer(questionInput.trim())} disabled={sendingAnswer || !questionInput.trim()}
+              className="flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white text-sm font-medium rounded-xl transition-all shadow-lg shadow-purple-600/20 disabled:opacity-50"
+            >
+              {sendingAnswer ? <Loader size={16} className="animate-spin" /> : <Check size={16} />}
+              Send
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Unsaved-changes confirm modal */}
+    {pendingCloseFile && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        onClick={(e) => { if (e.target === e.currentTarget) setPendingCloseFile(null); }}
+      >
+        <div className="w-full max-w-md bg-gray-900 border border-amber-800/50 rounded-2xl shadow-2xl animate-fade-in">
+          <div className="flex items-center justify-between p-4 border-b border-gray-800">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-amber-600/20 rounded-xl"><AlertTriangle size={20} className="text-amber-400" /></div>
+              <div><h3 className="text-base font-semibold text-white">Unsaved Changes</h3><p className="text-xs text-gray-500 mt-0.5">Your edits will be lost</p></div>
+            </div>
+            <button onClick={() => setPendingCloseFile(null)}
+              className="p-2 hover:bg-gray-800 rounded-xl text-gray-400 hover:text-gray-200 transition-colors"
+            ><X size={18} /></button>
+          </div>
+          <div className="p-4">
+            <p className="text-sm text-gray-300 mb-3">This file has unsaved changes. Close it anyway and lose them?</p>
+            <code className="block text-xs text-gray-400 font-mono break-all bg-gray-950/50 p-3 rounded-lg border border-gray-800 select-all">{pendingCloseFile}</code>
+          </div>
+          <div className="flex items-center justify-end gap-2 p-4 border-t border-gray-800 bg-gray-950/50">
+            <button onClick={() => setPendingCloseFile(null)}
+              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-medium rounded-xl transition-colors border border-gray-700"
+            >Cancel</button>
+            <button onClick={handleConfirmClose}
+              className="flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-sm font-medium rounded-xl transition-all shadow-lg shadow-red-600/20"
+            >
+              <AlertTriangle size={16} /> Discard &amp; Close
             </button>
           </div>
         </div>

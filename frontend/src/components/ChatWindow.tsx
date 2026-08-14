@@ -14,7 +14,8 @@ interface Props {
   onDelete?: (index: number) => void;
   onRegenerate?: () => void;
   onApplyCode?: (filePath: string, codeContent: string) => void;
-  onApplyAll?: (files: { filePath: string; content: string }[]) => void;
+  onApplyEdit?: (filePath: string, oldString: string, newString: string) => void;
+  onApplyAll?: (files: { filePath: string; content: string; oldString?: string; newString?: string }[]) => void;
   searchQuery?: string;
   onSearchQueryChange?: (query: string) => void;
   searchMatches?: number[];
@@ -28,7 +29,7 @@ interface Props {
   onDeleteFile?: (filePath: string) => void;
 }
 
-export function ChatWindow({ messages, isStreaming, currentStage, liveDuration, onEdit, onDelete, onRegenerate, onApplyCode, onApplyAll, onDeleteFile, searchQuery, onSearchQueryChange, searchMatches, activeSearchMatch, onSearchNext, onSearchPrev, selectedIndices, onToggleSelect, selectable, onFork }: Props) {
+export function ChatWindow({ messages, isStreaming, currentStage, liveDuration, onEdit, onDelete, onRegenerate, onApplyCode, onApplyEdit, onApplyAll, onDeleteFile, searchQuery, onSearchQueryChange, searchMatches, activeSearchMatch, onSearchNext, onSearchPrev, selectedIndices, onToggleSelect, selectable, onFork }: Props) {
   const { online } = useServerStatus();
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -195,6 +196,7 @@ export function ChatWindow({ messages, isStreaming, currentStage, liveDuration, 
                   onRegenerate={isLastAssistant ? onRegenerate : undefined}
                   isLastAssistant={isLastAssistant}
                   onApplyCode={onApplyCode}
+                  onApplyEdit={onApplyEdit}
                   onDeleteFile={onDeleteFile}
                   onApplyAll={onApplyAll}
                   selected={selectedIndices?.includes(i) ?? false}

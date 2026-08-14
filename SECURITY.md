@@ -11,7 +11,7 @@ it is disclosed publicly. Use one of the following channels:
 - **GitHub private vulnerability reporting** — the preferred channel if this
   repository is hosted on GitHub (Repository → *Security* → *Report a vulnerability*).
 - **GitHub:** open a private discussion or contact the maintainer at
-  [@YOUR_GITHUB_HANDLE](https://github.com/YOUR_GITHUB_HANDLE)
+  [@YOUR_GITHUB_HANDLE](https://github.com/Kasikexe)
 
 Please include as much of the following as possible:
 

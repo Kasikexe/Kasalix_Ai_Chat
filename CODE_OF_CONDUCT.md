@@ -58,7 +58,7 @@ representative at an online or offline event.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement at
-[@YOUR_GITHUB_HANDLE](https://github.com/YOUR_GITHUB_HANDLE).
+[@YOUR_GITHUB_HANDLE](https://github.com/Kasikexe).
 
 All complaints will be reviewed and investigated promptly and fairly.
 

@@ -10,6 +10,8 @@ interface Props {
   onFileSelect?: (file: FileEntry) => void;
   /** Called when user wants to browse a local folder as the workspace */
   onBrowseFolder?: () => void;
+  /** Changing this value reloads the root listing (e.g. after agent writes) */
+  refreshToken?: number;
 }
 
 function getFileIcon(name: string, type: 'file' | 'directory') {
@@ -140,7 +142,7 @@ function DirectoryNode({ name, path, depth, onFileSelect }: {
   );
 }
 
-export function FileTree({ rootPath, workspacePath, onFileSelect, onBrowseFolder }: Props) {
+export function FileTree({ rootPath, workspacePath, onFileSelect, onBrowseFolder, refreshToken }: Props) {
   const [entries, setEntries] = useState<FileEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -167,6 +169,13 @@ export function FileTree({ rootPath, workspacePath, onFileSelect, onBrowseFolder
       loadRoot();
     }
   }, [entries, loading, error, loadRoot]);
+
+  // External refresh trigger (agent wrote files, etc.)
+  useEffect(() => {
+    if (refreshToken && refreshToken > 0) {
+      loadRoot();
+    }
+  }, [refreshToken, loadRoot]);
 
   if (loading && !entries) {
     return (

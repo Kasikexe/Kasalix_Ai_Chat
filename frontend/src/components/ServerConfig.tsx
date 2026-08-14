@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Server, Wifi, WifiOff, Loader2, Check, AlertTriangle, Network } from 'lucide-react';
+import { isInCapacitor, getSavedServerUrl, saveServerUrl } from '../services/api';
 
 interface DetectedIP {
   address: string;
@@ -15,8 +16,11 @@ interface ServerConfigProps {
   onClose?: () => void;
 }
 
+/** Electron exposes backend-URL management over IPC; Android (Capacitor) uses localStorage. */
+const isElectron = !!(window as any).electronAPI?.isElectron;
+
 export function ServerConfig({ onSaved, showClose, onClose }: ServerConfigProps) {
-  const [url, setUrl] = useState('https://localhost:3001');
+  const [url, setUrl] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'idle' | 'success' | 'fail'>('idle');
   const [saving, setSaving] = useState(false);
@@ -28,43 +32,65 @@ export function ServerConfig({ onSaved, showClose, onClose }: ServerConfigProps)
   useEffect(() => {
     (async () => {
       try {
-        const result = await (window as any).electronAPI?.getBackendUrl();
-        if (result?.url) setUrl(result.url);
-      } catch {}
-    })();
-
-    // Detect local network IPs for quick-select
-    (async () => {
-      try {
-        setScanning(true);
-        const ips = await (window as any).electronAPI?.detectIPs();
-        if (Array.isArray(ips) && ips.length > 0) {
-          setDetectedIPs(ips);
-          // Auto-fill with the first detected IP if no saved config exists
+        if (isElectron) {
           const result = await (window as any).electronAPI?.getBackendUrl();
-          if (!result?.hasSavedConfig && ips.length > 0) {
-            setUrl(`https://${ips[0].address}:3001`);
-          }
+          if (result?.url) setUrl(result.url);
+        } else {
+          const saved = getSavedServerUrl();
+          if (saved) setUrl(saved);
         }
       } catch {}
-      setScanning(false);
+      // Sensible default if nothing was loaded
+      setUrl((u) => u || (isElectron ? 'https://localhost:3001' : 'http://192.168.1.50:3001'));
     })();
+
+    // Detect local network IPs for quick-select (Electron only — the phone's
+    // own IPs are useless when connecting to a remote PC server)
+    if (isElectron) {
+      (async () => {
+        try {
+          setScanning(true);
+          const ips = await (window as any).electronAPI?.detectIPs();
+          if (Array.isArray(ips) && ips.length > 0) {
+            setDetectedIPs(ips);
+            // Auto-fill with the first detected IP if no saved config exists
+            const result = await (window as any).electronAPI?.getBackendUrl();
+            if (!result?.hasSavedConfig && ips.length > 0) {
+              setUrl(`https://${ips[0].address}:3001`);
+            }
+          }
+        } catch {}
+        setScanning(false);
+      })();
+    }
   }, []);
 
   const testConnection = useCallback(async () => {
     setTesting(true);
     setTestResult('idle');
     setError('');
+    const base = url.replace(/\/+$/, '');
     try {
-      // Use the Electron IPC handler (bypasses CORS — uses Node.js http/https directly)
-      const result = await (window as any).electronAPI?.testServerUrl(
-        `${url.replace(/\/+$/, '')}/api/health`
-      );
-      if (result?.online) {
-        setTestResult('success');
+      if (isElectron) {
+        // Use the Electron IPC handler (bypasses CORS — uses Node.js http/https directly)
+        const result = await (window as any).electronAPI?.testServerUrl(
+          `${base}/api/health`
+        );
+        if (result?.online) {
+          setTestResult('success');
+        } else {
+          setTestResult('fail');
+          setError(result?.error || 'Connection failed — server is not reachable');
+        }
       } else {
-        setTestResult('fail');
-        setError(result?.error || 'Connection failed — server is not reachable');
+        // Android: plain fetch (Capacitor WebView allows cross-origin requests)
+        const res = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(5000) });
+        if (res.ok) {
+          setTestResult('success');
+        } else {
+          setTestResult('fail');
+          setError(`Server responded with ${res.status}`);
+        }
       }
     } catch (e: any) {
       setTestResult('fail');
@@ -91,11 +117,16 @@ export function ServerConfig({ onSaved, showClose, onClose }: ServerConfigProps)
         return;
       }
 
-      const result = await (window as any).electronAPI?.setBackendUrl(url);
-      if (result?.success) {
-        onSaved();
+      if (isElectron) {
+        const result = await (window as any).electronAPI?.setBackendUrl(url);
+        if (result?.success) {
+          onSaved();
+        } else {
+          setError(result?.error || 'Failed to save');
+        }
       } else {
-        setError(result?.error || 'Failed to save');
+        saveServerUrl(url);
+        onSaved();
       }
     } catch (e: any) {
       setError(e?.message || 'Failed to save URL');
@@ -105,7 +136,7 @@ export function ServerConfig({ onSaved, showClose, onClose }: ServerConfigProps)
   }, [url, onSaved]);
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-gray-950/95 backdrop-blur-md flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[10000] bg-gray-950/95 backdrop-blur-md flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Header */}
         <div className="text-center mb-8">
@@ -128,58 +159,64 @@ export function ServerConfig({ onSaved, showClose, onClose }: ServerConfigProps)
               type="text"
               value={url}
               onChange={(e) => { setUrl(e.target.value); setTestResult('idle'); setError(''); }}
-              placeholder="https://192.168.1.50:3001"
+              placeholder={isElectron ? 'https://192.168.1.50:3001' : 'http://192.168.1.50:3001'}
               className="w-full px-4 py-2.5 bg-gray-950 border border-gray-700 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all font-mono"
             />
+            <p className="text-[11px] text-gray-600 mt-1.5">
+              Use <span className="text-gray-400 font-mono">http://</span> for a plain HTTP server
+              or <span className="text-gray-400 font-mono">https://</span> for the secure server.
+            </p>
           </div>
 
-          {/* Detected IPs — quick-select buttons with full protocol:port */}
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-2 flex items-center gap-1.5">
-              <Network size={12} />
-              Local IPs — click to try with port 3001
-            </label>
-            {scanning ? (
-              <div className="flex items-center gap-2 text-xs text-gray-500">
-                <Loader2 size={12} className="animate-spin" />
-                Scanning network interfaces...
-              </div>
-            ) : detectedIPs.length > 0 ? (
-              <div className="space-y-2">
-                {detectedIPs.map((ip) => (
-                  <div key={ip.address} className="flex flex-wrap gap-1.5 items-center">
-                    <span className="text-[10px] text-gray-600 font-mono w-14 truncate" title={ip.interface}>
-                      {ip.interface}:
-                    </span>
-                    {/* HTTPS variant */}
-                    <button
-                      onClick={() => { setUrl(`https://${ip.address}:3001`); setTestResult('idle'); setError(''); }}
-                      className={`px-2.5 py-1 rounded-md text-[11px] font-mono transition-all duration-200 ${
-                        url === `https://${ip.address}:3001`
-                          ? 'bg-purple-600/30 border border-purple-500/50 text-purple-300'
-                          : 'bg-gray-800/60 border border-gray-700/50 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
-                      }`}
-                    >
-                      https://{ip.address}:3001
-                    </button>
-                    {/* HTTP variant */}
-                    <button
-                      onClick={() => { setUrl(`http://${ip.address}:3001`); setTestResult('idle'); setError(''); }}
-                      className={`px-2.5 py-1 rounded-md text-[11px] font-mono transition-all duration-200 ${
-                        url === `http://${ip.address}:3001`
-                          ? 'bg-purple-600/30 border border-purple-500/50 text-purple-300'
-                          : 'bg-gray-800/60 border border-gray-700/50 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
-                      }`}
-                    >
-                      http://{ip.address}:3001
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-gray-600 italic">No network IPs detected</p>
-            )}
-          </div>
+          {/* Detected IPs — quick-select buttons with full protocol:port (Electron only) */}
+          {isElectron && (
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-2 flex items-center gap-1.5">
+                <Network size={12} />
+                Local IPs — click to try with port 3001
+              </label>
+              {scanning ? (
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <Loader2 size={12} className="animate-spin" />
+                  Scanning network interfaces...
+                </div>
+              ) : detectedIPs.length > 0 ? (
+                <div className="space-y-2">
+                  {detectedIPs.map((ip) => (
+                    <div key={ip.address} className="flex flex-wrap gap-1.5 items-center">
+                      <span className="text-[10px] text-gray-600 font-mono w-14 truncate" title={ip.interface}>
+                        {ip.interface}:
+                      </span>
+                      {/* HTTPS variant */}
+                      <button
+                        onClick={() => { setUrl(`https://${ip.address}:3001`); setTestResult('idle'); setError(''); }}
+                        className={`px-2.5 py-1 rounded-md text-[11px] font-mono transition-all duration-200 ${
+                          url === `https://${ip.address}:3001`
+                            ? 'bg-purple-600/30 border border-purple-500/50 text-purple-300'
+                            : 'bg-gray-800/60 border border-gray-700/50 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                        }`}
+                      >
+                        https://{ip.address}:3001
+                      </button>
+                      {/* HTTP variant */}
+                      <button
+                        onClick={() => { setUrl(`http://${ip.address}:3001`); setTestResult('idle'); setError(''); }}
+                        className={`px-2.5 py-1 rounded-md text-[11px] font-mono transition-all duration-200 ${
+                          url === `http://${ip.address}:3001`
+                            ? 'bg-purple-600/30 border border-purple-500/50 text-purple-300'
+                            : 'bg-gray-800/60 border border-gray-700/50 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                        }`}
+                      >
+                        http://{ip.address}:3001
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-600 italic">No network IPs detected</p>
+              )}
+            </div>
+          )}
 
           {/* Connection test result */}
           {testResult === 'success' && (
@@ -229,8 +266,12 @@ export function ServerConfig({ onSaved, showClose, onClose }: ServerConfigProps)
           <div className="flex items-start gap-2 text-gray-500 text-xs">
             <AlertTriangle size={14} className="mt-0.5 shrink-0" />
             <div>
-              <p className="font-medium text-gray-400 mb-1">Make sure both PCs are on the same network</p>
-              <p>The backend server runs on port <span className="text-gray-300 font-mono">3001</span> with HTTPS. Pick the correct IP from the detected list above, or type it manually.</p>
+              <p className="font-medium text-gray-400 mb-1">Make sure both devices are on the same network</p>
+              <p>
+                The backend server runs on port <span className="text-gray-300 font-mono">3001</span>.
+                If your server uses plain HTTP, enter the address with <span className="text-gray-300 font-mono">http://</span>
+                {isElectron && <> (e.g. <span className="text-gray-300 font-mono">http://192.168.1.50:3001</span>)</>}.
+              </p>
               {showClose && onClose && (
                 <button
                   onClick={onClose}

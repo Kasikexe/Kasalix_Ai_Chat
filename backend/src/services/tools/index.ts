@@ -1,8 +1,9 @@
 /**
- * Tool Plugin System
+ * Tool Plugin System — registry helpers
  *
- * Tools are functions the AI can invoke during conversations.
- * Each tool has a name, description, param schema, and an execute function.
+ * Built-in tools live here; plugin tools are registered into the SAME
+ * registry so they show up in /api/tools, can be executed via
+ * /api/tools/execute, and are visible in the Plugins UI.
  */
 
 export interface ToolParam {
@@ -25,6 +26,10 @@ export interface ToolDefinition {
   icon: string;
   /** Parameter schema */
   params: ToolParam[];
+  /** Optional keywords that trigger this tool from user text (plugins) */
+  keywords?: string[];
+  /** Which plugin this tool belongs to (built-in tools omit this) */
+  pluginId?: string;
 }
 
 export interface ToolContext {
@@ -64,6 +69,18 @@ export function registerTool(definition: ToolDefinition, execute: ToolExecutor):
   console.log(`[tools] Registered tool: ${definition.name} (${definition.id})`);
 }
 
+/** Remove a tool from the registry (used when a plugin is disabled/uninstalled) */
+export function unregisterTool(toolId: string): boolean {
+  const existed = registry.delete(toolId);
+  if (existed) console.log(`[tools] Unregistered tool: ${toolId}`);
+  return existed;
+}
+
+/** Check whether a tool id is currently registered */
+export function isToolRegistered(toolId: string): boolean {
+  return registry.has(toolId);
+}
+
 /** Get all registered tool definitions (for the Plugins UI) */
 export function getAllTools(): ToolDefinition[] {
   return Array.from(registry.values()).map((t) => t.definition);
@@ -87,6 +104,28 @@ export async function executeTool(
   }
 }
 
+/** Math function/constant names the calculator understands (anything else is prose). */
+const MATH_WORDS = /^(abs|floor|ceil|round|sqrt|cbrt|sin|cos|tan|asin|acos|atan|log|log2|log10|ln|exp|pow|max|min|pi|e)$/i;
+
+/**
+ * True when the text is a BARE math expression — digits, operators, parens and
+ * math functions only. A sentence containing a range like "scale 1-10" or
+ * "from 5-10" fails this, so the whole sentence is never sent to the
+ * calculator as an expression (which crashed with "Unexpected token").
+ * Exported so the adaptive-thinking heuristic can reuse the same judgement.
+ */
+export function isProbablyMathExpression(expr: string): boolean {
+  const trimmed = expr.trim();
+  if (!trimmed || trimmed.length > 120) return false;
+  const words = trimmed.split(/[\s,()+-\-*/^%]+/).filter(Boolean);
+  for (const w of words) {
+    if (/^\d*\.?\d+$/.test(w)) continue; // number
+    if (MATH_WORDS.test(w)) continue;      // math function / constant
+    return false;                          // anything else = prose, not math
+  }
+  return true;
+}
+
 /**
  * Try to detect which tool the user wants based on their input text.
  * Uses keyword matching and tool-specific detection logic.
@@ -95,7 +134,9 @@ export async function detectTool(input: string): Promise<{ toolId: string; param
   const lower = input.toLowerCase();
 
   // ─── Calculator detection ─────────────────────────────
-  // Only trigger when there's actual math evidence (numbers + operators), not just keywords
+  // Only trigger when the message actually IS a math expression. A range like
+  // "scale 1-10" inside a sentence must NOT fire — otherwise the whole sentence
+  // gets evaluated and the tool returns a crash instead of an answer.
   const hasMathEvidence = /[\d]\s*[+\-*/^%]\s*[\d]/.test(input) || /^(calculate|compute|solve|evaluate)\s+/i.test(input.trim());
   const hasMixedNumberAndKeyword = /\d/.test(input) && /^(calculate|what (is|'s)|compute|solve|evaluate)/i.test(input.trim());
   if ((hasMathEvidence || hasMixedNumberAndKeyword) && !lower.includes('http') && !lower.includes('convert')) {
@@ -104,14 +145,17 @@ export async function detectTool(input: string): Promise<{ toolId: string; param
       const { detect: calcDetect } = await import('./calculator');
       if (typeof calcDetect === 'function') {
         const result = calcDetect(input);
-        if (result) {
+        if (result && isProbablyMathExpression(String(result.params.expression || ''))) {
           return { toolId: 'calculator', params: result.params };
         }
       }
     } catch {}
-    // Fallback: only extract expression if there's an actual math operator present
+    // Fallback: only when the cleaned message is a BARE math expression
     if (hasMathEvidence) {
-      return { toolId: 'calculator', params: { expression: input.replace(/^(calculate|what (?:is|'s)|compute|solve|evaluate)\s+/i, '').trim() } };
+      const expr = input.replace(/^(calculate|what (?:is|'s)|compute|solve|evaluate)\s+/i, '').trim();
+      if (isProbablyMathExpression(expr)) {
+        return { toolId: 'calculator', params: { expression: expr } };
+      }
     }
   }
 
@@ -226,6 +270,23 @@ export async function detectTool(input: string): Promise<{ toolId: string; param
       }
     } catch {}
     return { toolId: 'hash', params: { action: 'all', query: input } };
+  }
+
+  // ─── Plugin tools detection (last) ────────────────────
+  // Keyword-based: a plugin tool with a matching keyword fires. Iterating the
+  // shared registry keeps this free of circular imports. Keywords are matched
+  // on word boundaries so a plugin keyword like "game" doesn't fire inside
+  // "gamepad" or "the game is fun" while chatting.
+  for (const tool of registry.values()) {
+    const def = tool.definition;
+    if (!def.pluginId || !def.keywords?.length) continue;
+    for (const kw of def.keywords) {
+      if (!kw) continue;
+      const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`\\b${escaped}\\b`, 'i').test(input)) {
+        return { toolId: def.id, params: { query: input } };
+      }
+    }
   }
 
   return null;

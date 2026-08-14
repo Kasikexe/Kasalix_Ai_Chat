@@ -111,7 +111,8 @@ export async function fetchReleases(): Promise<ChangelogEntry[]> {
  */
 export async function getReleaseForVersion(version: string): Promise<ChangelogEntry | null> {
   const clean = version.replace(/^v/i, '');
-  const find = (list: ChangelogEntry[] | null) => list?.find((e) => e.version === clean) || null;
+  // Prefix match so build-suffixed versions (e.g. "0.9.0.1" from electron-updater) still match.
+  const find = (list: ChangelogEntry[] | null) => list?.find((e) => e.version === clean || e.version.startsWith(`${clean}.`)) || null;
   const fromCache = find(getCachedReleases());
   if (fromCache) return fromCache;
   try {
@@ -120,5 +121,3 @@ export async function getReleaseForVersion(version: string): Promise<ChangelogEn
     return find(getStaleReleases());
   }
 }
-
-export { openExternal } from '../utils/openExternal';

@@ -325,20 +325,34 @@ function resolveWorkspaceRoot(ws) {
   return resolved;
 }
 
+/** Realpath the nearest EXISTING ancestor of `p`, then re-append the missing
+ * tail, so containment checks work even when the target (or any parent dir)
+ * does not exist yet — e.g. creating a brand-new project subfolder. Symlinks
+ * in the existing part are still resolved, so symlink escapes stay blocked. */
+function resolveForContainment(p) {
+  const missing = [];
+  let current = p;
+  for (;;) {
+    try {
+      const real = fs.realpathSync(current);
+      return missing.length === 0 ? real : path.join(real, ...missing);
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return path.resolve(p); // reached the root — give up resolving
+      missing.unshift(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
 function isPathInside(root, target) {
   // Realpath comparison so symlinks inside the workspace cannot point outside it.
-  // For targets that don't exist yet (new file creation), resolve the real
-  // parent directory instead.
+  // Missing path segments (new files/folders) are resolved via their nearest
+  // existing ancestor, so creating a new project folder inside the workspace
+  // passes the check instead of failing realpath.
   try {
-    let realTarget;
-    try {
-      realTarget = fs.realpathSync(target);
-    } catch {
-      const parent = path.dirname(target);
-      const realParent = fs.realpathSync(parent);
-      realTarget = path.join(realParent, path.basename(target));
-    }
-    const realRoot = fs.realpathSync(root);
+    const realRoot = resolveForContainment(root);
+    const realTarget = resolveForContainment(target);
     const rel = path.relative(realRoot, realTarget);
     return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
   } catch {
@@ -399,7 +413,62 @@ function readFileContent(filePath) {
   return { content, binary: false, size: stat.size, truncated };
 }
 
-/** Write content to a file */
+/** Compact line diff (Myers): returns hunks, or null when too different. */
+function diffLines(aLines, bLines, maxD = 400) {
+  const N = aLines.length, M = bLines.length;
+  const max = N + M, offset = max;
+  const V = new Int32Array(2 * max + 1);
+  const trace = [];
+  let foundD = -1;
+  outer: for (let d = 0; d <= maxD; d++) {
+    trace.push(V.slice());
+    for (let k = -d; k <= d; k += 2) {
+      let x;
+      if (k === -d || (k !== d && V[offset + k - 1] < V[offset + k + 1])) x = V[offset + k + 1];
+      else x = V[offset + k - 1] + 1;
+      let y = x - k;
+      while (x < N && y < M && aLines[x] === bLines[y]) { x++; y++; }
+      V[offset + k] = x;
+      if (x >= N && y >= M) { foundD = d; break outer; }
+    }
+  }
+  if (foundD === -1) return null;
+  const hunks = [];
+  let x = N, y = M;
+  for (let d = foundD; d > 0; d--) {
+    const Vp = trace[d];
+    const k = x - y;
+    let prevK;
+    if (k === -d || (k !== d && Vp[offset + k - 1] < Vp[offset + k + 1])) prevK = k + 1;
+    else prevK = k - 1;
+    const prevX = Vp[offset + prevK];
+    const prevY = prevX - prevK;
+    while (x > prevX && y > prevY) { x--; y--; }
+    if (x === prevX) { hunks.unshift({ oldStart: prevX, oldCount: 0, newStart: prevY, newCount: y - prevY }); y = prevY; }
+    else { hunks.unshift({ oldStart: prevX, oldCount: x - prevX, newStart: prevY, newCount: 0 }); x = prevX; }
+  }
+  const merged = [];
+  for (const h of hunks) {
+    const last = merged[merged.length - 1];
+    if (last && last.oldStart + last.oldCount === h.oldStart && last.newStart + last.newCount === h.newStart) {
+      last.oldCount += h.oldCount;
+      last.newCount += h.newCount;
+    } else merged.push({ ...h });
+  }
+  return merged;
+}
+
+/** Changed-line count: number of edited lines between two file texts. */
+function changedLineCount(a, b) {
+  const aLines = a.split('\n'), bLines = b.split('\n');
+  const hunks = diffLines(aLines, bLines);
+  if (!hunks) return { count: Infinity, total: Math.max(aLines.length, bLines.length) };
+  return { count: hunks.reduce((s, h) => s + h.oldCount + h.newCount, 0), total: Math.max(aLines.length, bLines.length) };
+}
+
+/** Write content to a file. For EXISTING files this is a SURGICAL apply: only
+ * the lines that actually differ are written (whole-file re-emits are refused)
+ * so a slightly-off full rewrite can't silently clobber the user's work. */
 function writeFileContent(filePath, content) {
   const resolved = path.resolve(filePath);
   // Read old content for diff
@@ -407,8 +476,64 @@ function writeFileContent(filePath, content) {
   try { oldContent = fs.readFileSync(resolved, 'utf-8'); } catch {}
   // Ensure parent dir exists
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  if (oldContent !== null) {
+    const { count: changed, total } = changedLineCount(
+      oldContent.replace(/\r\n/g, '\n'),
+      content.replace(/\r\n/g, '\n')
+    );
+    const isSmallEdit = changed <= Math.max(20, Math.floor(total * 0.4));
+    if (!isSmallEdit) {
+      const err = new Error(`Refusing to overwrite ${path.basename(resolved)}: your version changes ${changed} of ${total} lines — that is a full rewrite, not an edit. To rewrite the whole file on purpose, delete it first (or use the edit/EDIT flow with a small old_string).`);
+      err.code = 'EWRITEGUARD';
+      throw err;
+    }
+    const finalContent = oldContent.includes('\r\n')
+      ? content.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
+      : content;
+    fs.writeFileSync(resolved, finalContent, 'utf-8');
+    return { success: true, path: resolved, isNew: false, size: Buffer.byteLength(finalContent, 'utf-8') };
+  }
   fs.writeFileSync(resolved, content, 'utf-8');
-  return { success: true, path: resolved, isNew: oldContent === null, size: Buffer.byteLength(content, 'utf-8') };
+  return { success: true, path: resolved, isNew: true, size: Buffer.byteLength(content, 'utf-8') };
+}
+
+/** Surgical edit: replace oldString with newString inside an existing file */
+function editFileContent(filePath, oldString, newString) {
+  const resolved = path.resolve(filePath);
+  const content = fs.readFileSync(resolved, 'utf-8');
+
+  // Exact match first
+  let count = 0;
+  let idx = content.indexOf(oldString);
+  while (idx !== -1) { count++; idx = content.indexOf(oldString, idx + oldString.length); }
+  if (count === 1) {
+    const updated = content.replace(oldString, newString);
+    fs.writeFileSync(resolved, updated, 'utf-8');
+    return { success: true, path: resolved, size: Buffer.byteLength(updated, 'utf-8') };
+  }
+  if (count > 1) {
+    throw new Error('Found multiple identical matches — include more surrounding context to make it unique.');
+  }
+
+  // Whitespace-tolerant line match (collapse runs of whitespace per line)
+  const norm = (l) => l.replace(/\r$/, '').replace(/\s+/g, ' ').trim();
+  const contentLines = content.split('\n').map((l) => l.replace(/\r$/, ''));
+  const oldLines = oldString.split('\n').map(norm);
+  for (let i = 0; i <= contentLines.length - oldLines.length; i++) {
+    let match = true;
+    for (let j = 0; j < oldLines.length; j++) {
+      if (norm(contentLines[i + j]) !== oldLines[j]) { match = false; break; }
+    }
+    if (match) {
+      // Empty replacement = deletion of the matched lines
+      const replacement = newString === '' ? [] : newString.split('\n');
+      const updated = [...contentLines.slice(0, i), ...replacement, ...contentLines.slice(i + oldLines.length)].join('\n');
+      fs.writeFileSync(resolved, updated, 'utf-8');
+      return { success: true, path: resolved, size: Buffer.byteLength(updated, 'utf-8') };
+    }
+  }
+
+  throw new Error('Could not find the search text in the file. Read the current file and retry with the exact text.');
 }
 
 /** Delete a file or directory */
@@ -750,6 +875,18 @@ ipcMain.handle('write-file', async (_event, filePath, content, workspacePath) =>
   }
 });
 
+ipcMain.handle('edit-file', async (_event, filePath, oldString, newString, workspacePath) => {
+  const root = resolveWorkspaceRoot(workspacePath);
+  if (!root) return { error: 'A valid workspacePath is required' };
+  if (!isPathInside(root, filePath)) return { error: 'Access denied: path is outside the workspace' };
+  try {
+    return editFileContent(filePath, oldString, newString);
+  } catch (err) {
+    if (err.code === 'ENOENT') return { error: 'File does not exist' };
+    return { error: err.message };
+  }
+});
+
 ipcMain.handle('delete-file', async (_event, filePath, workspacePath) => {
   const root = resolveWorkspaceRoot(workspacePath);
   if (!root) return { error: 'A valid workspacePath is required' };
@@ -791,7 +928,7 @@ ipcMain.handle('open-folder-dialog', async () => {
  */
 ipcMain.handle('get-about-info', () => {
   const legalDir = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..');
-  const relFiles = ['LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'licenses/GPL-3.0.txt'];
+  const relFiles = ['LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'];
   const legal = relFiles.map((rel) => {
     const full = path.join(legalDir, rel);
     let content = null;

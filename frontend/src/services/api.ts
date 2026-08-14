@@ -79,49 +79,41 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 export interface ModelAssignments {
+  chat: string;
   chat_thinking: string;
-  chat_fast: string;
   code: string;
   vision: string;
   extraction: string;
-  editor: string;
-  editor_vision: string;
   search: string;
   image_generation: string;
 }
 
 export const MODEL_ASSIGNMENT_KEYS: (keyof ModelAssignments)[] = [
+  'chat',
   'chat_thinking',
-  'chat_fast',
   'code',
   'vision',
   'extraction',
-  'editor',
-  'editor_vision',
   'search',
   'image_generation',
 ];
 
 export const MODEL_ASSIGNMENT_LABELS: Record<keyof ModelAssignments, string> = {
+  chat: 'Chat',
   chat_thinking: 'Chat (Thinking)',
-  chat_fast: 'Chat (Fast)',
   code: 'Code Generation',
   vision: 'Vision Analysis',
   extraction: 'Memory Extraction',
-  editor: 'Video Editor',
-  editor_vision: 'Editor Vision',
   search: 'Web Search',
   image_generation: 'Image Generation',
 };
 
 export const MODEL_ASSIGNMENT_ICONS: Record<keyof ModelAssignments, string> = {
+  chat: '💬',
   chat_thinking: '🧠',
-  chat_fast: '⚡',
   code: '💻',
   vision: '👁️',
   extraction: '🧠',
-  editor: '🎬',
-  editor_vision: '👁️',
   search: '🌐',
   image_generation: '🎨',
 };
@@ -527,15 +519,42 @@ export const api = {
     );
   },
 
+  /** Surgical edit: replace oldString with newString inside an existing file */
+  async editFile(filePath: string, oldString: string, newString: string, workspacePath?: string): Promise<{ success: boolean; path: string; size: number }> {
+    if (isElectron) {
+      return electronFileOp('editFile', filePath, oldString, newString, workspacePath);
+    }
+    return handleResponse(
+      await fetch(`${API_BASE}/files/edit`, authedFetch(`${API_BASE}/files/edit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath, oldString, newString, workspacePath }),
+      }))
+    );
+  },
+
+  /** Answer an agent's ask_user question (key from the agent_question event). */
+  async answerAgentQuestion(key: string, answer: string): Promise<void> {
+    await handleResponse(
+      await fetch(`${API_BASE}/chat/answer`, authedFetch(`${API_BASE}/chat/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, answer }),
+      }))
+    );
+  },
+
   async generateTitle(message: string, model: string): Promise<string> {
     try {
-      const data = await handleResponse<{ title: string }>(
-        await fetch(`${API_BASE}/chat/title`, authedFetch(`${API_BASE}/chat/title`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message, model }),
-        }))
-      );
+      // Hard timeout: title generation is a cosmetic nicety — it must never
+      // leave the app hanging (e.g. slow Ollama model load on the backend).
+      const res = await fetch(`${API_BASE}/chat/title`, authedFetch(`${API_BASE}/chat/title`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, model }),
+        signal: AbortSignal.timeout(15000),
+      }));
+      const data = await handleResponse<{ title: string }>(res);
       return data.title;
     } catch {
       return 'New Chat';
@@ -552,6 +571,16 @@ streamChat(
     onStage: (stage: string) => void;
     onDone: () => void;
     onError: (err: string) => void;
+    /** Agent mode: fired when the AI starts a tool call */
+    onAgentTool?: (call: { tool: string; args: Record<string, unknown> }) => void;
+    /** Agent mode: fired when the AI writes/deletes a file */
+    onFileWritten?: (write: { path: string; changeType: string; originalContent?: string }) => void;
+    /** Fired with each reasoning chunk from thinking models (qwen3, deepseek-r1, etc.) */
+    onThinking?: (chunk: string) => void;
+    /** Agent mode: fired when the AI runs a shell command or auto-verify (terminal feed) */
+    onAgentCommand?: (cmd: { command: string; output: string; failed: boolean }) => void;
+    /** Agent mode: fired when the AI asks the user a clarifying question (ask_user) */
+    onQuestion?: (q: { key: string; question: string }) => void;
   },
   signal?: AbortSignal,
   mode?: ConversationMode,
@@ -559,7 +588,8 @@ streamChat(
   temperature?: number,
   top_p?: number,
   max_tokens?: number,
-  planningEnabled?: boolean
+  planningEnabled?: boolean,
+  autoApply?: boolean
 ): Promise<void> {
   return (async () => {
     const profile = loadProfile();
@@ -572,12 +602,15 @@ streamChat(
         conversationId,
         mode,
         workspacePath,
-        thinkingEnabled: localStorage.getItem('ai-chat:thinkingEnabled') === 'true',
+        // Auto (default): the backend decides per message whether thinking is
+        // needed. 'off' disables thinking entirely.
+        thinkingMode: localStorage.getItem('ai-chat:thinkingEnabled') === 'false' ? 'off' : 'auto',
         temperature,
         top_p,
         max_tokens,
         userName: profile?.name || 'User',
         planningEnabled: planningEnabled === true,
+        autoApply: autoApply === true,
       }),
       signal,
     }));
@@ -592,6 +625,31 @@ streamChat(
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let completed = false;
+
+      // Process one SSE "data:" payload. Returns true if it was a terminal
+      // event (done/error) — the stream is then finished.
+      const handlePayload = (payload: string): boolean => {
+        if (!payload) return false;
+        try {
+          const parsed = JSON.parse(payload);
+          switch (parsed.type) {
+            case 'chunk': callbacks.onChunk(parsed.content); break;
+            case 'conversationId': callbacks.onConversationId(parsed.conversationId); break;
+            case 'stage': callbacks.onStage(parsed.stage); break;
+            case 'agent_tool': callbacks.onAgentTool?.({ tool: parsed.tool, args: parsed.args || {} }); break;
+            case 'file_written': callbacks.onFileWritten?.({ path: parsed.path, changeType: parsed.changeType, originalContent: parsed.originalContent }); break;
+            case 'agent_command': callbacks.onAgentCommand?.({ command: parsed.command, output: parsed.output, failed: !!parsed.failed }); break;
+            case 'agent_question': callbacks.onQuestion?.({ key: parsed.key, question: parsed.question }); break;
+            case 'thinking': callbacks.onThinking?.(parsed.content); break;
+            case 'done': callbacks.onDone(); return true;
+            case 'error': callbacks.onError(parsed.error); return true;
+          }
+        } catch (e) {
+          console.error('SSE parse error:', e);
+        }
+        return false;
+      };
 
       try {
         while (true) {
@@ -604,163 +662,30 @@ streamChat(
           for (const evt of events) {
             const line = evt.trim();
             if (!line.startsWith('data:')) continue;
-            const payload = line.slice(5).trim();
-            if (!payload) continue;
-            try {
-              const parsed = JSON.parse(payload);
-              switch (parsed.type) {
-                case 'chunk': callbacks.onChunk(parsed.content); break;
-                case 'conversationId': callbacks.onConversationId(parsed.conversationId); break;
-                case 'stage': callbacks.onStage(parsed.stage); break;
-                case 'done': callbacks.onDone(); return;
-                case 'error': callbacks.onError(parsed.error); return;
-              }
-            } catch (e) {
-              console.error('SSE parse error:', e);
+            if (handlePayload(line.slice(5).trim())) {
+              completed = true;
+              return;
             }
           }
+        }
+        // The stream ended. Flush any leftover event that never got a trailing
+        // "\n\n" (e.g. the final "done" was split across network chunks).
+        if (!completed && buffer.trim()) {
+          const line = buffer.trim();
+          if (line.startsWith('data:')) {
+            completed = handlePayload(line.slice(5).trim()) || completed;
+          }
+        }
+        // Safety net: if the connection closed without a terminal event
+        // (server crash, proxy drop, network blip), still end the stream so
+        // the UI doesn't stay stuck in "replying" forever.
+        if (!completed) {
+          callbacks.onDone();
         }
       } finally {
         reader.releaseLock();
       }
     })();
-  },
-
-  // --- Editor API ---
-  async getVideoInfo(filePath: string): Promise<{
-    fileName: string;
-    fileSize: number;
-    duration: number;
-    bitRate: number;
-    format: string;
-    video: {
-      codec: string;
-      width: number;
-      height: number;
-      fps: number;
-      pixelFormat: string;
-    } | null;
-    audio: {
-      codec: string;
-      sampleRate: number;
-      channels: number;
-    } | null;
-    streams: number;
-  }> {
-    const data = await handleResponse<{ info: any }>(
-      await fetch(`${API_BASE}/editor/info`, authedFetch(`${API_BASE}/editor/info`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath }),
-      }))
-    );
-    return data.info;
-  },
-
-  async extractFrame(
-    filePath: string,
-    time: number,
-    width: number = 640
-  ): Promise<{ frame: string; time: number; width: number }> {
-    const data = await handleResponse<{ frame: string; time: number; width: number }>(
-      await fetch(`${API_BASE}/editor/frames`, authedFetch(`${API_BASE}/editor/frames`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath, time, width }),
-      }))
-    );
-    return data;
-  },
-
-  async renderVideo(
-    inputPath: string,
-    outputFileName: string,
-    cmdArgs: string
-  ): Promise<{ success: boolean; outputPath: string; outputFileName: string; outputSize: number; elapsed: number }> {
-    const data = await handleResponse<any>(
-      await fetch(`${API_BASE}/editor/render`, authedFetch(`${API_BASE}/editor/render`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inputPath, outputFileName, cmdArgs }),
-      }))
-    );
-    return data;
-  },
-
-  editorChat(
-    message: string,
-    videoPath: string | null,
-    videoInfo: any,
-    messages: { role: 'user' | 'assistant'; content: string }[],
-    callbacks: {
-      onChunk: (chunk: string) => void;
-      onCommand: (args: string, auto?: boolean) => void;
-      onDone: () => void;
-      onError: (err: string) => void;
-      onStage?: (stage: string) => void;
-    },
-    signal?: AbortSignal
-  ): Promise<void> {
-    return (async () => {
-      const res = await fetch(`${API_BASE}/editor/chat`, authedFetch(`${API_BASE}/editor/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, videoPath, videoInfo, messages }),
-        signal,
-      }));
-
-      if (!res.ok || !res.body) {
-        callbacks.onError(`Editor chat failed: ${res.statusText}`);
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const events = buffer.split('\n\n');
-          buffer = events.pop() || '';
-
-          for (const evt of events) {
-            const line = evt.trim();
-            if (!line.startsWith('data:')) continue;
-            const payload = line.slice(5).trim();
-            if (!payload) continue;
-            try {
-              const parsed = JSON.parse(payload);
-              switch (parsed.type) {
-                case 'chunk': callbacks.onChunk(parsed.content); break;
-                case 'command': callbacks.onCommand(parsed.args, parsed.auto); break;
-                case 'stage': callbacks.onStage?.(parsed.stage); break;
-                case 'done': callbacks.onDone(); return;
-                case 'error': callbacks.onError(parsed.error); return;
-              }
-            } catch (e) {
-              console.error('SSE parse error:', e);
-            }
-          }
-        }
-      } finally {
-        reader.releaseLock();
-      }
-    })();
-  },
-
-  async uploadVideo(file: File): Promise<{ fileName: string; filePath: string; size: number }> {
-    const formData = new FormData();
-    formData.append('file', file);
-    const data = await handleResponse<{ fileName: string; filePath: string; size: number }>(
-      await fetch(`${API_BASE}/editor/upload`, authedFetch(`${API_BASE}/editor/upload`, {
-        method: 'POST',
-        body: formData,
-      }))
-    );
-    return data;
   },
 
   // --- Generated Images API ---
@@ -927,5 +852,20 @@ streamChat(
         method: 'DELETE',
       }))
     );
+  },
+
+  // --- Chat control ---
+  /** Tell the server to stop an active run (Stop button). Fire-and-forget. */
+  async stopChat(conversationId: string): Promise<void> {
+    try {
+      await fetch(`${API_BASE}/chat/stop`, authedFetch(`${API_BASE}/chat/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId }),
+      }));
+    } catch (e) {
+      // Stop is best-effort — the local fetch abort still works.
+      console.error('[api] stopChat failed:', e);
+    }
   },
 };

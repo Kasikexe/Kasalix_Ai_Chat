@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
-import { Check, Copy, Download, User, Bot, FileCode, RefreshCw, Pencil, X, Save, FilePlus2, Trash2, GitBranch, Code2, FileText, Layers, ImageIcon, ZoomIn } from 'lucide-react';
+import { Check, Copy, Download, User, Bot, FileCode, RefreshCw, Pencil, X, Save, FilePlus2, Trash2, GitBranch, Code2, FileText, Layers, ImageIcon, ZoomIn, Brain, ChevronDown } from 'lucide-react';
 import type { Message as MessageType } from '../types';
 
 const languageExtensions: Record<string, string> = {
@@ -53,16 +53,54 @@ const languageExtensions: Record<string, string> = {
 
 const FILE_PATH_RE = /^(?:\/\/|#|;|%|--|\/\*|<!--)\s*([^\s]+?\.[a-zA-Z]\w*)\s*(?:\*\/|-->)?$/;
 const DELETE_PATH_RE = /^(?:\/\/|#|--)\s*DELETE:\s*([^\s]+)/i;
+const EDIT_PATH_RE = /^(?:\/\/|#|--|;|%|<!--)\s*EDIT:\s*([^\s]+?)(?:\s*-->)?$/i;
 const CODE_BLOCK_RE = /```(?:\w*)\n([\s\S]*?)```/g;
 
-// Extract all code blocks with detected file paths from a markdown string
-function extractApplicableFiles(content: string): { filePath: string; content: string }[] {
-  const result: { filePath: string; content: string }[] = [];
+/**
+ * Parse an EDIT code block: first line "// EDIT: path", then OLD: lines,
+ * then a --- separator, then NEW: lines. Returns the old/new snippets.
+ */
+function parseEditBlock(block: string): { path: string; oldString: string; newString: string } | null {
+  const lines = block.split('\n');
+  const first = lines[0]?.trim() || '';
+  const m = first.match(EDIT_PATH_RE);
+  if (!m) return null;
+  const path = m[1];
+
+  // Find the OLD:/NEW: sections
+  let oldStart = -1;
+  let sep = -1;
+  let newStart = -1;
+  for (let i = 1; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (oldStart === -1 && /^OLD:$/i.test(t)) { oldStart = i; continue; }
+    if (oldStart !== -1 && sep === -1 && /^-{3,}$/.test(t)) { sep = i; continue; }
+    if (sep !== -1 && /^NEW:$/i.test(t)) { newStart = i; break; }
+  }
+  if (oldStart === -1 || sep === -1 || newStart === -1) return null;
+
+  const oldString = lines.slice(oldStart + 1, sep).join('\n').trim();
+  const newString = lines.slice(newStart + 1).join('\n').trim();
+  if (!oldString) return null;
+  return { path, oldString, newString };
+}
+
+// Extract all code blocks with detected file paths (or EDIT blocks) from markdown
+function extractApplicableFiles(content: string): { filePath: string; content: string; oldString?: string; newString?: string }[] {
+  const result: { filePath: string; content: string; oldString?: string; newString?: string }[] = [];
   let match;
   while ((match = CODE_BLOCK_RE.exec(content)) !== null) {
     const block = match[1];
     const lines = block.split('\n');
     const firstLine = lines[0]?.trim() || '';
+
+    // EDIT block
+    const edit = parseEditBlock(block);
+    if (edit) {
+      result.push({ filePath: edit.path, content: edit.newString, oldString: edit.oldString, newString: edit.newString });
+      continue;
+    }
+
     const pathMatch = firstLine.match(FILE_PATH_RE);
     if (pathMatch) {
       const filePath = pathMatch[1];
@@ -73,7 +111,7 @@ function extractApplicableFiles(content: string): { filePath: string; content: s
   return result;
 }
 
-const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode, onDeleteFile }: { children: string; className?: string; onApplyCode?: (filePath: string, content: string) => void; onDeleteFile?: (filePath: string) => void }) {
+const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode, onApplyEdit, onDeleteFile }: { children: string; className?: string; onApplyCode?: (filePath: string, content: string) => void; onApplyEdit?: (filePath: string, oldString: string, newString: string) => void; onDeleteFile?: (filePath: string) => void }) {
   const [copied, setCopied] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
   const [manualPath, setManualPath] = useState('');
@@ -91,13 +129,27 @@ const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode, on
     return '';
   };
   const safeChildren = extractText(children);
-  const language = className?.replace(/^language-/, '').split(/\s+/)[0] || '';
+  // rehype-highlight sets classes like "hljs language-cpp" (hljs first) — grab
+  // the real language token so the label/extension are correct (previously the
+  // header showed "hljs" because split()[0] picked the highlighter's class).
+  const rawLanguage =
+    (className || '').match(/(?:^|\s)language-([A-Za-z0-9_-]+)/)?.[1]?.toLowerCase() || '';
+  // Non-code fences (plaintext/text/hljs) are descriptions, not files.
+  const language = ['plaintext', 'text', 'txt', 'text/plain', 'hljs'].includes(rawLanguage) ? '' : rawLanguage;
   const extension = language ? languageExtensions[language] || `.${language}` : '.txt';
+  // Sensible default filename when the model didn't emit a "# path" first line.
+  const suggestedPath = language ? `main${extension}` : '';
 
-  // Detect file path or delete directive in first line
-  const { detectedPath, codeContent, isDelete } = useMemo(() => {
+  // Detect file path, delete directive, or EDIT block in first line
+  const { detectedPath, codeContent, isDelete, editInfo } = useMemo(() => {
     const lines = safeChildren.split('\n');
     const firstLine = lines[0]?.trim() || '';
+
+    // EDIT block (surgical change): "// EDIT: path" + OLD:/---/NEW:
+    const edit = parseEditBlock(safeChildren);
+    if (edit && onApplyEdit) {
+      return { detectedPath: edit.path, codeContent: edit.newString, isDelete: false, editInfo: edit };
+    }
     
     // Check for DELETE directive first
     const deleteMatch = firstLine.match(DELETE_PATH_RE);
@@ -106,6 +158,7 @@ const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode, on
         detectedPath: deleteMatch[1],
         codeContent: lines.slice(1).join('\n').trimStart(),
         isDelete: true,
+        editInfo: null,
       };
     }
     
@@ -116,12 +169,13 @@ const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode, on
         detectedPath: match[1],
         codeContent: lines.slice(1).join('\n').trimStart(),
         isDelete: false,
+        editInfo: null,
       };
     }
-    return { detectedPath: null, codeContent: safeChildren, isDelete: false };
-  }, [safeChildren]);
+    return { detectedPath: null, codeContent: safeChildren, isDelete: false, editInfo: null };
+  }, [safeChildren, onApplyEdit]);
 
-  const displayContent = detectedPath && !isDelete ? codeContent : safeChildren;
+  const displayContent = detectedPath && !isDelete && !editInfo ? codeContent : safeChildren;
 
   const handleCopy = useCallback(async () => {
     await navigator.clipboard.writeText(displayContent);
@@ -147,10 +201,24 @@ const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode, on
     <div className="group relative not-prose">
       <div className="flex items-center justify-between px-4 py-1.5 bg-gray-800/80 text-xs text-gray-400 rounded-t-lg border-b border-gray-700/50">
         <div className="flex items-center gap-1.5">
-          <FileCode size={12} />
-          <span>{detectedPath || language || 'code'}</span>
+          {editInfo ? <FileCode size={12} className="text-amber-400" /> : <FileCode size={12} />}
+          <span>{detectedPath || suggestedPath || language || 'code'}</span>
+          {editInfo && (
+            <span className="text-[9px] font-medium bg-amber-900/40 text-amber-400 px-1.5 py-0.5 rounded-full">EDIT</span>
+          )}
         </div>
         <div className="flex items-center gap-1">
+          {/* EDIT Apply button — surgical change to an existing file */}
+          {editInfo && onApplyEdit && (
+            <button
+              onClick={() => onApplyEdit(editInfo.path, editInfo.oldString, editInfo.newString)}
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-all duration-150 hover:bg-amber-900/40 hover:text-amber-300 text-amber-400 active:scale-95"
+              title={`Apply edit to ${editInfo.path}`}
+            >
+              <FilePlus2 size={12} />
+              Apply Edit
+            </button>
+          )}
           {/* Delete button when isDelete is detected */}
           {isDelete && detectedPath && onDeleteFile && (
             <button
@@ -162,8 +230,8 @@ const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode, on
               Delete
             </button>
           )}
-          {/* Always show Apply/Save button when onApplyCode is available (unless it's a delete) */}
-          {!isDelete && onApplyCode && (
+          {/* Always show Apply/Save button when onApplyCode is available (unless it's a delete or edit) */}
+          {!isDelete && !editInfo && onApplyCode && (
             detectedPath ? (
               <button
                 onClick={() => onApplyCode(detectedPath!, displayContent)}
@@ -173,66 +241,90 @@ const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode, on
                 <FilePlus2 size={12} />
                 Apply
               </button>
-            ) : showPathInput ? (
-              <div className="flex items-center gap-1">
-                <input
-                  ref={pathInputRef}
-                  type="text"
-                  value={manualPath}
-                  onChange={(e) => setManualPath(e.target.value)}
-                  placeholder="path/to/file.ext"
-                  className="w-28 px-1.5 py-0.5 text-[10px] bg-gray-800 border border-gray-600 rounded text-white placeholder-gray-500 outline-none focus:border-blue-500"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && manualPath.trim()) {
-                      onApplyCode(manualPath.trim(), safeChildren);
-                      setShowPathInput(false);
-                      setManualPath('');
-                    }
-                    if (e.key === 'Escape') {
-                      setShowPathInput(false);
-                      setManualPath('');
-                    }
-                  }}
-                  onBlur={() => {
-                    if (!manualPath.trim()) {
-                      setShowPathInput(false);
-                    }
-                  }}
-                  autoFocus
-                  onClick={(e) => e.stopPropagation()}
-                />
-                <button
-                  onClick={() => {
-                    if (manualPath.trim()) {
-                      onApplyCode(manualPath.trim(), safeChildren);
-                      setShowPathInput(false);
-                      setManualPath('');
-                    }
-                  }}
-                  className="p-0.5 hover:bg-gray-700 rounded text-gray-400 hover:text-blue-400 transition-colors"
-                  disabled={!manualPath.trim()}
-                >
-                  <Check size={10} />
-                </button>
-                <button
-                  onClick={() => { setShowPathInput(false); setManualPath(''); }}
-                  className="p-0.5 hover:bg-gray-700 rounded text-gray-400 hover:text-red-400 transition-colors"
-                >
-                  <X size={10} />
-                </button>
-              </div>
             ) : (
-              <button
-                onClick={() => {
-                  setShowPathInput(true);
-                  setTimeout(() => pathInputRef.current?.focus(), 50);
-                }}
-                className="flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-all duration-150 hover:bg-purple-900/40 hover:text-purple-300 text-purple-400 active:scale-95"
-                title="Specify file path to save this code"
-              >
-                <FilePlus2 size={12} />
-                Save as...
-              </button>
+              <>
+                {/* No "# path" line, but the language is known — one-click Apply
+                    with a sensible default filename (main.<ext>). */}
+                {suggestedPath && (
+                  <button
+                    onClick={() => onApplyCode(suggestedPath, displayContent)}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-all duration-150 hover:bg-purple-900/40 hover:text-purple-300 text-purple-400 active:scale-95"
+                    title={`Apply as ${suggestedPath} (in the workspace root)`}
+                  >
+                    <FilePlus2 size={12} />
+                    Apply
+                  </button>
+                )}
+                {showPathInput ? (
+                  <div className="flex items-center gap-1">
+                    <input
+                      ref={pathInputRef}
+                      type="text"
+                      value={manualPath}
+                      onChange={(e) => setManualPath(e.target.value)}
+                      placeholder={suggestedPath || 'path/to/file.ext'}
+                      className="w-28 px-1.5 py-0.5 text-[10px] bg-gray-800 border border-gray-600 rounded text-white placeholder-gray-500 outline-none focus:border-blue-500"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          const path = manualPath.trim() || suggestedPath;
+                          if (path) {
+                            onApplyCode(path, safeChildren);
+                            setShowPathInput(false);
+                            setManualPath('');
+                          }
+                        }
+                        if (e.key === 'Escape') {
+                          setShowPathInput(false);
+                          setManualPath('');
+                        }
+                      }}
+                      onBlur={() => {
+                        if (!manualPath.trim()) {
+                          setShowPathInput(false);
+                        }
+                      }}
+                      autoFocus
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    <button
+                      onClick={() => {
+                        const path = manualPath.trim() || suggestedPath;
+                        if (path) {
+                          onApplyCode(path, safeChildren);
+                          setShowPathInput(false);
+                          setManualPath('');
+                        }
+                      }}
+                      className="p-0.5 hover:bg-gray-700 rounded text-gray-400 hover:text-blue-400 transition-colors"
+                      disabled={!manualPath.trim() && !suggestedPath}
+                    >
+                      <Check size={10} />
+                    </button>
+                    <button
+                      onClick={() => { setShowPathInput(false); setManualPath(''); }}
+                      className="p-0.5 hover:bg-gray-700 rounded text-gray-400 hover:text-red-400 transition-colors"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setManualPath(suggestedPath);
+                      setShowPathInput(true);
+                      setTimeout(() => {
+                        pathInputRef.current?.focus();
+                        pathInputRef.current?.select();
+                      }, 50);
+                    }}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-all duration-150 hover:bg-purple-900/40 hover:text-purple-300 text-purple-400 active:scale-95"
+                    title="Specify file path to save this code"
+                  >
+                    <FilePlus2 size={12} />
+                    {suggestedPath ? 'Path...' : 'Save as...'}
+                  </button>
+                )}
+              </>
             )
           )}
           <button
@@ -260,9 +352,22 @@ const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode, on
           </button>
         </div>
       </div>
-      <pre className="!mt-0 !rounded-t-none">
-        <code className={className}>{displayContent}</code>
-      </pre>
+      {editInfo ? (
+        <div className="text-[11px] font-mono !mt-0 !rounded-t-none border-t border-gray-800">
+          <div className="px-3 py-1.5 bg-red-950/30 border-b border-gray-800/60">
+            <span className="text-[9px] text-red-400 font-sans font-medium uppercase tracking-wider">Old — {editInfo.oldString.split('\n').length} line{editInfo.oldString.split('\n').length !== 1 ? 's' : ''}</span>
+            <pre className="whitespace-pre-wrap text-red-300/80 mt-1">{editInfo.oldString}</pre>
+          </div>
+          <div className="px-3 py-1.5 bg-green-950/30">
+            <span className="text-[9px] text-green-400 font-sans font-medium uppercase tracking-wider">New — {editInfo.newString.split('\n').length} line{editInfo.newString.split('\n').length !== 1 ? 's' : ''}</span>
+            <pre className="whitespace-pre-wrap text-green-300/90 mt-1">{editInfo.newString}</pre>
+          </div>
+        </div>
+      ) : (
+        <pre className="!mt-0 !rounded-t-none">
+          <code className={className}>{displayContent}</code>
+        </pre>
+      )}
     </div>
   );
 });
@@ -278,8 +383,9 @@ interface Props {
   onRegenerate?: () => void;
   isLastAssistant?: boolean;
   onApplyCode?: (filePath: string, codeContent: string) => void;
+  onApplyEdit?: (filePath: string, oldString: string, newString: string) => void;
   onDeleteFile?: (filePath: string) => void;
-  onApplyAll?: (files: { filePath: string; content: string }[]) => void;
+  onApplyAll?: (files: { filePath: string; content: string; oldString?: string; newString?: string }[]) => void;
   selected?: boolean;
   onToggleSelect?: (index: number) => void;
   selectable?: boolean;
@@ -287,7 +393,28 @@ interface Props {
 }
 
 const stageLabels: Record<string, string> = {
-  'vision': '🔍 Analyzing image',
+  // Agent loop (auto-apply mode)
+  'agent:thinking': '🤖 Planning approach',
+  'agent:reading': '📂 Reading workspace files',
+  'agent:tool': '🔧 Using tools',
+  'agent:verify': '✅ Verifying changes',
+  'agent:working': '🤖 Working through it',
+  'agent:done': '✨ Finishing up',
+  // Regular pipeline stages (approval / chat / image modes)
+  'reading:workspace': '📂 Reading workspace',
+  'search:web': '🌐 Searching the web',
+  'search:docs': '📚 Searching docs',
+  'tool:executing': '🔧 Running a tool',
+  'chat:thinking': '💬 Thinking',
+  'vision:analyzing': '🔍 Analyzing image',
+  'planning:create': '📋 Creating a plan',
+  'planning:evaluating': '📋 Evaluating the plan',
+  'image:generating': '🎨 Generating image',
+  'code:generating': '💻 Writing code',
+  'writing:files': '✏️ Writing files',
+  'summary:writing': '✨ Polishing response',
+  // Fallbacks for legacy / unknown namespaced stages
+  'agent': '🤖 Working',
   'reading': '📂 Reading workspace',
   'writing': '✏️ Writing files',
   'code': '💻 Writing code',
@@ -296,22 +423,29 @@ const stageLabels: Record<string, string> = {
   'chat': '💬 Thinking',
   'search': '🌐 Searching the web',
   'planning': '📋 Creating a plan',
+  'vision': '🔍 Analyzing image',
 };
 
+// Longest-prefix match so namespaced stages (e.g. 'search:docs') resolve to
+// their specific label instead of the short generic one ('search').
 function getStageLabel(stage?: string): string | null {
   if (!stage) return null;
-  for (const [key, label] of Object.entries(stageLabels)) {
-    if (stage.startsWith(key)) return label;
+  let best: string | null = null;
+  for (const key of Object.keys(stageLabels)) {
+    if (stage.startsWith(key) && (best === null || key.length > best.length)) {
+      best = key;
+    }
   }
-  return '⚙️ Processing';
+  return best ? stageLabels[best] : '⚙️ Processing';
 }
 
-export const Message = memo(function Message({ message, isStreaming, stage, liveDuration, index, onEdit, onDelete, onRegenerate, isLastAssistant, onApplyCode, onDeleteFile, onApplyAll, selected, onToggleSelect, selectable, onFork }: Props) {
+export const Message = memo(function Message({ message, isStreaming, stage, liveDuration, index, onEdit, onDelete, onRegenerate, isLastAssistant, onApplyCode, onApplyEdit, onDeleteFile, onApplyAll, selected, onToggleSelect, selectable, onFork }: Props) {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [showRaw, setShowRaw] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [thinkingOpen, setThinkingOpen] = useState(false);
   const isUser = message.role === 'user';
   const stageLabel = getStageLabel(stage);
   const { toast } = useToast();
@@ -362,7 +496,7 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
     pre: ({ children }: { children?: ReactNode }) => {
       if (children && typeof children === 'object' && 'type' in children && (children as any).type === 'code') {
         const codeChild = children as any;
-        return <CodeBlock className={codeChild.props?.className} onApplyCode={onApplyCode} onDeleteFile={onDeleteFile}>{codeChild.props?.children}</CodeBlock>;
+        return <CodeBlock className={codeChild.props?.className} onApplyCode={onApplyCode} onApplyEdit={onApplyEdit} onDeleteFile={onDeleteFile}>{codeChild.props?.children}</CodeBlock>;
       }
       return <pre>{children}</pre>;
     },
@@ -426,7 +560,7 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
         </div>
       );
     },
-  }), [onApplyCode]);
+  }), [onApplyCode, onApplyEdit]);
 
   return (
     <div className={`group relative flex gap-3 px-4 py-6 animate-fade-in transition-colors duration-200 ${isUser ? '' : 'bg-gray-900/40'} ${selected ? 'bg-blue-900/20' : ''}`}>
@@ -529,6 +663,37 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
               <span className="tabular-nums text-gray-500">
                 ⏱️ {liveDuration < 1000 ? `${liveDuration}ms` : `${(liveDuration / 1000).toFixed(1)}s`}
               </span>
+            )}
+          </div>
+        )}
+
+        {/* Collapsible Thinking section — shown above the answer for reasoning models */}
+        {!isUser && message.thinking && (
+          <div className="mb-3 rounded-xl border border-gray-800/80 bg-gray-950/40 overflow-hidden">
+            <button
+              onClick={() => setThinkingOpen(!thinkingOpen)}
+              className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-gray-900/60"
+              title={thinkingOpen ? 'Collapse thinking' : 'Expand thinking'}
+            >
+              <Brain size={12} className="text-purple-400 flex-shrink-0" />
+              <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wider flex-1">
+                Thinking
+              </span>
+              {isStreaming && (
+                <span className="flex items-center gap-1 text-[10px] text-purple-400">
+                  <span className="w-1 h-1 bg-purple-400 rounded-full animate-pulse" />
+                  thinking
+                </span>
+              )}
+              <ChevronDown
+                size={12}
+                className={`text-gray-500 transition-transform duration-200 flex-shrink-0 ${thinkingOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
+            {thinkingOpen && (
+              <div className="max-h-48 overflow-y-auto px-3 pb-3 text-xs text-gray-500 leading-relaxed whitespace-pre-wrap border-t border-gray-800/60 pt-2 font-mono">
+                {message.thinking}
+              </div>
             )}
           </div>
         )}

@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { ChatView } from './components/ChatView';
 import { AgentWorkspace } from './components/AgentWorkspace';
-import { VideoEditor } from './components/VideoEditor';
 import { ServerConnect } from './components/ServerConnect';
+import { ServerConfig } from './components/ServerConfig';
 import { ServerDownOverlay } from './components/ServerDownOverlay';
 import { UserSettingsModal } from './components/UserSettingsModal';
 import { UpdateBanner } from './components/UpdateBanner';
@@ -12,6 +12,7 @@ import { UserSetup } from './components/UserSetup';
 import { ToastProvider } from './hooks/useToast';
 import { useModelAssignments } from './hooks/useModelAssignments';
 import { useConversations } from './hooks/useConversations';
+import { discardLiveConversation } from './hooks/useChat';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useTheme } from './hooks/useTheme';
 import { useMemory } from './hooks/useMemory';
@@ -31,9 +32,11 @@ function App() {
   const [user, setUser] = useState<UserProfile | null>(() => getUserProfile());
   const [serverConnected, setServerConnected] = useState(false);
   const [sessionChecked, setSessionChecked] = useState(false);
+  // Thinking is AUTO by default (adaptive): the backend decides per message
+  // whether reasoning is needed. Switching it off disables thinking entirely.
   const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(() => {
     const stored = localStorage.getItem(THINKING_KEY);
-    return stored === 'true'; // default OFF for speed
+    return stored !== 'false';
   });
 
   // Persist thinking preference
@@ -123,9 +126,11 @@ interface ChatAppProps {
 }
 
 function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: ChatAppProps) {
+  const [serverConfigOpen, setServerConfigOpen] = useState(false);
   const {
     loading: assignmentsLoading,
     getChatModel,
+    getThinkingModel,
   } = useModelAssignments();
   const { theme, toggleTheme } = useTheme();
   const {
@@ -144,10 +149,12 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userSettingsOpen, setUserSettingsOpen] = useState(false);
   const [mode, setMode] = useState<ConversationMode>('chat');
-  const [viewTab, setViewTab] = useState<'chat' | 'agent' | 'editor'>('chat');
+  const [viewTab, setViewTab] = useState<'chat' | 'agent'>('chat');
   const [offlineWorkspace, setOfflineWorkspace] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchActive, setSearchActive] = useState(false);
+  // Installed models -> whether they support thinking (from the backend).
+  const [modelSupport, setModelSupport] = useState<Record<string, boolean>>({});
 
   const handleSearchChange = (query: string) => {
     setSearchQuery(query);
@@ -165,8 +172,36 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
     setLocalUser(user);
   }, [user]);
 
-  // Derive the main chat model from assignments + thinking toggle
-  const model = assignmentsLoading ? (thinkingEnabled ? 'qwen3:4b' : 'qwen2.5:3b') : getChatModel(thinkingEnabled);
+  // Load thinking capability once from the backend's model list.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await api.getModels();
+        if (cancelled) return;
+        const map: Record<string, boolean> = {};
+        for (const m of list) map[m.name] = m.supportsThinking !== false;
+        setModelSupport(map);
+      } catch {
+        // Server offline — unknown models default to supported below.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Unknown / not-yet-installed models default to supported so the toggle
+  // doesn't vanish for a transient state.
+  const chatModel = assignmentsLoading ? 'qwen3:4b' : getChatModel();
+  const thinkingChatModel = assignmentsLoading ? 'qwen3:4b' : getThinkingModel();
+  const chatSupportsThinking = modelSupport[chatModel] !== false;
+  const thinkingModelSupportsThinking = modelSupport[thinkingChatModel] !== false;
+
+  // The client always sends the base chat model. In auto mode the backend
+  // decides per message whether to think, and routes to the dedicated
+  // Chat (Thinking) model when the base model can't think.
+  const model = chatModel;
+  // The toggle is only useful when thinking is possible via one of the two models.
+  const thinkingSupported = chatSupportsThinking || thinkingModelSupportsThinking;
 
   // Web search is always enabled (no toggle needed)
 
@@ -222,13 +257,31 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
 
   const handleDelete = async (id: string) => {
     await remove(id);
+    discardLiveConversation(id);
     if (activeId === id) setActiveId(null);
   };
 
+  // A brand-new chat becomes real server-side the moment its first stream
+  // starts (the backend assigns the id as the very first SSE event). Register
+  // it in the sidebar right away so the user can switch back to it mid-answer
+  // and still see the live progress.
+  const handleConversationStarted = useCallback((id: string) => {
+    api.getConversation(id).then((conv) => update(conv)).catch(() => {});
+    // If we're still on the fresh (unsaved) chat, adopt the real id so the
+    // view re-attaches to the live stream instead of losing it.
+    setActiveId((cur) => cur ?? id);
+  }, [update]);
+
+  // Never yank the user back to a conversation whose stream finished while
+  // they were browsing another chat — only adopt the id if they're still on
+  // the fresh view.
+  const handleConversationCreated = useCallback((id: string) => {
+    setActiveId((cur) => cur ?? id);
+  }, []);
+
   const handleModeChange = (newMode: ConversationMode) => {
-    // Agent mode is only available in the desktop app; Editor mode is planned (unavailable)
+    // Agent mode is only available in the desktop app
     const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
-    if (newMode === 'editor') return;
     if (!isElectron && newMode === 'agent') return;
     setMode(newMode);
     setViewTab(newMode);
@@ -293,8 +346,9 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
           onMenuClick={() => setSidebarOpen(true)}
           thinkingEnabled={thinkingEnabled}
           onToggleThinking={onToggleThinking}
+          thinkingSupported={thinkingSupported}
           conversation={activeConv}
-          hideThinking={mode === 'agent'}
+          onConfigureServer={() => setServerConfigOpen(true)}
         />
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
           {/* Smooth mode transition wrapper */}
@@ -310,7 +364,8 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
                 onCreateNew={handleNewChat}                model={model}
                 thinkingEnabled={thinkingEnabled}
                 onMessageSent={() => { refresh(); refreshMemory(); }}
-                onConversationCreated={setActiveId}
+                onConversationCreated={handleConversationCreated}
+                onConversationStarted={handleConversationStarted}
                 onForkConversation={async (forkMessages) => {
                   const conv = await create(model, undefined, 'agent');
                   for (const msg of forkMessages) {
@@ -327,20 +382,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
                   setSidebarOpen(false);
                 }}
               />
-            ) : mode === 'editor'
-                ? (
-                  <VideoEditor
-                    key={activeConv?.id || 'new'}
-                    conversation={activeConv}
-                    onNewVideoProject={async (title: string, workspacePath: string) => {
-                      const conv = await create(model, title, 'editor', workspacePath);
-                      setActiveId(conv.id);
-                      setSidebarOpen(false);
-                      return conv;
-                    }}
-                  />
-                )
-                : (
+            ) : (
                   <ChatView
                     key={activeConv?.id || 'new'}
                     initialMessages={activeConv?.messages || []}
@@ -348,7 +390,8 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
                     model={model}
                 thinkingEnabled={thinkingEnabled}
                 onMessageSent={() => { refresh(); refreshMemory(); }}
-                onConversationCreated={setActiveId}
+                onConversationCreated={handleConversationCreated}
+                onConversationStarted={handleConversationStarted}
                 searchQuery={searchActive ? searchQuery : undefined}
                 onSearchChange={handleSearchChange}
                 onConversationUpdate={(id, updates) => {
@@ -391,6 +434,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
         onSwitch={onSwitchUser}
         thinkingEnabled={thinkingEnabled}
         onToggleThinking={onToggleThinking}
+        thinkingSupported={thinkingSupported}
         theme={theme}
         onToggleTheme={toggleTheme}
         memoryEnabled={memory.enabled}
@@ -408,9 +452,19 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
       {/* Update notification banner — shows in Electron when new version is available */}
       <UpdateBanner />
 
+      {/* Server configuration modal — lets the user change the backend address when the app can't reach it */}
+      {serverConfigOpen && (
+        <ServerConfig
+          onSaved={() => { window.location.reload(); }}
+          showClose
+          onClose={() => setServerConfigOpen(false)}
+        />
+      )}
+
       {/* Server down overlay — shows only when running in Electron and server is offline */}
       <ServerDownOverlay
         isElectron={!!(window as any).electronAPI?.isElectron}
+        onConfigure={() => setServerConfigOpen(true)}
         onBrowseFolder={async () => {
           try {
             const result = await (window as any).electronAPI.openFolderDialog();

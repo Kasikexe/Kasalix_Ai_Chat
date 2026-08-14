@@ -3,13 +3,11 @@ import { api, MODEL_ASSIGNMENT_KEYS, MODEL_ASSIGNMENT_LABELS, MODEL_ASSIGNMENT_I
 import type { ModelAssignments, OllamaModel } from '../types';
 
 const DEFAULT_ASSIGNMENTS: ModelAssignments = {
+  chat: 'qwen3:4b',
   chat_thinking: 'qwen3:4b',
-  chat_fast: 'qwen2.5:3b',
   code: 'qwen2.5-coder:7b',
   vision: 'qwen2.5vl:3b',
   extraction: 'qwen2.5:3b',
-  editor: 'qwen2.5:3b',
-  editor_vision: 'qwen2.5vl:3b',
   search: 'qwen2.5:3b',
   image_generation: 'x/flux2-klein',
 };
@@ -34,6 +32,15 @@ export function useModelAssignments() {
               merged[key] = settings.modelAssignments![key];
             }
           }
+          // Legacy: older settings stored separate thinking/fast chat models —
+          // migrate the old "thinking" choice to the single chat role.
+          if (!settings.modelAssignments!.chat) {
+            if (settings.modelAssignments!.chat_thinking) {
+              merged.chat = settings.modelAssignments!.chat_thinking;
+            } else if (settings.modelAssignments!.chat_fast) {
+              merged.chat = settings.modelAssignments!.chat_fast;
+            }
+          }
           return merged;
         });
       }
@@ -50,13 +57,17 @@ export function useModelAssignments() {
     refresh();
   }, [refresh]);
 
-  // Get the model for a given role based on thinking mode
-  const getChatModel = useCallback(
-    (thinkingEnabled: boolean): string => {
-      return thinkingEnabled ? assignments.chat_thinking : assignments.chat_fast;
-    },
-    [assignments]
-  );
+  // Get the base chat model. Thinking mode is toggled on this model itself via
+  // the backend think flag when it supports thinking.
+  const getChatModel = useCallback((): string => {
+    return assignments.chat;
+  }, [assignments]);
+
+  // Get the dedicated thinking chat model — used instead of the base chat model
+  // while the thinking toggle is ON, but only when the base model can't think.
+  const getThinkingModel = useCallback((): string => {
+    return assignments.chat_thinking;
+  }, [assignments]);
 
   // Update a single assignment
   const updateAssignment = useCallback(
@@ -110,6 +121,7 @@ export function useModelAssignments() {
     isAuthed,
     refresh,
     getChatModel,
+    getThinkingModel,
     updateAssignment,
     saveAll,
   };

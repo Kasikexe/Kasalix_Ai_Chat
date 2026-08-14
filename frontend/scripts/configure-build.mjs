@@ -72,6 +72,8 @@ function showMenu() {
   console.log('  [7] Build portable .exe (no install)');
   console.log('  [Q] Quit');
   console.log('');
+  console.log('  ℹ️  Building without bumping auto-increments the patch (never overwrites artifacts)');
+  console.log('');
 }
 
 // ── Apply config to package.json ────────────────────────
@@ -110,10 +112,29 @@ function applyConfig(config) {
   saveJson(PKG_PATH, pkg);
 }
 
+/** Bump the patch segment in place (0.10.0 → 0.10.1) so each build gets a fresh artifact name. */
+function bumpPatch(config) {
+  const parts = config.version.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if (isNaN(parts[i])) parts[i] = 0;
+  parts[2]++;
+  config.version = `${parts[0]}.${parts[1]}.${parts[2]}`;
+  return config.version;
+}
+
+/** Persist the (possibly auto-bumped) version to build-config.json + package.json. */
+function persistVersion(config) {
+  saveJson(CONFIG_PATH, config);
+  applyConfig(config);
+}
+
 // ── Interactive menu ────────────────────────────────────
 
 async function runMenu(config) {
   let running = true;
+  // Track whether the user explicitly chose a version this session (options
+  // 1-4). Going straight to "Build" without one auto-bumps the patch so the
+  // new artifacts never overwrite the previous release's files.
+  let versionChanged = false;
 
   while (running) {
     showBanner(config);
@@ -138,6 +159,7 @@ async function runMenu(config) {
       case '3': {
         const idx = parseInt(choice) - 1; // 0=major, 1=minor, 2=patch
         bumpVersion(idx);
+        versionChanged = true;
         console.log(`\n  ✅ ${LEVEL_LABELS[choice]} bump: ${config.version}`);
         await ask('  Press Enter to continue...');
         break;
@@ -147,6 +169,7 @@ async function runMenu(config) {
         const v = await ask(`  Enter version (current: ${config.version}): `);
         if (v.trim()) {
           config.version = v.trim();
+          versionChanged = true;
           console.log(`  ✅ Version set to ${config.version}`);
         }
         await ask('  Press Enter to continue...');
@@ -174,6 +197,11 @@ async function runMenu(config) {
 
       case '6':
       case '7': {
+        // Auto-bump the patch when the user went straight to Build without
+        // choosing a version — so artifacts never overwrite each other.
+        if (!versionChanged) {
+          console.log(`  🔄 Auto-bumped patch: ${config.version} → ${bumpPatch(config)}`);
+        }
         // Save config
         config.lastBuild = Date.now();
         saveJson(CONFIG_PATH, config);
@@ -187,6 +215,18 @@ async function runMenu(config) {
         console.log(`  🚀 Building ${config.productName} v${config.version}...`);
         console.log('  ──────────────────────────────────────────────');
         console.log('');
+
+        // Guard: never package a dist that is missing the app entry point. A
+        // stale or incomplete dist (e.g. only icon.png) produces a client that
+        // serves "Not Found" — fail fast instead of shipping a broken EXE.
+        const distIndex = path.join(ROOT_DIR, 'dist', 'index.html');
+        if (!fs.existsSync(distIndex)) {
+          console.error(`  ❌ Frontend build did not produce ${distIndex}.`);
+          console.error('     Run `npm run build` first, then retry. Refusing to package a broken app.');
+          rl.close();
+          process.exit(1);
+        }
+        console.log('  ✓ dist/index.html present — packaging safe');
 
         // Close readline before running the build
         rl.close();

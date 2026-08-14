@@ -144,26 +144,12 @@ lines.push('');
 lines.push('## Important notices');
 lines.push('');
 lines.push(
-  '- **`ffmpeg-static`** (used by the backend for video processing) bundles the FFmpeg binaries, which are ' +
-    'licensed under the **GNU General Public License v3 (GPL-3.0-or-later)**. FFmpeg is invoked as a separate ' +
-    'process. Its full license text is included in [`licenses/GPL-3.0.txt`](licenses/GPL-3.0.txt).',
-);
-lines.push(
   '- Packages below marked **UNKNOWN** do not declare a license in their `package.json`. Before redistributing ' +
     'the application, verify the intended license of each of these packages with its maintainer.',
 );
 lines.push(
   '- Permissive license texts (MIT, ISC, BSD, Apache-2.0, …) accompany every installed copy of these packages ' +
     'inside each project\'s `node_modules` directory.',
-);
-lines.push(
-  '- **Distributions:** the distributed apps do **not** bundle the FFmpeg binaries. The Server GUI app downloads ' +
-    'FFmpeg (the "essentials" build from https://www.gyan.dev/ffmpeg/builds/) on its first run — the same way it ' +
-    'installs Bun and Ollama — and stores it in a folder next to the application. Because the binary is fetched ' +
-    'directly from its provider rather than conveyed by the app, no GPL source-offer obligation applies to the ' +
-    'distributed app itself. If you ever decide to bundle FFmpeg, keep a copy of ' +
-    '[`licenses/GPL-3.0.txt`](licenses/GPL-3.0.txt) next to the binary and provide an offer of corresponding ' +
-    'source, as required by the GPL.',
 );
 lines.push('');
 lines.push('## Direct dependencies');
@@ -208,11 +194,6 @@ for (const license of sortedLicenses) {
   lines.push('');
 }
 lines.push('## License texts');
-lines.push('');
-lines.push(
-  'The GNU GPL v3 license text (the license of the FFmpeg binaries fetched by the Server GUI on first run) is ' +
-    'stored in [`licenses/GPL-3.0.txt`](licenses/GPL-3.0.txt).',
-);
 lines.push('');
 lines.push(
   'Texts of all other licenses (Apache-2.0, MIT, BSD, ISC, etc.) are available inside each package\'s ' +

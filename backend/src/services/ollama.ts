@@ -6,9 +6,40 @@ const OLLAMA_BASE_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 // We force think=false on these when user wants fast mode
 const THINKING_MODELS = ['qwen3', 'deepseek-r1', 'qwq', 'magpie'];
 
-function modelSupportsThinking(modelName: string): boolean {
+/**
+ * Whether a model name belongs to a family that supports the `think` flag.
+ * Exported so routes can surface this to clients (hide the toggle, warn hosts).
+ */
+export function modelSupportsThinking(modelName: string): boolean {
   const lower = modelName.toLowerCase();
   return THINKING_MODELS.some((m) => lower.includes(m));
+}
+
+// ─── Model-driven tool calling ──────────────────────────────
+// Model families that support native function calling via Ollama's `tools`
+// parameter. Only these get the model-driven tool loop; others fall back to
+// keyword detection (which itself never lets a tool error kill the answer).
+const TOOL_CAPABLE_MODELS = [
+  'qwen3', 'qwen2.5', 'qwen2.5-coder', 'llama3.1', 'llama3.2', 'llama3.3',
+  'mistral', 'mixtral', 'gemma3', 'phi4', 'phi-4', 'gpt-oss',
+  'command-r', 'aya-expanse', 'minicpm-v', 'nemotron', 'molmo',
+];
+
+/** Whether a model family supports Ollama's native `tools`/tool_calls. */
+export function modelSupportsTools(modelName: string): boolean {
+  const lower = modelName.toLowerCase();
+  return TOOL_CAPABLE_MODELS.some((m) => lower.includes(m));
+}
+
+/** A message used inside the model-driven tool-calling loop (transient, not persisted). */
+export interface ToolLoopMessage {
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  tool_calls?: { function: { name: string; arguments: Record<string, unknown> } }[];
+}
+
+export interface OllamaToolCall {
+  function: { name: string; arguments: Record<string, unknown> };
 }
 
 // ─── Model List Cache (#12) ────────────────────────────────
@@ -41,7 +72,7 @@ export function clearModelCache(): void {
   modelCache = null;
 }
 
-function convertMessagesForOllama(messages: Message[]): any[] {
+function convertMessagesForOllama(messages: (Message | ToolLoopMessage)[]): any[] {
   return messages.map((msg) => {
     const imageMatch = msg.content.match(/\[image:(data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+))\]/);
     if (imageMatch) {
@@ -54,10 +85,13 @@ function convertMessagesForOllama(messages: Message[]): any[] {
         images: [imageMatch[2]],
       };
     }
-    return {
-      role: msg.role,
-      content: msg.content,
-    };
+    const base: any = { role: msg.role, content: msg.content };
+    // Tool-calling rounds must echo the model's own tool_calls back so Ollama
+    // can continue the conversation after we execute the tools.
+    if ('tool_calls' in msg && (msg as ToolLoopMessage).tool_calls?.length) {
+      base.tool_calls = (msg as ToolLoopMessage).tool_calls;
+    }
+    return base;
   });
 }
 
@@ -73,6 +107,12 @@ export interface StreamOptions {
    * - undefined: use model's default (usually ON for qwen3)
    */
   think?: boolean;
+  /**
+   * Called with each reasoning/thinking chunk from models that support it
+   * (qwen3, deepseek-r1, etc.). When provided, thinking is forwarded to the
+   * caller instead of being silently dropped.
+   */
+  onThinking?: (chunk: string) => void;
 }
 
 export async function streamChat(
@@ -81,7 +121,7 @@ export async function streamChat(
   onChunk: (chunk: string) => void,
   options: StreamOptions = {}
 ): Promise<void> {
-  const { signal, temperature, think } = options;
+  const { signal, temperature, think, onThinking } = options;
   const ollamaMessages = convertMessagesForOllama(messages);
 
   const body: any = {
@@ -153,10 +193,15 @@ export async function streamChat(
             throw new Error(data.error);
           }
 
-          // qwen3, deepseek-r1, etc. emit thinking in a separate field
-          // We skip it so it doesn't reach the user
-          if (data.message?.thinking) {
+          // qwen3, deepseek-r1, etc. emit reasoning in a separate field.
+          // Ollama's /api/chat stream uses "message.reasoning" for chat models;
+          // "message.thinking" covers older/raw tool endpoints — accept both.
+          // If a consumer provided onThinking, forward the reasoning chunks;
+          // otherwise skip them so they don't pollute the normal content.
+          const thinkingText = data.message?.reasoning ?? data.message?.thinking;
+          if (thinkingText) {
             thinkingSkipped++;
+            onThinking?.(thinkingText);
             continue;
           }
 
@@ -180,6 +225,110 @@ export async function streamChat(
   } finally {
     reader.releaseLock();
   }
+}
+
+/**
+ * One round of model-driven tool calling: streams content to the caller like
+ * streamChat, but also collects any `tool_calls` the model emits. The pipeline
+ * executes those tools, appends the results, and calls this again — until the
+ * model answers with content and no tool calls.
+ *
+ * Throws on Ollama errors (including models that reject the `tools` param) —
+ * the pipeline falls back to the heuristic path in that case.
+ */
+export async function streamChatWithTools(
+  model: string,
+  messages: (Message | ToolLoopMessage)[],
+  tools: Record<string, unknown>[],
+  onChunk: (chunk: string) => void,
+  options: StreamOptions = {}
+): Promise<{ content: string; toolCalls: OllamaToolCall[] }> {
+  const { signal, temperature, think, onThinking } = options;
+
+  const body: any = {
+    model,
+    messages: convertMessagesForOllama(messages),
+    stream: true,
+    tools,
+  };
+
+  if (temperature !== undefined) body.options = { ...body.options, temperature };
+  if (options.top_p !== undefined) body.options = { ...body.options, top_p: options.top_p };
+  if (options.max_tokens !== undefined) body.options = { ...body.options, num_predict: options.max_tokens };
+  if (modelSupportsThinking(model)) body.think = think === true;
+
+  console.log(`[ollama] Tool round — model: ${model}, tools: ${tools.length}, think: ${body.think ?? 'n/a'}`);
+
+  const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error(`[ollama] Error ${res.status}: ${errorText}`);
+    throw new Error(`Ollama error (${res.status}): ${errorText || res.statusText}`);
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error('No response body from Ollama');
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let content = '';
+  const toolCalls: OllamaToolCall[] = [];
+  let finished = false;
+
+  try {
+    while (!finished) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const data = JSON.parse(trimmed);
+          if (data.error) {
+            console.error('[ollama] Tool round stream error:', data.error);
+            throw new Error(data.error);
+          }
+
+          const thinkingText = data.message?.reasoning ?? data.message?.thinking;
+          if (thinkingText) {
+            onThinking?.(thinkingText);
+            continue;
+          }
+
+          if (data.message?.content) {
+            content += data.message.content;
+            onChunk(data.message.content);
+          }
+          if (Array.isArray(data.message?.tool_calls)) {
+            for (const tc of data.message.tool_calls) {
+              if (tc?.function?.name) toolCalls.push(tc);
+            }
+          }
+          if (data.done) {
+            console.log(`[ollama] Tool round done. content: ${content.length} chars, tool_calls: ${toolCalls.length}`);
+            finished = true;
+            break;
+          }
+        } catch (e) {
+          if (e instanceof Error && e.message !== 'Unexpected end of JSON input') throw e;
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return { content, toolCalls };
 }
 
 /**

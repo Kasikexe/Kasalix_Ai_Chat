@@ -334,5 +334,16 @@ CRITICAL RULES:
     return `Recent web search results for "${trimmed}":\n\n${fullContext}`;
   }
 
+  // A safety-tuned search model (e.g. llama3.2) can REFUSE to summarize adult
+  // or contentious queries ("I can't help you with that", "that's
+  // inappropriate"). Never feed that refusal back into chat — the chat model
+  // would just echo it as its own answer. Treat it as "no useful context".
+  const REFUSAL_RE =
+    /\b(can'?t help|can'?t answer|can'?t provide|cannot help|cannot answer|cannot provide|won'?t help|won'?t answer|not able to|unable to|i'?m (?:sorry|afraid)|i am (?:sorry|afraid)|as an ai|not appropriate|inappropriate|against (?:my|our) (?:policy|guidelines|ethics|principles|values)|don'?t feel comfortable|not comfortable|is there something else)\b/i;
+  if (REFUSAL_RE.test(summary)) {
+    console.log('[search] Search model refused to summarize — dropping search context for this query');
+    return null;
+  }
+
   return `📡 Web search results for "${trimmed}":\n\n${summary || fullContext}`;
 }

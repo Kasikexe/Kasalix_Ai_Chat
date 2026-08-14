@@ -2,7 +2,7 @@
 
 Kasalix AI Chat incorporates third-party open-source software. This file lists the packages installed by the projects in this repository and their licenses.
 
-> Generated on 2026-08-07 by `dev-build-tool/generate-licenses.mjs`. Do not edit by hand — rerun the script after dependency changes.
+> Generated on 2026-08-08 by `dev-build-tool/generate-licenses.mjs`. Do not edit by hand — rerun the script after dependency changes.
 
 ## Table of contents
 
@@ -13,10 +13,8 @@ Kasalix AI Chat incorporates third-party open-source software. This file lists t
 
 ## Important notices
 
-- **`ffmpeg-static`** (used by the backend for video processing) bundles the FFmpeg binaries, which are licensed under the **GNU General Public License v3 (GPL-3.0-or-later)**. FFmpeg is invoked as a separate process. Its full license text is included in [`licenses/GPL-3.0.txt`](licenses/GPL-3.0.txt).
 - Packages below marked **UNKNOWN** do not declare a license in their `package.json`. Before redistributing the application, verify the intended license of each of these packages with its maintainer.
 - Permissive license texts (MIT, ISC, BSD, Apache-2.0, …) accompany every installed copy of these packages inside each project's `node_modules` directory.
-- **Distributions:** the distributed apps do **not** bundle the FFmpeg binaries. The Server GUI app downloads FFmpeg (the "essentials" build from https://www.gyan.dev/ffmpeg/builds/) on its first run — the same way it installs Bun and Ollama — and stores it in a folder next to the application. Because the binary is fetched directly from its provider rather than conveyed by the app, no GPL source-offer obligation applies to the distributed app itself. If you ever decide to bundle FFmpeg, keep a copy of [`licenses/GPL-3.0.txt`](licenses/GPL-3.0.txt) next to the binary and provide an offer of corresponding source, as required by the GPL.
 
 ## Direct dependencies
 
@@ -25,8 +23,6 @@ The packages the projects declare directly (runtime and development). Their tran
 | Package | Installed version | License | Used in |
 | --- | --- | --- | --- |
 | `@hono/node-server` | 1.19.14 | MIT | Backend (Bun / Hono API) |
-| `ffmpeg-static` | 5.3.0 | GPL-3.0-or-later | Backend (Bun / Hono API) |
-| `ffprobe-static` | 3.1.0 | MIT | Backend (Bun / Hono API) |
 | `hono` | 4.12.27 | MIT | Backend (Bun / Hono API) |
 | `@types/bun` | 1.3.14 | MIT | dev — Backend (Bun / Hono API) |
 | `typescript` | 5.9.3 | Apache-2.0 | dev — Backend (Bun / Hono API) |
@@ -61,11 +57,7 @@ The packages the projects declare directly (runtime and development). Their tran
 
 ## Complete inventory by license
 
-763 distinct package versions are installed across the repository. Inventory is grouped by declared license identifier.
-
-### GPL-3.0-or-later (1)
-
-- `ffmpeg-static@5.3.0` (GPL-3.0-or-later) — Backend (Bun / Hono API)
+740 distinct package versions are installed across the repository. Inventory is grouped by declared license identifier.
 
 ### (BSD-2-Clause OR MIT OR Apache-2.0) (1)
 
@@ -75,10 +67,9 @@ The packages the projects declare directly (runtime and development). Their tran
 
 - `JSONStream@1.3.5` ((MIT OR Apache-2.0)) — Frontend (React / Vite / Electron / Capacitor)
 
-### (MIT OR CC0-1.0) (2)
+### (MIT OR CC0-1.0) (1)
 
-- `type-fest@2.19.0` ((MIT OR CC0-1.0)) — Frontend (React / Vite / Electron / Capacitor)
-- `type-fest@0.13.1` ((MIT OR CC0-1.0)) — Server GUI (Electron)
+- `type-fest@0.13.1` ((MIT OR CC0-1.0)) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 
 ### (MIT OR WTFPL) (1)
 
@@ -90,14 +81,13 @@ The packages the projects declare directly (runtime and development). Their tran
 
 ### 0BSD (1)
 
-- `tslib@2.6.2` (0BSD) — Frontend (React / Vite / Electron / Capacitor)
+- `tslib@2.8.1` (0BSD) — Frontend (React / Vite / Electron / Capacitor)
 
-### Apache-2.0 (32)
+### Apache-2.0 (31)
 
 - `@hutson/parse-repository-url@3.0.2` (Apache-2.0) — Frontend (React / Vite / Electron / Capacitor)
 - `@malept/cross-spawn-promise@2.0.0` (Apache-2.0) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `@xml-tools/parser@1.0.11` (Apache-2.0) — Frontend (React / Vite / Electron / Capacitor)
-- `b4a@1.8.1` (Apache-2.0) — Frontend (React / Vite / Electron / Capacitor)
 - `bare-events@2.9.1` (Apache-2.0) — Frontend (React / Vite / Electron / Capacitor)
 - `bare-fs@4.7.4` (Apache-2.0) — Frontend (React / Vite / Electron / Capacitor)
 - `bare-path@3.1.1` (Apache-2.0) — Frontend (React / Vite / Electron / Capacitor)
@@ -127,23 +117,16 @@ The packages the projects declare directly (runtime and development). Their tran
 - `validate-npm-package-license@3.0.4` (Apache-2.0) — Frontend (React / Vite / Electron / Capacitor)
 - `xcode@3.0.1` (Apache-2.0) — Frontend (React / Vite / Electron / Capacitor)
 
-### BlueOak-1.0.0 (15)
+### BlueOak-1.0.0 (8)
 
-- `glob@13.0.6` (BlueOak-1.0.0) — Frontend (React / Vite / Electron / Capacitor)
-- `chownr@3.0.0` (BlueOak-1.0.0) — Frontend (React / Vite / Electron / Capacitor)
 - `jackspeak@3.4.3` (BlueOak-1.0.0) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `minimatch@10.2.5` (BlueOak-1.0.0) — Frontend (React / Vite / Electron / Capacitor)
 - `minimatch@10.2.6` (BlueOak-1.0.0) — Server GUI (Electron)
-- `minipass@7.1.3` (BlueOak-1.0.0) — Frontend (React / Vite / Electron / Capacitor)
 - `minipass-flush@1.0.7` (BlueOak-1.0.0) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `package-json-from-dist@1.0.1` (BlueOak-1.0.0) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
-- `path-scurry@2.0.2` (BlueOak-1.0.0) — Frontend (React / Vite / Electron / Capacitor)
-- `path-scurry@1.11.1` (BlueOak-1.0.0) — Server GUI (Electron)
-- `rimraf@6.1.3` (BlueOak-1.0.0) — Frontend (React / Vite / Electron / Capacitor)
+- `path-scurry@1.11.1` (BlueOak-1.0.0) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `sax@1.6.0` (BlueOak-1.0.0) — Backend (Bun / Hono API)
 - `sax@1.6.1` (BlueOak-1.0.0) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
-- `tar@7.5.22` (BlueOak-1.0.0) — Frontend (React / Vite / Electron / Capacitor)
-- `yallist@5.0.0` (BlueOak-1.0.0) — Frontend (React / Vite / Electron / Capacitor)
 
 ### BSD (2)
 
@@ -224,16 +207,16 @@ The packages the projects declare directly (runtime and development). Their tran
 - `fs.realpath@1.0.0` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `gauge@4.0.4` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `get-caller-file@2.0.5` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
-- `glob@7.2.3` (ISC) — Server GUI (Electron)
+- `glob@7.2.3` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `glob-parent@6.0.2` (ISC) — Frontend (React / Vite / Electron / Capacitor)
 - `graceful-fs@4.2.11` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `has-unicode@2.0.1` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `hosted-git-info@4.1.0` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
-- `chownr@2.0.0` (ISC) — Server GUI (Electron)
+- `chownr@2.0.0` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `infer-owner@1.0.4` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `inflight@1.0.6` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `inherits@2.0.4` (ISC) — Backend (Bun / Hono API), Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
-- `ini@2.0.0` (ISC) — Frontend (React / Vite / Electron / Capacitor)
+- `ini@4.1.3` (ISC) — Frontend (React / Vite / Electron / Capacitor)
 - `isexe@2.0.0` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `json-stringify-safe@5.0.1` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `lru-cache@5.1.1` (ISC) — Frontend (React / Vite / Electron / Capacitor)
@@ -241,7 +224,7 @@ The packages the projects declare directly (runtime and development). Their tran
 - `lucide-react@0.453.0` (ISC) — Frontend (React / Vite / Electron / Capacitor)
 - `make-error@1.3.6` (ISC) — Frontend (React / Vite / Electron / Capacitor)
 - `make-fetch-happen@10.2.1` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
-- `minipass@3.3.6` (ISC) — Server GUI (Electron)
+- `minipass@3.3.6` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `minipass-collect@1.0.2` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `minipass-pipeline@1.2.4` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `minipass-sized@1.0.3` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
@@ -251,14 +234,13 @@ The packages the projects declare directly (runtime and development). Their tran
 - `picocolors@1.1.1` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `promise-inflight@1.0.1` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `require-main-filename@2.0.0` (ISC) — Frontend (React / Vite / Electron / Capacitor)
-- `rimraf@3.0.2` (ISC) — Server GUI (Electron)
-- `semver@7.8.5` (ISC) — Frontend (React / Vite / Electron / Capacitor)
-- `semver@6.3.1` (ISC) — Server GUI (Electron)
+- `rimraf@3.0.2` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
+- `semver@6.3.1` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `set-blocking@2.0.0` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `signal-exit@3.0.7` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `split2@4.2.0` (ISC) — Frontend (React / Vite / Electron / Capacitor)
 - `ssri@9.0.1` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
-- `tar@6.2.1` (ISC) — Server GUI (Electron)
+- `tar@6.2.1` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `unique-filename@2.0.1` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `unique-slug@3.0.0` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `which@2.0.2` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
@@ -266,10 +248,11 @@ The packages the projects declare directly (runtime and development). Their tran
 - `wide-align@1.1.5` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `wrappy@1.0.2` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `y18n@5.0.8` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
+- `yallist@3.1.1` (ISC) — Frontend (React / Vite / Electron / Capacitor)
 - `yallist@4.0.0` (ISC) — Server GUI (Electron)
 - `yargs-parser@21.1.1` (ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 
-### MIT (598)
+### MIT (585)
 
 - `@alloc/quick-lru@5.2.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `@babel/code-frame@7.29.7` (MIT) — Frontend (React / Vite / Electron / Capacitor)
@@ -429,7 +412,7 @@ The packages the projects declare directly (runtime and development). Their tran
 - `color-string@1.9.1` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `combined-stream@1.0.8` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `comma-separated-tokens@2.0.3` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `commander@8.3.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
+- `commander@4.1.1` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `commander@5.1.0` (MIT) — Server GUI (Electron)
 - `compare-func@2.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `compare-version@0.1.2` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
@@ -454,8 +437,7 @@ The packages the projects declare directly (runtime and development). Their tran
 - `csstype@3.2.3` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `dargs@7.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `dateformat@3.0.3` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `debug@4.4.3` (MIT) — Backend (Bun / Hono API), Server GUI (Electron)
-- `debug@4.3.4` (MIT) — Frontend (React / Vite / Electron / Capacitor)
+- `debug@4.4.3` (MIT) — Backend (Bun / Hono API), Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `decamelize@1.2.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `decamelize-keys@1.1.1` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `decode-named-character-reference@1.3.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
@@ -496,7 +478,7 @@ The packages the projects declare directly (runtime and development). Their tran
 - `es6-error@4.1.1` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `esbuild@0.21.5` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `escalade@3.2.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
-- `escape-string-regexp@1.0.5` (MIT) — Frontend (React / Vite / Electron / Capacitor)
+- `escape-string-regexp@5.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `escape-string-regexp@4.0.0` (MIT) — Server GUI (Electron)
 - `estree-util-is-identifier-name@3.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `extend@3.0.2` (MIT) — Frontend (React / Vite / Electron / Capacitor)
@@ -505,15 +487,12 @@ The packages the projects declare directly (runtime and development). Their tran
 - `fast-glob@3.3.3` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `fast-json-stable-stringify@2.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `fd-slicer@1.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
-- `fdir@6.5.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `ffprobe-static@3.1.0` (MIT) — Backend (Bun / Hono API)
 - `fill-range@7.1.1` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `find-up@4.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
+- `find-up@2.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `form-data@4.0.6` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `fraction.js@5.3.4` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `fs-constants@1.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
-- `fs-extra@10.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `fs-extra@8.1.0` (MIT) — Server GUI (Electron)
+- `fs-extra@8.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `function-bind@1.1.2` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `gensync@1.0.0-beta.2` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `get-intrinsic@1.3.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
@@ -562,7 +541,7 @@ The packages the projects declare directly (runtime and development). Their tran
 - `ip-address@10.3.1` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `is-alphabetical@2.0.1` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `is-alphanumerical@2.0.1` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `is-arrayish@0.3.4` (MIT) — Frontend (React / Vite / Electron / Capacitor)
+- `is-arrayish@0.2.1` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `is-binary-path@2.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `is-ci@3.0.1` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `is-core-module@2.16.2` (MIT) — Frontend (React / Vite / Electron / Capacitor)
@@ -592,8 +571,7 @@ The packages the projects declare directly (runtime and development). Their tran
 - `json-parse-even-better-errors@2.3.1` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `json-schema-traverse@0.4.1` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `json5@2.2.3` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
-- `jsonfile@6.2.1` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `jsonfile@4.0.0` (MIT) — Server GUI (Electron)
+- `jsonfile@4.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `jsonparse@1.3.1` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `keyv@4.5.4` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `kind-of@6.0.3` (MIT) — Frontend (React / Vite / Electron / Capacitor)
@@ -603,7 +581,7 @@ The packages the projects declare directly (runtime and development). Their tran
 - `lilconfig@3.1.3` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `lines-and-columns@1.2.4` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `load-json-file@4.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `locate-path@5.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
+- `locate-path@2.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `lodash@4.18.1` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `lodash.defaults@4.2.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `lodash.difference@4.5.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
@@ -673,19 +651,16 @@ The packages the projects declare directly (runtime and development). Their tran
 - `mime-db@1.52.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `mime-types@2.1.35` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `mimic-fn@2.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
-- `mimic-response@3.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `mimic-response@1.0.1` (MIT) — Server GUI (Electron)
+- `mimic-response@1.0.1` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `min-indent@1.0.1` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `minimist@1.2.8` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `minimist-options@4.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `minipass-fetch@2.1.2` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
-- `minizlib@3.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `minizlib@2.1.2` (MIT) — Server GUI (Electron)
+- `minizlib@2.1.2` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `mkdirp@1.0.4` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `mkdirp-classic@0.5.3` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `modify-values@1.0.1` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `ms@2.1.3` (MIT) — Backend (Bun / Hono API), Server GUI (Electron)
-- `ms@2.1.2` (MIT) — Frontend (React / Vite / Electron / Capacitor)
+- `ms@2.1.3` (MIT) — Backend (Bun / Hono API), Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `mz@2.7.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `nanoid@3.3.15` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `napi-build-utils@2.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
@@ -694,7 +669,6 @@ The packages the projects declare directly (runtime and development). Their tran
 - `negotiator@0.6.4` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `neo-async@2.6.2` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `node-abi@3.94.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
-- `node-addon-api@6.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `node-api-version@0.2.1` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `node-fetch@2.7.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `node-gyp@9.4.1` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
@@ -710,12 +684,12 @@ The packages the projects declare directly (runtime and development). Their tran
 - `ora@5.4.1` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `p-cancelable@2.1.1` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `p-limit@3.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
-- `p-locate@4.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
+- `p-locate@2.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `p-map@4.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `p-try@2.2.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `parse-entities@4.0.2` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `parse-json@4.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `path-exists@4.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
+- `path-exists@3.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `path-is-absolute@1.0.1` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `path-key@3.1.1` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `path-parse@1.0.7` (MIT) — Frontend (React / Vite / Electron / Capacitor)
@@ -786,7 +760,6 @@ The packages the projects declare directly (runtime and development). Their tran
 - `simple-swizzle@0.2.4` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `simple-update-notifier@2.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `sisteransi@1.0.5` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `slice-ansi@4.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `smart-buffer@4.2.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `socks@2.8.9` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `socks-proxy-agent@7.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
@@ -810,8 +783,7 @@ The packages the projects declare directly (runtime and development). Their tran
 - `supports-preserve-symlinks-flag@1.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `tailwindcss@3.4.19` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `tar-fs@3.1.3` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `tar-stream@3.2.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `tar-stream@2.2.0` (MIT) — Server GUI (Electron)
+- `tar-stream@2.2.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `teex@1.0.1` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `temp-dir@3.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `temp-file@3.4.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
@@ -843,8 +815,7 @@ The packages the projects declare directly (runtime and development). Their tran
 - `unist-util-stringify-position@4.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `unist-util-visit@5.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `unist-util-visit-parents@6.0.2` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `universalify@2.0.1` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `universalify@0.1.2` (MIT) — Server GUI (Electron)
+- `universalify@0.1.2` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `untildify@4.0.0` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `update-browserslist-db@1.2.3` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `util-deprecate@1.0.2` (MIT) — Backend (Bun / Hono API), Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
@@ -862,8 +833,7 @@ The packages the projects declare directly (runtime and development). Their tran
 - `xmlbuilder@15.1.1` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `xpath@0.0.32` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `xtend@4.0.2` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `yargs@17.7.2` (MIT) — Frontend (React / Vite / Electron / Capacitor)
-- `yargs@17.7.3` (MIT) — Server GUI (Electron)
+- `yargs@17.7.3` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `yauzl@2.10.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 - `yn@3.1.1` (MIT) — Frontend (React / Vite / Electron / Capacitor)
 - `yocto-queue@0.1.0` (MIT) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
@@ -893,7 +863,5 @@ The packages the projects declare directly (runtime and development). Their tran
 - `sanitize-filename@1.6.4` (WTFPL OR ISC) — Frontend (React / Vite / Electron / Capacitor), Server GUI (Electron)
 
 ## License texts
-
-The GNU GPL v3 license text (the license of the FFmpeg binaries fetched by the Server GUI on first run) is stored in [`licenses/GPL-3.0.txt`](licenses/GPL-3.0.txt).
 
 Texts of all other licenses (Apache-2.0, MIT, BSD, ISC, etc.) are available inside each package's directory under `node_modules/<package>/LICENSE*` or in the repository `LICENSE` file.

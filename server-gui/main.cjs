@@ -39,32 +39,6 @@ const GENERATED_IMAGES_DIR = path.join(APP_DATA_ROOT, 'generated_images');
 const GITHUB_REPO = process.env.KASALIX_REPO || 'Kasikexe/Kasalix';
 const GITHUB_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 
-// ─── FFmpeg (downloaded at first run, NOT shipped — the binaries are GPL) ──
-// Lives in a stable folder next to the app; FFMPEG_PATH/FFPROBE_PATH are
-// passed to the backend so the video editor can find it.
-const FFMPEG_DIR = path.join(APP_DATA_ROOT, 'ffmpeg');
-const FFMPEG_BIN = path.join(FFMPEG_DIR, 'bin');
-const FFMPEG_EXE = path.join(FFMPEG_BIN, 'ffmpeg.exe');
-const FFPROBE_EXE = path.join(FFMPEG_BIN, 'ffprobe.exe');
-
-const ffmpegInstalled = () => fs.existsSync(FFMPEG_EXE) && fs.existsSync(FFPROBE_EXE);
-
-/** Locate an extracted ffmpeg binary (versioned build folder -> bin/) */
-function findExtractedBinary(dir, name) {
-  const found = [];
-  const walk = (d) => {
-    let entries = [];
-    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      const p = path.join(d, e.name);
-      if (e.isDirectory()) walk(p);
-      else if (e.name === name) found.push(p);
-    }
-  };
-  walk(dir);
-  return found[0] || null;
-}
-
 let mainWindow = null;
 let serverProcess = null;
 let statsInterval = null;
@@ -376,10 +350,6 @@ async function startServer(httpMode) {
     // Stable data locations — see the DATA_DIR note above
     DATA_DIR,
     GENERATED_IMAGES_DIR,
-    // FFmpeg is downloaded at first run (not shipped) — point the backend at it
-    ...(ffmpegInstalled()
-      ? { FFMPEG_PATH: FFMPEG_EXE, FFPROBE_PATH: FFPROBE_EXE }
-      : {}),
   };
 
   // Add SSL cert paths if using HTTPS
@@ -861,6 +831,65 @@ function setupIPC() {
     } catch { return { error: 'Failed to save settings' }; }
   });
 
+  // ─── Plugins ────────────────────────────────────────
+  /** List installed plugins (public read) */
+  ipcMain.handle('plugins-list', async () => {
+    try {
+      return await backendRequest('/api/plugins');
+    } catch { return { plugins: [] }; }
+  });
+
+  /** Fetch the curated plugin catalog (public read) */
+  ipcMain.handle('plugins-catalog', async () => {
+    try {
+      return await backendRequest('/api/plugins/catalog');
+    } catch { return { error: 'Failed to load plugin catalog' }; }
+  });
+
+  /** Install a plugin from a GitHub repo (admin only) */
+  ipcMain.handle('plugins-install', async (_event, repo) => {
+    try {
+      return await backendRequest('/api/plugins/install', {
+        method: 'POST',
+        body: { repo },
+        headers: { 'Cookie': 'settings_auth=1' },
+        timeout: 60000, // downloading a repo can take a while
+      });
+    } catch { return { error: 'Failed to install plugin' }; }
+  });
+
+  /** Uninstall a plugin (admin only) */
+  ipcMain.handle('plugins-uninstall', async (_event, id) => {
+    try {
+      return await backendRequest(`/api/plugins/${encodeURIComponent(id)}/uninstall`, {
+        method: 'POST',
+        headers: { 'Cookie': 'settings_auth=1' },
+      });
+    } catch { return { success: false, error: 'Failed to uninstall plugin' }; }
+  });
+
+  /** Enable/disable a plugin (admin only) */
+  ipcMain.handle('plugins-toggle', async (_event, id, enabled) => {
+    try {
+      return await backendRequest(`/api/plugins/${encodeURIComponent(id)}/toggle`, {
+        method: 'POST',
+        body: { enabled: !!enabled },
+        headers: { 'Cookie': 'settings_auth=1' },
+      });
+    } catch { return { success: false, error: 'Failed to toggle plugin' }; }
+  });
+
+  /** Update a plugin from its repo (admin only) */
+  ipcMain.handle('plugins-update', async (_event, id) => {
+    try {
+      return await backendRequest(`/api/plugins/${encodeURIComponent(id)}/update`, {
+        method: 'POST',
+        headers: { 'Cookie': 'settings_auth=1' },
+        timeout: 60000,
+      });
+    } catch { return { success: false, error: 'Failed to update plugin' }; }
+  });
+
   // ─── Bun / Ollama Install ──────────────────────────
   /** Check whether the Bun runtime is installed */
   ipcMain.handle('check-bun', async () => {
@@ -993,173 +1022,6 @@ function setupIPC() {
       // Cleanup the installer file
       try { fs.unlinkSync(dest); } catch {}
       return { success: true, installed: true };
-    } catch (err) {
-      try { fs.unlinkSync(dest); } catch {}
-      return { success: false, error: err.message };
-    }
-  });
-
-  // ─── FFmpeg Install ───────────────────────────────────
-  // FFmpeg is NOT shipped inside the app (the bundled binaries are GPL).
-  // Instead it is downloaded from the official gyan.dev release at first
-  // run, and FFMPEG_PATH / FFPROBE_PATH are passed to the backend so the
-  // video editor can find it.
-
-  ipcMain.handle('check-ffmpeg', () => {
-    return { installed: ffmpegInstalled() };
-  });
-
-  /** Download + install ffmpeg from the official gyan.dev release. */
-  ipcMain.handle('install-ffmpeg', async () => {
-    const https = require('https');
-    const crypto = require('crypto');
-    const url = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip';
-    const shaUrl = url + '.sha256';
-    const dest = path.join(app.getPath('temp'), 'kasalix-ffmpeg-essentials.zip');
-    const extractDir = path.join(app.getPath('temp'), 'kasalix-ffmpeg-extract');
-    const MAX_REDIRECTS = 10;
-
-    /** Fetch the expected SHA-256 published by gyan.dev (null if unavailable). */
-    function fetchExpectedSha() {
-      return new Promise((resolve) => {
-        const req = https.get(shaUrl, { headers: { 'User-Agent': 'Kasalix-Server/1.0' } }, (res) => {
-          if (res.statusCode !== 200) {
-            res.resume();
-            resolve(null);
-            return;
-          }
-          let data = '';
-          res.on('data', (c) => { data += c; });
-          res.on('end', () => {
-            // File format: "<64-hex-hash>  ffmpeg-release-essentials.zip"
-            const token = (data.trim().split(/\s+/)[0] || '').toLowerCase();
-            resolve(/^[a-f0-9]{64}$/.test(token) ? token : null);
-          });
-        });
-        req.on('error', () => resolve(null));
-        req.setTimeout(15000, () => { req.destroy(); resolve(null); });
-      });
-    }
-
-    function download(urlToFetch, redirectsLeft) {
-      return new Promise((resolve, reject) => {
-        let redirected = false;
-        let req = null;
-        let stallTimer = null;
-
-        const armStallTimer = () => {
-          clearTimeout(stallTimer);
-          stallTimer = setTimeout(() => {
-            if (req) req.destroy(new Error('Download stalled (no data for 60s)'));
-          }, 60000);
-        };
-
-        req = https.get(urlToFetch, { headers: { 'User-Agent': 'Kasalix-Server/1.0' } }, (res) => {
-          armStallTimer();
-          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            res.resume();
-            clearTimeout(stallTimer);
-            if (redirectsLeft <= 0) {
-              reject(new Error('Too many redirects downloading FFmpeg'));
-              return;
-            }
-            redirected = true;
-            const next = new URL(res.headers.location, urlToFetch).toString();
-            download(next, redirectsLeft - 1).then(resolve, reject);
-            return;
-          }
-          if (res.statusCode !== 200) {
-            res.resume();
-            clearTimeout(stallTimer);
-            reject(new Error('Download failed (HTTP ' + res.statusCode + ')'));
-            return;
-          }
-          const file = fs.createWriteStream(dest);
-          let received = 0;
-          const size = parseInt(res.headers['content-length'] || '0', 10) || 0;
-          res.on('data', (chunk) => {
-            armStallTimer();
-            received += chunk.length;
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              const percent = size ? Math.round((received / size) * 100) : 0;
-              mainWindow.webContents.send('install-progress', {
-                component: 'ffmpeg',
-                stage: 'download',
-                message: 'Downloading FFmpeg... ' + percent + '% (' + Math.round(received / 1048576) + ' MB)' + (size ? ' / ' + Math.round(size / 1048576) + ' MB' : ''),
-                percent,
-              });
-            }
-          });
-          res.pipe(file);
-          file.on('finish', () => { clearTimeout(stallTimer); file.close(); resolve(); });
-          file.on('error', (err) => { clearTimeout(stallTimer); reject(err); });
-        });
-        armStallTimer();
-        req.on('error', (err) => {
-          clearTimeout(stallTimer);
-          if (!redirected) reject(err);
-        });
-      });
-    }
-
-    try {
-      // Clean up any stale artifacts first
-      try { fs.unlinkSync(dest); } catch {}
-      try { fs.rmSync(extractDir, { recursive: true, force: true }); } catch {}
-      fs.mkdirSync(FFMPEG_DIR, { recursive: true });
-
-      await download(url, MAX_REDIRECTS);
-
-      // Supply-chain check: verify the downloaded zip against the SHA-256 that
-      // gyan.dev publishes next to the build. If the checksum file is
-      // unreachable we skip the check (HTTPS + pinned provider), but a MISMATCH
-      // aborts the install — the zip may be corrupted or tampered with.
-      const expected = await fetchExpectedSha();
-      if (expected) {
-        const actual = crypto.createHash('sha256').update(fs.readFileSync(dest)).digest('hex');
-        if (actual !== expected) {
-          throw new Error('Downloaded FFmpeg failed the SHA-256 integrity check — the file may be corrupted. Please try again.');
-        }
-      }
-
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('install-progress', { component: 'ffmpeg', stage: 'extract', message: 'Extracting FFmpeg...' });
-      }
-
-      // Extract with PowerShell Expand-Archive (ships with Windows 10/11)
-      fs.mkdirSync(extractDir, { recursive: true });
-      await new Promise((resolve, reject) => {
-        const ps = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', `Expand-Archive -Path '${dest}' -DestinationPath '${extractDir}' -Force`], {
-          windowsHide: true,
-          shell: false,
-        });
-        let stderr = '';
-        ps.stderr.on('data', (d) => { stderr += d.toString(); });
-        ps.on('error', (err) => reject(err));
-        ps.on('close', (code) => {
-          if (code === 0) resolve();
-          else reject(new Error('Extraction failed: ' + (stderr.trim() || 'unknown error')));
-        });
-      });
-
-      // Move ffmpeg.exe + ffprobe.exe into the stable bin/ folder
-      const ffmpegSrc = findExtractedBinary(extractDir, 'ffmpeg.exe');
-      const ffprobeSrc = findExtractedBinary(extractDir, 'ffprobe.exe');
-      if (!ffmpegSrc || !ffprobeSrc) {
-        throw new Error('Extracted package did not contain ffmpeg.exe / ffprobe.exe');
-      }
-      fs.mkdirSync(FFMPEG_BIN, { recursive: true });
-      fs.copyFileSync(ffmpegSrc, FFMPEG_EXE);
-      fs.copyFileSync(ffprobeSrc, FFPROBE_EXE);
-
-      // Cleanup
-      try { fs.unlinkSync(dest); } catch {}
-      try { fs.rmSync(extractDir, { recursive: true, force: true }); } catch {}
-
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('install-progress', { component: 'ffmpeg', stage: 'done', message: 'FFmpeg installed', percent: 100 });
-      }
-      return { success: true, installed: ffmpegInstalled() };
     } catch (err) {
       try { fs.unlinkSync(dest); } catch {}
       return { success: false, error: err.message };

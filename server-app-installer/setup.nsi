@@ -7,7 +7,7 @@
 ; Or run: makensis setup.nsi
 
 !define PRODUCT_NAME "Kasalix AI Chat Server"
-!define PRODUCT_VERSION "0.9.0"
+!define PRODUCT_VERSION "0.10.15"
 
 ; Allow override from command line: makensis /DVERSION=x.x.x setup.nsi
 !ifdef VERSION
@@ -110,19 +110,11 @@ Section "Server Files" SEC_MAIN
     SetOutPath "$INSTDIR"
     File /nonfatal "..\server-gui\release\Kasalix-AI-Chat-Server*.exe"
 
-    ; ── FFmpeg (video editor dependency) ────────────────────────────
-    ; FFmpeg binaries are GPL — they are NOT bundled in this installer.
-    ; The Server GUI app downloads the official gyan.dev release on its
-    ; first run (same as Bun and Ollama), so the end user gets it directly
-    ; from the upstream provider. Nothing to do here.
-
     ; Copy legal / license files (Apache-2.0 LICENSE + NOTICE + third-party notices)
     SetOutPath "$INSTDIR"
     File "..\LICENSE"
     File "..\NOTICE"
     File "..\THIRD_PARTY_NOTICES.md"
-    SetOutPath "$INSTDIR\licenses"
-    File "..\licenses\GPL-3.0.txt"
 
     ; Create uninstaller
     WriteUninstaller "$INSTDIR\uninstall.exe"

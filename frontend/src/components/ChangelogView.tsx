@@ -1,33 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { Layers, GitBranch, Calendar, Loader, Sparkles, AlertTriangle, ExternalLink, X } from 'lucide-react';
 import { openExternal } from '../utils/openExternal';
-import { GITHUB_RELEASES_API, RELEASES_URL } from '../config';
-// Cache releases briefly so the GitHub API (rate-limited) isn't hit on every open
-const CACHE_KEY = 'kasalix:changelog:releases';
-const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
-
-/** A release as returned by the GitHub Releases API */
-interface GitHubRelease {
-  tag_name: string;
-  name: string | null;
-  body: string | null;
-  published_at: string;
-  prerelease: boolean;
-  draft: boolean;
-  html_url: string;
-}
-
-interface ChangelogEntry {
-  version: string;
-  title: string;
-  description: string;
-  date: string;
-  type: 'major' | 'minor' | 'patch';
-  prerelease: boolean;
-  url: string;
-}
+import { RELEASES_URL } from '../config';
+import {
+  fetchReleases,
+  getCachedReleases,
+  getStaleReleases,
+  type ChangelogEntry,
+} from '../services/githubReleases';
+import { ReleaseNotesMarkdown } from './ReleaseNotesMarkdown';
 
 const TYPE_STYLES: Record<string, { icon: React.ReactNode; label: string; color: string; gradient: string }> = {
   major: {
@@ -50,18 +31,6 @@ const TYPE_STYLES: Record<string, { icon: React.ReactNode; label: string; color:
   },
 };
 
-/** Guess the change type from a semver-ish tag (v1.2.3 → major/minor/patch). */
-function deriveType(tag: string): 'major' | 'minor' | 'patch' {
-  const clean = tag.replace(/^v/i, '').split('-')[0];
-  const parts = clean.split('.').map(Number);
-  if (parts.length === 3 && parts.every((n) => !Number.isNaN(n))) {
-    if (parts[1] === 0 && parts[2] === 0) return 'major';
-    if (parts[2] === 0) return 'minor';
-    return 'patch';
-  }
-  return 'minor';
-}
-
 function formatDate(dateStr: string) {
   const d = new Date(dateStr);
   if (Number.isNaN(d.getTime())) return '';
@@ -70,41 +39,6 @@ function formatDate(dateStr: string) {
   if (diff < 86400000) return `Today, ${d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}`;
   if (diff < 172800000) return `Yesterday, ${d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}`;
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-}
-
-/** Read the cached entries. Returns null when the cache is empty or expired. */
-function loadCache(ignoreTTL = false): ChangelogEntry[] | null {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed.entries)) return null;
-    if (!ignoreTTL && Date.now() - (parsed.fetchedAt || 0) > CACHE_TTL) return null;
-    return parsed.entries as ChangelogEntry[];
-  } catch {
-    return null;
-  }
-}
-
-function saveCache(entries: ChangelogEntry[]) {
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), entries }));
-  } catch {
-    /* storage may be unavailable — ignore */
-  }
-}
-
-/** Map a GitHub release object to a changelog entry. */
-function toEntry(release: GitHubRelease): ChangelogEntry {
-  return {
-    version: release.tag_name.replace(/^v/i, ''),
-    title: release.name || release.tag_name,
-    description: release.body?.trim() || '_No description provided._',
-    date: release.published_at,
-    type: deriveType(release.tag_name),
-    prerelease: !!release.prerelease,
-    url: release.html_url,
-  };
 }
 
 interface Props {
@@ -121,7 +55,7 @@ export function ChangelogView({ onClose }: Props) {
     setError(null);
 
     // Serve from cache when it's fresh (even an empty one) — saves a GitHub API call
-    const cached = loadCache();
+    const cached = getCachedReleases();
     if (cached) {
       setEntries(cached);
       setLoading(false);
@@ -129,25 +63,12 @@ export function ChangelogView({ onClose }: Props) {
     }
 
     try {
-      const res = await fetch(GITHUB_RELEASES_API);
-      if (!res.ok) {
-        // 403/429 = GitHub API rate limit — distinct message, not a connection problem
-        if (res.status === 403 || res.status === 429) throw new Error('rate-limited');
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const data: GitHubRelease[] = await res.json();
-      if (Array.isArray(data)) {
-        const list = data
-          .filter((r) => !r.draft)
-          .map(toEntry)
-          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        setEntries(list);
-        saveCache(list);
-      }
+      const list = await fetchReleases();
+      setEntries(list);
     } catch (e) {
       const rateLimited = e instanceof Error && e.message === 'rate-limited';
       // Network problem — fall back to a stale cache if it has real content
-      const stale = loadCache(true);
+      const stale = getStaleReleases();
       if (stale && stale.length > 0) {
         setEntries(stale);
       } else {
@@ -280,35 +201,7 @@ export function ChangelogView({ onClose }: Props) {
                           {entry.title}
                         </p>
                         <div className={`mt-2 leading-relaxed ${isLatest ? 'text-gray-300' : 'text-gray-400'}`}>
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}
-                            components={{
-                              ul: ({ children }) => <ul className="list-disc list-inside space-y-0.5 text-xs">{children}</ul>,
-                              ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 text-xs">{children}</ol>,
-                              li: ({ children }) => {
-                                const content = String(children);
-                                const isChecklist = content.startsWith('[ ]') || content.startsWith('[x]');
-                                if (isChecklist) {
-                                  const checked = content.startsWith('[x]');
-                                  return (
-                                    <li className="flex items-start gap-1.5 text-xs">
-                                      <span className={`mt-0.5 w-3.5 h-3.5 rounded flex-shrink-0 flex items-center justify-center text-[8px] ${
-                                        checked ? 'bg-emerald-600/30 text-emerald-400' : 'bg-gray-700/50 text-gray-500'
-                                      }`}>{checked ? '✓' : ''}</span>
-                                      <span>{content.slice(3)}</span>
-                                    </li>
-                                  );
-                                }
-                                return <li className="text-xs">{children}</li>;
-                              },
-                              p: ({ children }) => <p className="text-xs mb-1.5 last:mb-0">{children}</p>,
-                              strong: ({ children }) => <strong className="text-gray-200 font-semibold">{children}</strong>,
-                              code: ({ children }) => <code className="bg-gray-800 px-1 py-0.5 rounded text-[10px] font-mono text-purple-300">{children}</code>,
-                              h1: ({ children }) => <h1 className="text-sm font-bold text-gray-200 mt-3 mb-1">{children}</h1>,
-                              h2: ({ children }) => <h2 className="text-xs font-bold text-gray-200 mt-2 mb-1">{children}</h2>,
-                              h3: ({ children }) => <h3 className="text-[11px] font-bold text-gray-200 mt-2 mb-0.5">{children}</h3>,
-                              hr: () => <hr className="border-gray-700 my-2" />,
-                            }}
-                          >{entry.description}</ReactMarkdown>
+                          <ReleaseNotesMarkdown content={entry.description} />
                         </div>
                       </div>
                     </div>

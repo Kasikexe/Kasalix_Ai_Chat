@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { LogIn, UserPlus, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { LogIn, UserPlus, Eye, EyeOff, AlertCircle, Settings } from 'lucide-react';
 import { api } from '../services/api';
+import { ServerConfig } from './ServerConfig';
 
 interface Props {
   onSubmit: (name: string) => void;
@@ -25,6 +26,7 @@ export function UserSetup({ onSubmit }: Props) {
   const [rememberMe, setRememberMe] = useState<boolean>(readRememberPreference);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
 
   const handleRememberToggle = (checked: boolean) => {
     setRememberMe(checked);
@@ -281,7 +283,38 @@ export function UserSetup({ onSubmit }: Props) {
             {mode === 'register' ? 'Already have an account? Sign in' : "Don't have an account? Create one"}
           </button>
         </div>
+
+        {/* Server settings — change the backend address from the login screen */}
+        <div style={{ textAlign: 'center', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #1f2937' }}>
+          <button
+            type="button"
+            onClick={() => setConfigOpen(true)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#a78bfa',
+              fontSize: '13px',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '4px',
+            }}
+          >
+            <Settings size={14} />
+            Server settings
+          </button>
+        </div>
       </div>
+
+      {/* Full server configuration modal (works on Android + desktop) */}
+      {configOpen && (
+        <ServerConfig
+          onSaved={() => { window.location.reload(); }}
+          showClose
+          onClose={() => setConfigOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -9,11 +9,29 @@ interface Props {
   disabled?: boolean;
   planningEnabled?: boolean;
   onPlanningToggle?: () => void;
+  /** Key identifying which conversation this draft belongs to (survives remounts). */
+  draftKey?: string;
 }
 
-export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnabled, onPlanningToggle }: Props) {
-  const [value, setValue] = useState('');
-  const [image, setImage] = useState<string | null>(null);
+// Per-conversation draft cache — keeps the text you were typing (and any
+// attached image) when the view remounts (switching chats, mid-stream
+// re-attach, etc.) instead of silently wiping it.
+const draftCache = new Map<string, { value: string; image: string | null }>();
+
+export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnabled, onPlanningToggle, draftKey }: Props) {
+  const [value, setValue] = useState(() => (draftKey ? draftCache.get(draftKey)?.value ?? '' : ''));
+  const [image, setImage] = useState<string | null>(() => (draftKey ? draftCache.get(draftKey)?.image ?? null : null));
+
+  // Persist the draft whenever it changes, and clear it when the component
+  // unmounts only if it was submitted (empty).
+  useEffect(() => {
+    if (!draftKey) return;
+    if (value || image) {
+      draftCache.set(draftKey, { value, image });
+    } else {
+      draftCache.delete(draftKey);
+    }
+  }, [value, image, draftKey]);
   const [isRecording, setIsRecording] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -119,6 +137,7 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
     onSend(content);
     setValue('');
     setImage(null);
+    if (draftKey) draftCache.delete(draftKey);
     if (ref.current) ref.current.style.height = 'auto';
     if (fileRef.current) fileRef.current.value = '';
   };
@@ -286,6 +305,10 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
             </button>
           )}
         </div>
+
+        <p className="mt-2 text-center text-[11px] text-gray-500 select-none">
+          You are talking to AI — AI can make mistakes.
+        </p>
       </div>
     </div>
   );
