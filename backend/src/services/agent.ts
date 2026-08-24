@@ -14,6 +14,14 @@ import { PROTECTED_DIRS, isProtectedPath, protectedDirsLabel } from '../utils/pr
 import { SessionLog, readSessionLog, listSessionLogs } from './session-log';
 const execAsync = promisify(exec);
 
+// ─── Background process tracking ───────────────────────────────────────
+const backgroundProcesses = new Map<string, {
+  child: import('child_process').ChildProcess;
+  output: string;
+  exitCode: number | null;
+  done: boolean;
+}>();
+
 // ─── Sandbox helpers (same rules as routes/files.ts + /api/terminal) ─────
 function resolveWorkspaceRoot(ws?: string): string | null {
   if (!ws || typeof ws !== 'string') return null;
@@ -469,6 +477,18 @@ export const AGENT_TOOL_DEFS: AgentToolDef[] = [
     args: '{"path": "src/"} or {"path": "src/app.ts"}',
     mutating: false,
   },
+  {
+    name: 'glob',
+    description: 'Fast file pattern matching. Find files by name pattern (e.g. "**/*.tsx", "src/**/*.ts", "*.json"). Returns matching paths sorted by modification time. Use this instead of list_files when you know the file extension or name pattern.',
+    args: '{"pattern": "**/*.py"} or {"pattern": "src/**/*.ts"}',
+    mutating: false,
+  },
+  {
+    name: 'multi_edit',
+    description: 'Apply multiple surgical edits to a SINGLE file in one atomic operation. All edits are applied in order — if any fails, none are applied. Use this when you need to change several places in the same file. Each edit is the same as edit_file (old_string → new_string).',
+    args: '{"path": "src/app.ts", "edits": [{"old_string": "const x = 1;", "new_string": "const x = 2;"}, {"old_string": "foo();", "new_string": "bar();"}]}',
+    mutating: true,
+  },
 ];
 
 const TOOL_JSON_EXAMPLES = `Available tools — to use one, respond with ONLY a single JSON object, no markdown, no other text:
@@ -497,7 +517,10 @@ const TOOL_JSON_EXAMPLES = `Available tools — to use one, respond with ONLY a 
 {"tool": "read_url_image", "args": {"url": "https://example.com/logo.png", "saveAs": "assets/logo.png"}}
 {"tool": "diff_files", "args": {"fileA": "src/old.ts", "fileB": "src/new.ts"}}
 {"tool": "replace_in_file", "args": {"path": "src/app.ts", "find": "oldFunction", "replace": "newFunction"}}
-{"tool": "count_lines", "args": {"path": "src/app.ts"}}`;
+{"tool": "count_lines", "args": {"path": "src/app.ts"}}
+{"tool": "glob", "args": {"pattern": "**/*.py"}}
+{"tool": "glob", "args": {"pattern": "src/**/*.tsx"}}
+{"tool": "multi_edit", "args": {"path": "src/app.ts", "edits": [{"old_string": "const x = 1;", "new_string": "const x = 2;"}, {"old_string": "foo();", "new_string": "bar();"}]}}`;
 
 // ─── Tool execution ─────────────────────────────────────────────────────
 
@@ -1220,11 +1243,43 @@ export async function executeTool(root: string, call: ToolCall, autoApply: boole
       if (dangerous.test(cmd) || escapesWorkspace || touchesProtected || touchesRulesFile) {
         return { ok: false, output: `Command blocked for security (must stay inside the workspace and must not touch protected directories or the USER RULES file: ${protectedDirsLabel()}).` };
       }
+      // Background mode: fire-and-forget with a background ID
+      const isBackground = args.background === true;
+      if (isBackground) {
+        const bgId = `bg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const child = exec(cmd, { cwd: root, shell: true, windowsHide: true, maxBuffer: 10 * 1024 * 1024 } as any);
+        backgroundProcesses.set(bgId, { child, output: '', exitCode: null, done: false });
+        child.stdout?.on('data', (d: Buffer) => {
+          const bg = backgroundProcesses.get(bgId);
+          if (bg) bg.output += d.toString();
+        });
+        child.stderr?.on('data', (d: Buffer) => {
+          const bg = backgroundProcesses.get(bgId);
+          if (bg) bg.output += d.toString();
+        });
+        child.on('close', (code) => {
+          const bg = backgroundProcesses.get(bgId);
+          if (bg) { bg.done = true; bg.exitCode = code; }
+        });
+        return { ok: true, output: `Command started in background (ID: ${bgId}). Use run_command with {"command": "__bg_status:${bgId}"} to check status/output.` };
+      }
+      // Check status of a background process
+      if (cmd.startsWith('__bg_status:')) {
+        const bgId = cmd.replace('__bg_status:', '');
+        const bg = backgroundProcesses.get(bgId);
+        if (!bg) return { ok: false, output: `No background process found with ID: ${bgId}` };
+        const capped = bg.output.length > MAX_OUTPUT_CHARS ? bg.output.slice(-MAX_OUTPUT_CHARS) + '\n...[truncated]' : bg.output;
+        if (bg.done) {
+          backgroundProcesses.delete(bgId);
+          return { ok: bg.exitCode === 0, output: `[Background process ${bgId} completed with exit code ${bg.exitCode}]\n${capped || '(no output)'}` };
+        }
+        return { ok: true, output: `[Background process ${bgId} still running]\n${capped || '(no output yet)'}` };
+      }
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const result = await execAsync(cmd, {
           cwd: root,
-          timeout: 60000,
+          timeout: 600000,
           shell: true,
           windowsHide: true,
           maxBuffer: 10 * 1024 * 1024,
@@ -1734,6 +1789,118 @@ export async function executeTool(root: string, call: ToolCall, autoApply: boole
         return { ok: true, output: `${p}: ${totalFiles} files, ${totalLines} lines, ${totalWords} words` };
       } catch (e) {
         return { ok: false, output: `count_lines failed: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+
+    case 'glob': {
+      const pattern = typeof args.pattern === 'string' ? args.pattern : '';
+      if (!pattern) return { ok: false, output: 'glob requires a "pattern" string argument (e.g. "**/*.py").' };
+      try {
+        const matches: string[] = [];
+        const IGNORE = new Set(['node_modules', '.git', 'dist', 'build', '.cache', '__pycache__', 'vendor', '.venv', '.next', '.output', 'coverage']);
+        // Convert glob pattern to a simple regex
+        const regexStr = pattern
+          .replace(/\./g, '\\.')
+          .replace(/\*\*/g, '{{GLOBSTAR}}')
+          .replace(/\*/g, '[^/]*')
+          .replace(/\?/g, '[^/]')
+          .replace(/\{([^}]+)\}/g, (_, opts) => `(${opts.split(',').map((s: string) => s.trim()).join('|')})`)
+          .replace(/\{\{GLOBSTAR\}\}/g, '.*');
+        const regex = new RegExp(`^${regexStr}$`);
+        // Check if pattern has a directory prefix
+        const parts = pattern.split('/');
+        const hasDirPrefix = parts.length > 1 && !parts[0].includes('*');
+        const searchRoot = hasDirPrefix ? path.join(root, parts[0]) : root;
+        const filePattern = hasDirPrefix ? parts.slice(1).join('/') : pattern;
+        const fileRegexStr = filePattern
+          .replace(/\./g, '\\.')
+          .replace(/\*\*/g, '{{GLOBSTAR}}')
+          .replace(/\*/g, '[^/]*')
+          .replace(/\?/g, '[^/]')
+          .replace(/\{([^}]+)\}/g, (_, opts) => `(${opts.split(',').map((s: string) => s.trim()).join('|')})`)
+          .replace(/\{\{GLOBSTAR\}\}/g, '.*');
+        const fileRegex = new RegExp(`^${fileRegexStr}$`);
+        const walk = async (dir: string, depth: number) => {
+          if (depth > 8 || matches.length >= 200) return;
+          if (isProtectedPath(root, dir)) return;
+          let entries: import('fs').Dirent[] = [];
+          try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+          for (const e of entries) {
+            if (IGNORE.has(e.name)) continue;
+            const full = path.join(dir, e.name);
+            const rel = path.relative(root, full).split(path.sep).join('/');
+            if (e.isDirectory()) {
+              await walk(full, depth + 1);
+            } else {
+              if (fileRegex.test(e.name) || fileRegex.test(rel)) {
+                matches.push(rel);
+              }
+            }
+          }
+        };
+        if (hasDirPrefix) {
+          try { await fs.access(searchRoot); } catch {
+            return { ok: true, output: `No matches for "${pattern}" — directory does not exist.` };
+          }
+          await walk(searchRoot, 0);
+        } else {
+          await walk(root, 0);
+        }
+        // Sort by modification time (newest first)
+        const withMtime = await Promise.all(matches.map(async (m) => {
+          try { const s = await fs.stat(path.join(root, m)); return { m, t: s.mtimeMs }; }
+          catch { return { m, t: 0 }; }
+        }));
+        withMtime.sort((a, b) => b.t - a.t);
+        const sorted = withMtime.map((x) => x.m);
+        if (sorted.length === 0) return { ok: true, output: `No files match pattern "${pattern}".` };
+        return { ok: true, output: `Found ${sorted.length} file(s) matching "${pattern}":\n${sorted.join('\n')}` };
+      } catch (e) {
+        return { ok: false, output: `glob failed: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+
+    case 'multi_edit': {
+      if (!autoApply) return { ok: false, output: 'multi_edit is disabled — auto-apply mode is OFF.' };
+      const p = typeof args.path === 'string' ? args.path : '';
+      const edits = Array.isArray(args.edits) ? args.edits : [];
+      if (!p || edits.length === 0) return { ok: false, output: 'multi_edit requires "path" and "edits" (array of {old_string, new_string}).' };
+      const res = await resolveTargetSmart(root, p);
+      if (res.error) return { ok: false, output: res.error };
+      const target = res.target!;
+      if (isUserRulesPath(root, target)) {
+        return { ok: false, output: `Access denied: ${p} is the USER RULES file — it is read-only for you.` };
+      }
+      try {
+        let content = await fs.readFile(target, 'utf-8');
+        const originalContent = content;
+        let appliedCount = 0;
+        const appliedPaths: string[] = [];
+        for (const edit of edits) {
+          const oldString = typeof edit.old_string === 'string' ? edit.old_string : '';
+          const newString = typeof edit.new_string === 'string' ? edit.new_string : '';
+          if (!oldString) return { ok: false, output: `Edit #${appliedCount + 1}: old_string is empty.` };
+          if (oldString === newString) return { ok: false, output: `Edit #${appliedCount + 1}: old_string and new_string are identical.` };
+          const result = applySearchReplace(content, oldString, newString);
+          if (!result.ok || result.newContent === undefined) {
+            return { ok: false, output: `Edit #${appliedCount + 1} failed: ${result.error || 'old_string not found'}. All ${appliedCount} previous edits were rolled back.` };
+          }
+          content = result.newContent;
+          appliedCount++;
+        }
+        // Preserve line-ending style
+        const finalContent = originalContent.includes('\r\n')
+          ? content.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
+          : content;
+        await fs.writeFile(target, finalContent, 'utf-8');
+        const { count: changed } = changedLineCount(originalContent.replace(/\r\n/g, '\n'), finalContent.replace(/\r\n/g, '\n'));
+        return {
+          ok: true,
+          output: `Applied ${appliedCount} edit(s) to ${p} — changed ${changed} line(s).`,
+          fileWrite: { path: p, changeType: 'edited', originalContent },
+        };
+      } catch (e) {
+        return { ok: false, output: `multi_edit failed: ${e instanceof Error ? e.message : String(e)}` };
       }
     }
 
