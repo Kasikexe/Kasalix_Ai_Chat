@@ -164,6 +164,8 @@ async function streamChatWithRetry(
         max_tokens: opts.max_tokens,
         think: opts.think,
         onThinking: (t) => bufferedThinking.push(t),
+        baseUrl: opts.cloudEndpoint,
+        apiKey: opts.cloudApiKey,
       });
       const out = buffered.join('');
       for (const c of buffered) onChunk(c);
@@ -1556,6 +1558,10 @@ export interface AgentLoopOptions {
   extraContext?: string;
   /** Routing key for ask_user answers (usually the conversation id) */
   askKey?: string;
+  /** Cloud endpoint URL for cloud models (e.g. https://ollama.com) */
+  cloudEndpoint?: string;
+  /** Cloud API key for Bearer auth */
+  cloudApiKey?: string;
   /** Resume from a previously stopped run: the exact internal history to seed with */
   resumeState?: { history: { role: string; content: string }[] };
 }

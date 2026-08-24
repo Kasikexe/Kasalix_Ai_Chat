@@ -61,7 +61,7 @@ const DEFAULTS: ModelAssignments = {
   vision: 'qwen2.5vl:3b',
   extraction: 'qwen2.5:3b',
   search: 'qwen2.5:3b',
-  image_generation: 'x/flux2-klein',
+  image_generation: '',
 };
 
 /** Env-var names for legacy backward compatibility */
