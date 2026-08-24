@@ -24,6 +24,8 @@ import path from 'path';
 
 const RULES_FILENAMES = ['.agent-rules.md', '.agent-rules', 'AGENT_RULES.md'];
 const MEMORY_FILENAMES = ['.agent-memory.md', '.agent-memory', 'AGENT_MEMORY.md'];
+// Project config files (auto-loaded if present, lower priority than user rules)
+const PROJECT_CONFIG_FILENAMES = ['koding.md', 'AGENTS.md', '.koding.md'];
 const MAX_FILE_BYTES = 64 * 1024; // 64KB cap each — enough for rich rules/memory
 
 /** Resolve the user rules file path inside a workspace, or null if none exists. */
@@ -124,4 +126,27 @@ export async function appendAgentMemory(workspaceRoot: string, note: string): Pr
   const line = clean.startsWith('-') ? clean : `- ${clean}`;
   await fs.appendFile(filePath, `${line}\n`, 'utf-8');
   return filePath;
+}
+
+/**
+ * Read project config files (koding.md, AGENTS.md, .koding.md).
+ * These provide project-specific instructions, lower priority than user rules.
+ * Returns combined content of all found config files, or null if none exist.
+ */
+export async function readProjectConfig(workspaceRoot: string): Promise<string | null> {
+  const parts: string[] = [];
+  for (const name of PROJECT_CONFIG_FILENAMES) {
+    try {
+      const p = path.join(workspaceRoot, name);
+      const stat = await fs.stat(p);
+      if (!stat.isFile()) continue;
+      if (stat.size > MAX_FILE_BYTES) {
+        parts.push(`(${name} is ${(stat.size / 1024).toFixed(0)}KB — too large to auto-load; use read_file to read it)`);
+        continue;
+      }
+      const content = await fs.readFile(p, 'utf-8');
+      if (content.trim()) parts.push(`[PROJECT CONFIG — ${name}]\n${content.trim()}`);
+    } catch { /* file doesn't exist */ }
+  }
+  return parts.length > 0 ? parts.join('\n\n') : null;
 }

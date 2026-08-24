@@ -9,7 +9,7 @@ import { withAiRules } from './ai-rules';
 import { getWebContext } from './search';
 import { getResolvedModel } from './model-assignments';
 import { getCloudSettings } from '../routes/settings';
-import { readProjectRules, findAgentMemoryFile, readAgentMemory, appendAgentMemory } from './project-rules';
+import { readProjectRules, findAgentMemoryFile, readAgentMemory, appendAgentMemory, readProjectConfig } from './project-rules';
 import { PROTECTED_DIRS, isProtectedPath, protectedDirsLabel } from '../utils/protected-dirs';
 import { SessionLog, readSessionLog, listSessionLogs } from './session-log';
 const execAsync = promisify(exec);
@@ -675,7 +675,7 @@ export async function detectProjectProfile(root: string): Promise<{
 }
 
 /** Render the profile as a compact block the model reads in every iteration. */
-export async function buildWorkspaceProfile(root: string, verifyCommand?: string | null, projectRules?: string | null, agentMemory?: string | null): Promise<string> {
+export async function buildWorkspaceProfile(root: string, verifyCommand?: string | null, projectRules?: string | null, agentMemory?: string | null, projectConfig?: string | null): Promise<string> {
   const profile = await detectProjectProfile(root);
   const lines: string[] = ['WORKSPACE PROFILE (read this — it tells you what kind of project this is):'];
   if (profile.language) {
@@ -697,6 +697,9 @@ export async function buildWorkspaceProfile(root: string, verifyCommand?: string
   lines.push(`- Agent memory: ${agentMemory ? 'stored in .agent-memory.md (your own notes — lower priority than user rules)' : 'none yet — use update_memory to save durable project knowledge'}`);
   lines.push(`- PROTECTED directories (NEVER read, list, search, edit, commit, or run commands referencing them — they are server internals): ${protectedDirsLabel()}`);
   lines.push('- RULE: Match the project language above for ALL new or edited files. Do NOT create files in a different language than the project unless the user explicitly asks for that language.');
+  if (projectConfig) {
+    lines.push('\n' + projectConfig);
+  }
   return lines.join('\n');
 }
 
@@ -2196,7 +2199,12 @@ export interface AgentCallbacks {
 }
 
 /** Permission level for tool execution */
-export type ToolPermission = 'auto' | 'read-only' | 'ask-each';
+export type ToolPermission = 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit';
+// 'auto' = full-auto: everything executes automatically
+// 'read-only' = no mutations allowed
+// 'ask-each' = ask user for EVERY mutating tool (like Codex 'suggest')
+// 'suggest' = same as ask-each (alias)
+// 'auto-edit' = file edits auto-apply, but shell commands require approval
 
 export interface AgentLoopOptions {
   model: string;
@@ -2336,7 +2344,8 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
   const verify = await detectVerifyCommand(root);
   const projectRules = await readProjectRules(root);
   const agentMemory = await readAgentMemory(root);
-  const workspaceProfile = await buildWorkspaceProfile(root, verify?.command, projectRules, agentMemory);
+  const projectConfig = await readProjectConfig(root);
+  const workspaceProfile = await buildWorkspaceProfile(root, verify?.command, projectRules, agentMemory, projectConfig);
   const system = await withAiRules(buildSystemPrompt(root, userName || 'a user', autoApply), 'agent');
 
   // History starts with system + (already user-provided messages). When a
@@ -2717,9 +2726,29 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       continue;
     }
 
-    // Approval gate: ask user for EACH mutating tool call
+    // Approval gate: depends on toolPermission mode
+    // 'auto' / 'suggest' → ask for ALL mutating tools
+    // 'auto-edit'         → ask only for shell commands, auto-apply file edits
+    // 'read-only'         → block all mutations
+    const isShellTool = (t: string) => t === 'run_command';
     for (const tc of callsToRun) {
-      if (MUTATING_TOOLS.has(tc.tool) && opts.toolPermission === 'ask-each') {
+      if (!MUTATING_TOOLS.has(tc.tool)) continue;
+
+      // read-only mode blocks everything
+      if (opts.toolPermission === 'read-only') {
+        history.push({ role: 'assistant', content: raw });
+        history.push({ role: 'user', content: `[TOOL BLOCKED — ${tc.tool}] The workspace is in read-only mode. You cannot write/delete/edit files. Describe the changes in your response instead.` });
+        await sessionLog.logToolResult(tc.tool, 'Blocked (read-only mode)', false);
+        continue;
+      }
+
+      // auto-edit mode: auto-apply file edits, ask for shell commands
+      // ask-each / suggest mode: ask for everything
+      const needsApproval =
+        opts.toolPermission === 'ask-each' || opts.toolPermission === 'suggest' ||
+        (opts.toolPermission === 'auto-edit' && isShellTool(tc.tool));
+
+      if (needsApproval) {
         const approvalKey = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         callbacks.onApprovalRequest?.(approvalKey, tc.tool, tc.args);
         callbacks.onStage('agent:waiting');
