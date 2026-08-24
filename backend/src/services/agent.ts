@@ -1402,20 +1402,29 @@ const BLOCK_CODE_RE = /```(?:\w*)\n([\s\S]*?)```/g;
  *   Here's player.py:
  *   Save as constants.py
  *   // platformer.py
+ *   below as `platformer.py`
  */
 function guessFilenameFromContext(beforeText: string): string | null {
   if (!beforeText) return null;
-  // Look for a quoted filename at end of preceding text
-  const quoteMatch = beforeText.match(/`([\w./-]+\.[a-zA-Z]\w*)`\s*$/);
-  if (quoteMatch) return quoteMatch[1];
-  // Look for filename after common patterns
+  // Look for a quoted filename anywhere in the preceding text (not just end)
+  const quoteMatches = beforeText.match(/`([\w./-]+\.[a-zA-Z]\w*)`/g);
+  if (quoteMatches) {
+    // Return the last quoted filename (most likely the one for the code block)
+    const last = quoteMatches[quoteMatches.length - 1];
+    const m = last.match(/`([\w./-]+\.[a-zA-Z]\w*)`/);
+    if (m) return m[1];
+  }
+  // Look for filename after common patterns (check last match)
   const patterns = [
-    /(?:save|write|create|file|as|name[d]?|called|output)[:\s]+([\w./-]+\.[a-zA-Z]\w*)\s*$/i,
-    /([\w./-]+\.[a-zA-Z]\w*)\s*:/,
+    /(?:save|write|create|file|as|name[d]?|called|output|below as)[:\s]+([\w./-]+\.[a-zA-Z]\w*)/gi,
+    /([\w./-]+\.[a-zA-Z]\w*)\s*(?::|$)/gm,
   ];
   for (const p of patterns) {
-    const m = beforeText.match(p);
-    if (m) return m[1];
+    const matches = [...beforeText.matchAll(p)];
+    if (matches.length > 0) {
+      const last = matches[matches.length - 1];
+      if (last[1]) return last[1];
+    }
   }
   return null;
 }
@@ -1910,7 +1919,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     // ("tool" / "args") but did not parse into a valid call. Give the model up
     // to 2 corrective retries before falling back to the final-answer path.
     const looksLikeToolAttempt = !toolCall && /"tool"\s*:\s*"[a-z_]+"|\{\s*"args"\s*:/i.test(raw);
-    if (looksLikeToolAttempt && malformedToolCalls < 2) {
+    if (looksLikeToolAttempt && malformedToolCalls < 4) {
       malformedToolCalls++;
       const retryMsg =
         'Your previous response looked like a tool call but was NOT valid JSON, so nothing was executed. ' +
@@ -1933,7 +1942,21 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       // the model may have used a format we don't recognize. Log it and
       // give the user feedback so they know nothing was auto-applied.
       if (!appliedNote && /```/.test(raw)) {
-        logger.info('[agent] Response contains code blocks but none matched the # path format — no files auto-applied');
+        const blockCount = (raw.match(/```/g) || []).length / 2;
+        logger.info(`[agent] Response contains ${blockCount} code block(s) but none matched auto-apply format — no files written`);
+        // Tell the model its code wasn't applied so it can retry with proper format
+        if (autoApply && malformedToolCalls < 4) {
+          malformedToolCalls++;
+          const retryMsg =
+            'Your response contained code blocks but they were NOT auto-applied because no filename was detected. ' +
+            'To auto-apply, either: (1) start the code block with a comment like # filename.py, or ' +
+            '(2) use the write_file tool: {"tool": "write_file", "args": {"path": "filename.py", "content": "..."}}. ' +
+            'Retry with the correct format.';
+          history.push({ role: 'assistant', content: raw });
+          history.push({ role: 'user', content: retryMsg });
+          callbacks.onStage('agent:working');
+          continue;
+        }
       }
     }
 
@@ -1944,7 +1967,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       /\b(?:done|i'?ve|finished|completed|created|wrote|refactored|moved|extracted|split)\b/i.test(raw) &&
       !/```/i.test(raw) &&
       raw.length < 500;
-    if (claimsDone && malformedToolCalls < 2) {
+    if (claimsDone && malformedToolCalls < 4) {
       malformedToolCalls++;
       const retryMsg =
         'You said you were done but you did NOT actually create or modify any files. ' +
@@ -1964,7 +1987,8 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     const thinkingText = thinkingChunks.join('');
     const thinkingHasCode = thinkingText.length > 200 && /(import |class |def |function |const |let |var |#include)/.test(thinkingText);
     const responseHasNoCode = !toolCall && !appliedNote && !/```/.test(raw);
-    if (thinkingHasCode && responseHasNoCode && autoApply && malformedToolCalls < 2) {
+    const responseIsEmptyOrClaimsNothing = raw.length < 300 && /\b(nothing|didn't|did not|no output|no code|no file|no result|pipeline didn't)\b/i.test(raw);
+    if (thinkingHasCode && (responseHasNoCode || responseIsEmptyOrClaimsNothing) && autoApply && malformedToolCalls < 4) {
       malformedToolCalls++;
       const retryMsg =
         'You wrote code in your thinking/reasoning but you must use the tools to actually create files. ' +
