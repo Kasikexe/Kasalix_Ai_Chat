@@ -7,7 +7,8 @@ import { logger } from './logger';
 import { applySearchReplace, diffLines, changedLineCount } from '../utils/edits';
 import { withAiRules } from './ai-rules';
 import { getWebContext } from './search';
-import { getModelAssignment } from './model-assignments';
+import { getResolvedModel } from './model-assignments';
+import { getCloudSettings } from '../routes/settings';
 import { readProjectRules, findAgentMemoryFile, readAgentMemory, appendAgentMemory } from './project-rules';
 import { PROTECTED_DIRS, isProtectedPath, protectedDirsLabel } from '../utils/protected-dirs';
 import { SessionLog, readSessionLog, listSessionLogs } from './session-log';
@@ -760,7 +761,9 @@ async function describeImage(target: string): Promise<string> {
   const MIME_BY_EXT: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp' };
   const ext = (target.match(/\.(png|jpe?g|gif|webp|bmp)$/i) || [])[1]?.toLowerCase() || 'png';
   const mime = MIME_BY_EXT[ext] || 'image/png';
-  const visionModel = await getModelAssignment('vision');
+  const { model: visionModel, source: visionSource } = await getResolvedModel('vision');
+  const cloudSettings = visionSource === 'cloud' ? await getCloudSettings() : null;
+  console.log(`[agent] Vision model: ${visionModel} (source: ${visionSource})`);
   let description = '';
   await streamChat(
     visionModel,
@@ -775,7 +778,7 @@ async function describeImage(target: string): Promise<string> {
       },
     ],
     (chunk) => { description += chunk; },
-    { think: false }
+    { think: false, baseUrl: cloudSettings?.cloudEndpoint || undefined, apiKey: cloudSettings?.cloudApiKey || undefined }
   );
   return description.trim() || '(vision model returned no description)';
 }

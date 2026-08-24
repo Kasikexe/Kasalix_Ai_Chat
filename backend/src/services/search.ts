@@ -1,5 +1,6 @@
 import { streamChat } from './ollama';
-import { getModelAssignment } from './model-assignments';
+import { getResolvedModel } from './model-assignments';
+import { getCloudSettings } from '../routes/settings';
 import type { Message } from '../types';
 
 interface SearchResult {
@@ -301,7 +302,7 @@ export async function getWebContext(query: string): Promise<string | null> {
   const fullContext = contextParts.join('\n\n');
 
   // Step 4: Use the search assignment model to summarize everything
-  const searchModel = await getModelAssignment('search');
+  const { model: searchModel, source: searchSource } = await getResolvedModel('search');
   const summarizePrompt = `You are a precise web search summarizer. Your job is to extract and report ONLY facts that are EXPLICITLY stated in the text below.
 
 User's question: "${trimmed}"
@@ -322,11 +323,17 @@ CRITICAL RULES:
 
   let summary = '';
   try {
+    const cloudSettings = searchSource === 'cloud' ? await getCloudSettings() : null;
+    console.log(`[search] Model: ${searchModel} (source: ${searchSource})`);
     await streamChat(
       searchModel,
       messages,
       (chunk) => { summary += chunk; },
-      { think: false }
+      {
+        think: false,
+        baseUrl: cloudSettings?.cloudEndpoint || undefined,
+        apiKey: cloudSettings?.cloudApiKey || undefined,
+      }
     );
   } catch (e) {
     console.error('[search] Summarization failed, using raw content:', e);
