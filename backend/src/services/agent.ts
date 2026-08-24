@@ -409,6 +409,30 @@ export const AGENT_TOOL_DEFS: AgentToolDef[] = [
     args: '{"task": "Run all tests and report which ones fail", "model": "optional - use a different model"}',
     mutating: true,
   },
+  {
+    name: 'rename_file',
+    description: 'Rename or move a file inside the workspace. The original file is deleted and the new path is created with the same content. Both paths must be inside the workspace. Can be reverted by the user.',
+    args: '{"from": "src/old.ts", "to": "src/new.ts"}',
+    mutating: true,
+  },
+  {
+    name: 'read_url',
+    description: 'Fetch a web page and return its readable text content. Use when you need to read specific documentation, API references, or tutorials. Returns extracted text (scripts/styles stripped). Max 20000 chars.',
+    args: '{"url": "https://docs.python.org/3/library/tkinter.html"}',
+    mutating: false,
+  },
+  {
+    name: 'find_references',
+    description: 'Find all usages of a name (function, class, variable, import) across the workspace. Returns file paths and line numbers. Use before renaming or refactoring to understand impact.',
+    args: '{"query": "functionName"}',
+    mutating: false,
+  },
+  {
+    name: 'refactor_rename',
+    description: 'Rename a symbol (function, class, variable, import) across ALL files in the workspace. Performs find-and-replace with word-boundary matching. Shows a summary of all changes. Revertable.',
+    args: '{"oldName": "oldFunction", "newName": "newFunction"}',
+    mutating: true,
+  },
 ];
 
 const TOOL_JSON_EXAMPLES = `Available tools — to use one, respond with ONLY a single JSON object, no markdown, no other text:
@@ -427,7 +451,11 @@ const TOOL_JSON_EXAMPLES = `Available tools — to use one, respond with ONLY a 
 {"tool": "update_memory", "args": {"rule": "The test command is: python -m unittest"}}
 {"tool": "ask_user", "args": {"question": "TypeScript or JavaScript?"}}
 {"tool": "delegate_to_subagent", "args": {"task": "Run the test suite and report failures"}}
-{"tool": "delegate_to_subagent", "args": {"task": "Search for deprecated APIs in the codebase", "model": "qwen3:8b"}}`;
+{"tool": "delegate_to_subagent", "args": {"task": "Search for deprecated APIs in the codebase", "model": "qwen3:8b"}}
+{"tool": "rename_file", "args": {"from": "src/old.ts", "to": "src/new.ts"}}
+{"tool": "read_url", "args": {"url": "https://docs.python.org/3/library/tkinter.html"}}
+{"tool": "find_references", "args": {"query": "functionName"}}
+{"tool": "refactor_rename", "args": {"oldName": "oldFunction", "newName": "newFunction"}}`;
 
 // ─── Tool execution ─────────────────────────────────────────────────────
 
@@ -1367,6 +1395,146 @@ export async function executeTool(root: string, call: ToolCall, autoApply: boole
         return { ok: true, output: `[SUB-AGENT RESULT]\n${subResult}` };
       } catch (e) {
         return { ok: false, output: `Sub-agent failed: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+
+    case 'rename_file': {
+      if (!autoApply) return { ok: false, output: 'rename_file is disabled — auto-apply mode is OFF.' };
+      const from = typeof args.from === 'string' ? args.from : '';
+      const to = typeof args.to === 'string' ? args.to : '';
+      if (!from || !to) return { ok: false, output: 'rename_file requires "from" and "to" string arguments.' };
+      const fromTarget = await resolveTargetSmart(root, from);
+      if (fromTarget.error) return { ok: false, output: fromTarget.error };
+      const toFull = path.resolve(root, to);
+      if (!(await isPathInside(root, toFull))) return { ok: false, output: `Access denied: ${to} is outside the workspace.` };
+      if (isProtectedPath(root, toFull)) return { ok: false, output: `Access denied: ${to} is a protected directory.` };
+      try {
+        // Read original content for revert
+        const originalContent = await fs.readFile(fromTarget.target!, 'utf-8').catch(() => undefined);
+        // Ensure destination directory exists
+        await fs.mkdir(path.dirname(toFull), { recursive: true });
+        // Move the file
+        await fs.rename(fromTarget.target!, toFull);
+        // Return both operations: deleted old + created new
+        return {
+          ok: true,
+          output: `Renamed ${from} → ${to}`,
+          fileWrite: { path: to, changeType: 'created', originalContent },
+        };
+      } catch (e) {
+        return { ok: false, output: `Failed to rename ${from} → ${to}: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+
+    case 'read_url': {
+      const url = typeof args.url === 'string' ? args.url : '';
+      if (!url) return { ok: false, output: 'read_url requires a "url" string argument.' };
+      if (!/^https?:\/\//i.test(url)) return { ok: false, output: 'URL must start with http:// or https://' };
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15_000);
+        const res = await fetch(url, {
+          signal: controller.signal,
+          headers: { 'User-Agent': 'Koding/1.0 (agent read_url)' },
+        });
+        clearTimeout(timer);
+        if (!res.ok) return { ok: false, output: `HTTP ${res.status}: ${res.statusText}` };
+        const html = await res.text();
+        // Strip scripts, styles, and HTML tags to get readable text
+        const text = html
+          .replace(/<script[\s\S]*?<\/script>/gi, '')
+          .replace(/<style[\s\S]*?<\/style>/gi, '')
+          .replace(/<nav[\s\S]*?<\/nav>/gi, '')
+          .replace(/<header[\s\S]*?<\/header>/gi, '')
+          .replace(/<footer[\s\S]*?<\/footer>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const capped = text.length > MAX_OUTPUT_CHARS ? text.slice(0, MAX_OUTPUT_CHARS) + '\n...[truncated]' : text;
+        return { ok: true, output: `[URL: ${url}]\n${capped || '(page returned empty content)'}` };
+      } catch (e) {
+        return { ok: false, output: `Failed to fetch ${url}: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+
+    case 'find_references': {
+      const query = typeof args.query === 'string' ? args.query : '';
+      if (!query.trim()) return { ok: false, output: 'find_references requires a "query" string argument.' };
+      try {
+        const results: string[] = [];
+        const ignoredDirs = new Set(['node_modules', '.git', 'dist', 'build', '.cache', '__pycache__', 'vendor', '.venv', 'venv']);
+        const walk = async (dir: string, depth: number) => {
+          if (depth > 6 || results.length > MAX_SEARCH_MATCHES) return;
+          if (isProtectedPath(root, dir)) return;
+          let entries: import('fs').Dirent[] = [];
+          try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+          for (const e of entries) {
+            if (e.name.startsWith('.') || ignoredDirs.has(e.name)) continue;
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) {
+              await walk(full, depth + 1);
+            } else {
+              try {
+                const content = await fs.readFile(full, 'utf-8');
+                const lines = content.split('\n');
+                for (let i = 0; i < lines.length; i++) {
+                  if (lines[i].includes(query)) {
+                    const rel = path.relative(root, full).split(path.sep).join('/');
+                    results.push(`${rel}:${i + 1}: ${lines[i].trim().slice(0, 120)}`);
+                    if (results.length >= MAX_SEARCH_MATCHES) return;
+                  }
+                }
+              } catch { /* binary or unreadable */ }
+            }
+          }
+        };
+        await walk(root, 0);
+        if (results.length === 0) return { ok: true, output: `No references to "${query}" found in the workspace.` };
+        return { ok: true, output: `Found ${results.length} reference(s) to "${query}":\n${results.join('\n')}` };
+      } catch (e) {
+        return { ok: false, output: `find_references failed: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+
+    case 'refactor_rename': {
+      if (!autoApply) return { ok: false, output: 'refactor_rename is disabled — auto-apply mode is OFF.' };
+      const oldName = typeof args.oldName === 'string' ? args.oldName : '';
+      const newName = typeof args.newName === 'string' ? args.newName : '';
+      if (!oldName || !newName) return { ok: false, output: 'refactor_rename requires "oldName" and "newName" string arguments.' };
+      if (oldName === newName) return { ok: false, output: 'oldName and newName are the same — nothing to do.' };
+      try {
+        const changed: string[] = [];
+        const ignoredDirs = new Set(['node_modules', '.git', 'dist', 'build', '.cache', '__pycache__', 'vendor', '.venv', 'venv']);
+        // Word-boundary regex to avoid partial matches
+        const pattern = new RegExp(`\\b${oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g');
+        const walk = async (dir: string, depth: number) => {
+          if (depth > 6) return;
+          if (isProtectedPath(root, dir)) return;
+          let entries: import('fs').Dirent[] = [];
+          try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+          for (const e of entries) {
+            if (e.name.startsWith('.') || ignoredDirs.has(e.name)) continue;
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) {
+              await walk(full, depth + 1);
+            } else {
+              try {
+                const content = await fs.readFile(full, 'utf-8');
+                if (!pattern.test(content)) continue;
+                const newContent = content.replace(pattern, newName);
+                await fs.writeFile(full, newContent, 'utf-8');
+                const rel = path.relative(root, full).split(path.sep).join('/');
+                const count = (content.match(pattern) || []).length;
+                changed.push(`${rel} (${count} occurrence${count !== 1 ? 's' : ''})`);
+              } catch { /* binary or unreadable */ }
+            }
+          }
+        };
+        await walk(root, 0);
+        if (changed.length === 0) return { ok: true, output: `No occurrences of "${oldName}" found — nothing renamed.` };
+        return { ok: true, output: `Renamed "${oldName}" → "${newName}" in ${changed.length} file(s):\n${changed.join('\n')}` };
+      } catch (e) {
+        return { ok: false, output: `refactor_rename failed: ${e instanceof Error ? e.message : String(e)}` };
       }
     }
 
