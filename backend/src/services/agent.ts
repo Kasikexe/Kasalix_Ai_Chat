@@ -2053,6 +2053,33 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     return out;
   }
 
+  // ── Auto-create rules & memory files if missing ────────────────────
+  // .agent-rules.md  — user-authored instructions (read-only for AI)
+  // .agent-memory.md — AI's own notes across sessions
+  const rulesPath = path.join(root, '.agent-rules.md');
+  const memoryPath = path.join(root, '.agent-memory.md');
+  try { await fs.access(rulesPath); } catch {
+    // File doesn't exist — create with sensible defaults
+    const defaults = `# Agent Rules\n\n` +
+      `These rules are followed by the AI coding agent (Koding) in this project.\n` +
+      `You can edit this file freely — the AI will never modify it.\n\n` +
+      `## Identity\n` +
+      `- You are Koding, an autonomous coding agent\n` +
+      `- Always use write_file / edit_file tools to create or modify code\n` +
+      `- Never output raw markdown code blocks — use tools instead\n\n` +
+      `## Behavior\n` +
+      `- Prefer editing existing files over creating new ones\n` +
+      `- Run typecheck or tests after non-trivial changes\n` +
+      `- Ask before deleting files or running destructive commands\n` +
+      `- Keep changes minimal and focused\n`;
+    await fs.writeFile(rulesPath, defaults, 'utf-8');
+    logger.info(`[agent] Auto-created .agent-rules.md in ${root}`);
+  }
+  try { await fs.access(memoryPath); } catch {
+    await fs.writeFile(memoryPath, `# Agent Memory\n\n_Durable notes from previous sessions. The AI appends lessons here (build commands, framework conventions, gotchas).\n`, 'utf-8');
+    logger.info(`[agent] Auto-created .agent-memory.md in ${root}`);
+  }
+
   // ── Session log ──────────────────────────────────────────────────────
   const sessionLog = new SessionLog();
   await sessionLog.init();
