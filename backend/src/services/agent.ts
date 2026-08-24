@@ -2260,6 +2260,8 @@ export interface AgentLoopOptions {
   cloudEndpoint?: string;
   /** Cloud API key (for cloud model routing). */
   cloudApiKey?: string;
+  /** Plan mode: 'off' = skip planning entirely (fastest), 'on' = always plan, 'auto' = plan only for complex tasks (default: 'off') */
+  planMode?: 'off' | 'on' | 'auto';
 }
 
 function availableTools(autoApply: boolean): AgentToolDef[] {
@@ -2481,7 +2483,11 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
   // This gives the model a structured approach and reduces drift on multi-step
   // tasks. The plan is injected into the first iteration's context.
   let planText = '';
-  if (!opts.resumeState?.history?.length) {
+  const planMode = opts.planMode ?? 'off';
+  // Skip planning if: resume, planMode is 'off', or planMode is 'auto' and message is simple (< 200 chars)
+  const shouldPlan = !opts.resumeState?.history?.length && planMode !== 'off' &&
+    (planMode === 'on' || (planMode === 'auto' && lastUserMsg.length > 200));
+  if (shouldPlan) {
     try {
       callbacks.onStage('agent:plan');
       await sessionLog.logStage('agent:plan');
@@ -2505,6 +2511,8 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       // Planning is best-effort — if it fails, continue without a plan
       logger.info(`[agent] Planning phase failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
     }
+  } else {
+    logger.info(`[agent] Plan mode: ${planMode} — skipping planning phase`);
   }
 
   const seenCalls = new Map<string, number>();

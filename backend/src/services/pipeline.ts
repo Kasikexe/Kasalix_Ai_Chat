@@ -93,6 +93,8 @@ interface PipelineOptions {
   onPlan?: (plan: string) => void;
   /** Koding mode: resume a previously stopped run */
   resumeState?: { history: { role: string; content: string }[] };
+  /** Koding mode: plan mode — 'off' = skip planning (fastest), 'on' = always plan, 'auto' = plan for complex tasks only */
+  planMode?: 'off' | 'on' | 'auto';
   /** Routing key for ask_user answers (usually the conversation id) */
   conversationId?: string;
   /** Fired once with the model that generated the final response */
@@ -706,6 +708,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
       toolPermission: opts.toolPermission,
       cloudEndpoint: _cloudEndpoint || undefined,
       cloudApiKey: _cloudApiKey || undefined,
+      planMode: opts.planMode,
 
       callbacks: {
         onStage,

@@ -48,6 +48,7 @@ chat.post('/', async (c) => {
     const userName: string | undefined = body.userName;
     const planningEnabled: boolean = body.planningEnabled === true;
     const autoApply: boolean = body.autoApply === true;
+    const planMode: 'off' | 'on' | 'auto' = body.planMode === 'on' ? 'on' : body.planMode === 'auto' ? 'auto' : 'off';
 
     if (!model || !Array.isArray(messages) || messages.length === 0) {
       return c.json({ error: 'model and messages are required' }, 400);
@@ -176,6 +177,7 @@ chat.post('/', async (c) => {
             onQuestion: (key, question) => send({ type: 'agent_question', key, question }),
             onApprovalRequest: (key, tool, args) => send({ type: 'agent_approval_request', key, tool, args }),
             onPlan: (plan) => send({ type: 'plan', plan }),
+            planMode,
             onResumeState: (state) => {
               if (activeConvId) {
                 updateConversation(activeConvId, ownerId, { agentState: state }).catch((e) =>
