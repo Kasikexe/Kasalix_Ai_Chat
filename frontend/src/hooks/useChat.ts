@@ -206,7 +206,7 @@ export function useChat(
 
     // Build messages to send — prepend system prompt if set
     const messagesToSend = (() => {
-      const msgs = e.messages.slice(0, -1);
+      const msgs = e.messages.slice(0, -1).filter((m) => m.role !== 'activity');
       const sp = loadSystemPrompt();
       if (!sp) return msgs;
       // Check if a system message with this exact content is already present
