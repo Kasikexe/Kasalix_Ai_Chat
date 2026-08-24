@@ -433,6 +433,42 @@ export const AGENT_TOOL_DEFS: AgentToolDef[] = [
     args: '{"oldName": "oldFunction", "newName": "newFunction"}',
     mutating: true,
   },
+  {
+    name: 'create_directory',
+    description: 'Create a directory (and any missing parent directories) inside the workspace. Use before write_file when the target folder does not exist yet.',
+    args: '{"path": "src/components"}',
+    mutating: true,
+  },
+  {
+    name: 'file_exists',
+    description: 'Check if a file or directory exists inside the workspace. Returns true/false and the type (file or directory). Use before editing to confirm a file is there.',
+    args: '{"path": "src/app.ts"}',
+    mutating: false,
+  },
+  {
+    name: 'read_url_image',
+    description: 'Download an image from a URL and save it to the workspace. Returns the local path. Use for fetching logos, mockups, screenshots, etc.',
+    args: '{"url": "https://example.com/logo.png", "saveAs": "assets/logo.png"}',
+    mutating: true,
+  },
+  {
+    name: 'diff_files',
+    description: 'Compare two files and show the differences. Can compare two workspace files, or compare a file against a string. Returns a unified diff.',
+    args: '{"fileA": "src/old.ts", "fileB": "src/new.ts"} or {"fileA": "src/app.ts", "contentB": "new content..."}',
+    mutating: false,
+  },
+  {
+    name: 'replace_in_file',
+    description: 'Find and replace ALL occurrences of a string in a file. Simpler than edit_file when you want to replace every instance. Supports regex.',
+    args: '{"path": "src/app.ts", "find": "oldFunction", "replace": "newFunction"}',
+    mutating: true,
+  },
+  {
+    name: 'count_lines',
+    description: 'Count lines, words, and characters in a file or across multiple files. Use to understand codebase size before making changes.',
+    args: '{"path": "src/"} or {"path": "src/app.ts"}',
+    mutating: false,
+  },
 ];
 
 const TOOL_JSON_EXAMPLES = `Available tools — to use one, respond with ONLY a single JSON object, no markdown, no other text:
@@ -455,7 +491,13 @@ const TOOL_JSON_EXAMPLES = `Available tools — to use one, respond with ONLY a 
 {"tool": "rename_file", "args": {"from": "src/old.ts", "to": "src/new.ts"}}
 {"tool": "read_url", "args": {"url": "https://docs.python.org/3/library/tkinter.html"}}
 {"tool": "find_references", "args": {"query": "functionName"}}
-{"tool": "refactor_rename", "args": {"oldName": "oldFunction", "newName": "newFunction"}}`;
+{"tool": "refactor_rename", "args": {"oldName": "oldFunction", "newName": "newFunction"}}
+{"tool": "create_directory", "args": {"path": "src/components"}}
+{"tool": "file_exists", "args": {"path": "src/app.ts"}}
+{"tool": "read_url_image", "args": {"url": "https://example.com/logo.png", "saveAs": "assets/logo.png"}}
+{"tool": "diff_files", "args": {"fileA": "src/old.ts", "fileB": "src/new.ts"}}
+{"tool": "replace_in_file", "args": {"path": "src/app.ts", "find": "oldFunction", "replace": "newFunction"}}
+{"tool": "count_lines", "args": {"path": "src/app.ts"}}`;
 
 // ─── Tool execution ─────────────────────────────────────────────────────
 
@@ -1535,6 +1577,163 @@ export async function executeTool(root: string, call: ToolCall, autoApply: boole
         return { ok: true, output: `Renamed "${oldName}" → "${newName}" in ${changed.length} file(s):\n${changed.join('\n')}` };
       } catch (e) {
         return { ok: false, output: `refactor_rename failed: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+
+    case 'create_directory': {
+      if (!autoApply) return { ok: false, output: 'create_directory is disabled — auto-apply mode is OFF.' };
+      const p = typeof args.path === 'string' ? args.path : '';
+      if (!p) return { ok: false, output: 'create_directory requires a "path" string argument.' };
+      const target = path.resolve(root, p);
+      if (!(await isPathInside(root, target))) return { ok: false, output: `Access denied: ${p} is outside the workspace.` };
+      if (isProtectedPath(root, target)) return { ok: false, output: `Access denied: ${p} is a protected directory.` };
+      try {
+        await fs.mkdir(target, { recursive: true });
+        return { ok: true, output: `Created directory ${p}` };
+      } catch (e) {
+        return { ok: false, output: `Failed to create ${p}: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+
+    case 'file_exists': {
+      const p = typeof args.path === 'string' ? args.path : '';
+      if (!p) return { ok: false, output: 'file_exists requires a "path" string argument.' };
+      const target = path.resolve(root, p);
+      if (!(await isPathInside(root, target))) return { ok: false, output: `Access denied: ${p} is outside the workspace.` };
+      try {
+        const stat = await fs.stat(target);
+        const type = stat.isDirectory() ? 'directory' : 'file';
+        const size = stat.isDirectory() ? '' : ` (${(stat.size / 1024).toFixed(1)}KB)`;
+        return { ok: true, output: `${p} exists — ${type}${size}` };
+      } catch {
+        return { ok: true, output: `${p} does not exist` };
+      }
+    }
+
+    case 'read_url_image': {
+      if (!autoApply) return { ok: false, output: 'read_url_image is disabled — auto-apply mode is OFF.' };
+      const url = typeof args.url === 'string' ? args.url : '';
+      const saveAs = typeof args.saveAs === 'string' ? args.saveAs : '';
+      if (!url) return { ok: false, output: 'read_url_image requires a "url" string argument.' };
+      if (!saveAs) return { ok: false, output: 'read_url_image requires a "saveAs" string argument (local path to save to).' };
+      if (!/^https?:\/\//i.test(url)) return { ok: false, output: 'URL must start with http:// or https://' };
+      const saveTarget = path.resolve(root, saveAs);
+      if (!(await isPathInside(root, saveTarget))) return { ok: false, output: `Access denied: ${saveAs} is outside the workspace.` };
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15_000);
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timer);
+        if (!res.ok) return { ok: false, output: `HTTP ${res.status}: ${res.statusText}` };
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.includes('image')) return { ok: false, output: `URL is not an image (content-type: ${contentType})` };
+        const buffer = Buffer.from(await res.arrayBuffer());
+        await fs.mkdir(path.dirname(saveTarget), { recursive: true });
+        await fs.writeFile(saveTarget, buffer);
+        return { ok: true, output: `Downloaded ${url} → ${saveAs} (${(buffer.length / 1024).toFixed(1)}KB)`, fileWrite: { path: saveAs, changeType: 'created' } };
+      } catch (e) {
+        return { ok: false, output: `Failed to download ${url}: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+
+    case 'diff_files': {
+      const fileA = typeof args.fileA === 'string' ? args.fileA : '';
+      const fileB = typeof args.fileB === 'string' ? args.fileB : '';
+      const contentB = typeof args.contentB === 'string' ? args.contentB : '';
+      if (!fileA) return { ok: false, output: 'diff_files requires a "fileA" argument.' };
+      const targetA = await resolveInWorkspace(root, fileA);
+      if (!targetA) return { ok: false, output: `Access denied: ${fileA} is outside the workspace.` };
+      try {
+        const contentA = await fs.readFile(targetA, 'utf-8');
+        let bContent: string;
+        if (contentB) {
+          bContent = contentB;
+        } else if (fileB) {
+          const targetB = await resolveInWorkspace(root, fileB);
+          if (!targetB) return { ok: false, output: `Access denied: ${fileB} is outside the workspace.` };
+          bContent = await fs.readFile(targetB, 'utf-8');
+        } else {
+          return { ok: false, output: 'diff_files requires either "fileB" or "contentB" argument.' };
+        }
+        const diff = summarizeDiff(fileA, contentA, bContent);
+        return { ok: true, output: diff };
+      } catch (e) {
+        return { ok: false, output: `diff_files failed: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+
+    case 'replace_in_file': {
+      if (!autoApply) return { ok: false, output: 'replace_in_file is disabled — auto-apply mode is OFF.' };
+      const p = typeof args.path === 'string' ? args.path : '';
+      const find = typeof args.find === 'string' ? args.find : '';
+      const replace = typeof args.replace === 'string' ? args.replace : '';
+      if (!p || !find) return { ok: false, output: 'replace_in_file requires "path" and "find" arguments.' };
+      const target = await resolveInWorkspace(root, p);
+      if (!target) return { ok: false, output: `Access denied: ${p} is outside the workspace.` };
+      if (isUserRulesPath(root, target)) return { ok: false, output: `Access denied: ${p} is the USER RULES file — read-only.` };
+      try {
+        const originalContent = await fs.readFile(target, 'utf-8');
+        const useRegex = typeof args.regex === 'boolean' ? args.regex : false;
+        let newContent: string;
+        let count: number;
+        if (useRegex) {
+          const pattern = new RegExp(find, 'g');
+          const matches = originalContent.match(pattern);
+          count = matches ? matches.length : 0;
+          newContent = originalContent.replace(pattern, replace);
+        } else {
+          count = originalContent.split(find).length - 1;
+          newContent = originalContent.split(find).join(replace);
+        }
+        if (count === 0) return { ok: true, output: `No occurrences of "${find}" found in ${p} — nothing replaced.` };
+        await fs.writeFile(target, newContent, 'utf-8');
+        return { ok: true, output: `Replaced ${count} occurrence(s) of "${find}" → "${replace}" in ${p}`, fileWrite: { path: p, changeType: 'edited', originalContent } };
+      } catch (e) {
+        return { ok: false, output: `replace_in_file failed: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+
+    case 'count_lines': {
+      const p = typeof args.path === 'string' ? args.path : '';
+      if (!p) return { ok: false, output: 'count_lines requires a "path" argument.' };
+      const target = path.resolve(root, p);
+      if (!(await isPathInside(root, target))) return { ok: false, output: `Access denied: ${p} is outside the workspace.` };
+      try {
+        const stat = await fs.stat(target);
+        if (stat.isFile()) {
+          const content = await fs.readFile(target, 'utf-8');
+          const lines = content.split('\n').length;
+          const words = content.split(/\s+/).filter(Boolean).length;
+          const chars = content.length;
+          return { ok: true, output: `${p}: ${lines} lines, ${words} words, ${chars} chars` };
+        }
+        // Directory — count across all source files
+        let totalLines = 0, totalWords = 0, totalFiles = 0;
+        const ignoredDirs = new Set(['node_modules', '.git', 'dist', 'build', '.cache', '__pycache__', 'vendor', '.venv']);
+        const walk = async (dir: string, depth: number) => {
+          if (depth > 4) return;
+          if (isProtectedPath(root, dir)) return;
+          let entries: import('fs').Dirent[] = [];
+          try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+          for (const e of entries) {
+            if (e.name.startsWith('.') || ignoredDirs.has(e.name)) continue;
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) {
+              await walk(full, depth + 1);
+            } else {
+              try {
+                const content = await fs.readFile(full, 'utf-8');
+                totalLines += content.split('\n').length;
+                totalWords += content.split(/\s+/).filter(Boolean).length;
+                totalFiles++;
+              } catch { /* binary */ }
+            }
+          }
+        };
+        await walk(target, 0);
+        return { ok: true, output: `${p}: ${totalFiles} files, ${totalLines} lines, ${totalWords} words` };
+      } catch (e) {
+        return { ok: false, output: `count_lines failed: ${e instanceof Error ? e.message : String(e)}` };
       }
     }
 
