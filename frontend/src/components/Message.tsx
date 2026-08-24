@@ -669,13 +669,15 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  </div>
  )}
 
- {/* Collapsible Thinking section — shown above the answer for reasoning models */}
- {!isUser && message.thinking && (
- <div className="mb-3 rounded-xl border border-gray-800/80 bg-gray-950/40 overflow-hidden">
+ {/* Collapsible Thinking section — auto-opens during streaming so user sees reasoning in real-time */}
+ {!isUser && message.thinking && (() => {
+ const showOpen = isStreaming || thinkingOpen;
+ return (
+ <div className="mb-3 rounded-lg border border-gray-800/80 bg-gray-950/60 overflow-hidden">
  <button
  onClick={() => setThinkingOpen(!thinkingOpen)}
  className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-gray-900/60"
- title={thinkingOpen ? 'Collapse thinking' : 'Expand thinking'}
+ title={showOpen ? 'Collapse thinking' : 'Expand thinking'}
  >
  <Brain size={12} className="text-[#7b9fc6] flex-shrink-0"/>
  <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wider flex-1">
@@ -683,22 +685,24 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  </span>
  {isStreaming && (
  <span className="flex items-center gap-1 text-[10px] text-[#7b9fc6]">
- <span className="w-1 h-1 bg-purple-400 rounded-full animate-pulse"/>
- thinking
+ <span className="w-1 h-1 bg-[#7b9fc6] rounded-full animate-pulse"/>
+ reasoning
  </span>
  )}
  <ChevronDown
  size={12}
- className={`text-gray-500 transition-transform duration-200 flex-shrink-0 ${thinkingOpen ? 'rotate-180' : ''}`}
+ className={`text-gray-500 transition-transform duration-200 flex-shrink-0 ${showOpen ? 'rotate-180' : ''}`}
  />
  </button>
- {thinkingOpen && (
+ {showOpen && (
  <div className="max-h-48 overflow-y-auto px-3 pb-3 text-xs text-gray-500 leading-relaxed whitespace-pre-wrap border-t border-gray-800/60 pt-2 font-mono">
  {message.thinking}
+ {isStreaming && <span className="inline-block w-1.5 h-3 bg-[#7b9fc6] animate-pulse ml-0.5"/>}
  </div>
  )}
  </div>
- )}
+ );
+ })()}
 
  {/* Show image attachment for user messages */}
  {isUser && (message.content.includes('[image:data:image') || message.content.includes('[image]')) && (
