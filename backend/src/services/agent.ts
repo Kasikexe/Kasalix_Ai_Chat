@@ -2147,11 +2147,50 @@ export function extractToolCall(raw: string): ToolCall | null {
         } catch { /* not valid JSON — keep scanning */ }
       }
     }
-  }  return null;
-}
+  }
 
+  // Fallback: parse XML-style tool calls that small models sometimes emit
+  return parseXmlToolCalls(raw)[0] || null;
+}
+/** Parse XML-style tool calls that some models emit instead of JSON. */
+function parseXmlToolCalls(raw: string): ToolCall[] {
+  const results: ToolCall[] = [];
+  // Pattern 1: invoke tag with parameter children
+  const invokeRegex = /<invoke\s+name=["']([^"']+)["']\s*>((?:<parameter\s+name=["']([^"']+)["']\s*>([^<]*)<\/parameter>\s*)*)<\/invoke>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = invokeRegex.exec(raw))) {
+    const toolName = m[1];
+    if (!AGENT_TOOL_DEFS.some((t) => t.name === toolName)) continue;
+    const args: Record<string, unknown> = {};
+    const paramBlock = m[2];
+    const paramRegex = /<parameter\s+name=["']([^"']+)["']\s*>([^<]*)<\/parameter>/gi;
+    let pm: RegExpExecArray | null;
+    while ((pm = paramRegex.exec(paramBlock))) {
+      args[pm[1]] = pm[2];
+    }
+    if (Object.keys(args).length > 0) results.push({ tool: toolName, args });
+  }
+  if (results.length > 0) return results;
+
+  // Pattern 2: tool tag with args attribute
+  const toolTagRegex = /<tool\s+name=["']([^"']+)["']\s*(?:args=["']([^"']*)["'])?\s*\/?>/gi;
+  while ((m = toolTagRegex.exec(raw))) {
+    const toolName = m[1];
+    if (!AGENT_TOOL_DEFS.some((t) => t.name === toolName)) continue;
+    const args: Record<string, unknown> = {};
+    if (m[2]) {
+      for (const pair of m[2].split(/\s+/)) {
+        const eq = pair.indexOf('=');
+        if (eq > 0) args[pair.slice(0, eq)] = pair.slice(eq + 1);
+      }
+    }
+    results.push({ tool: toolName, args });
+  }
+  return results;
+}
 /** Extract ALL tool calls from a model response (for parallel execution).
  * Returns them in order of appearance. */
+
 export function extractToolCalls(raw: string): ToolCall[] {
   const results: ToolCall[] = [];
   const trimmed = raw.trim();
@@ -2200,7 +2239,7 @@ export function extractToolCalls(raw: string): ToolCall[] {
     }
     if (!found) searchStart = start + 1;
   }
-  return results;
+  return results.length > 0 ? results : parseXmlToolCalls(raw);
 }
 
 // ─── The agent loop ─────────────────────────────────────────────────────
