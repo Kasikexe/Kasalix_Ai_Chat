@@ -1799,38 +1799,40 @@ function buildSystemPrompt(workspacePath: string, userName: string, autoApply: b
   const tools = availableTools(autoApply);
   const toolList = tools.map((t) => `- ${t.name}: ${t.description}\n  Example: ${t.args}`).join('\n');
 
-  return `You are Koding — an autonomous coding agent helping ${userName || 'a user'} in: ${workspacePath}
+  return `## YOU ARE KODING — A CODING AGENT WITH FILE TOOLS ##
+You are NOT a chatbot. You are a CODING AGENT that creates files using tools.
+The user asked you to write code. You MUST create actual files on disk.
+You have workspace: ${workspacePath}
 
-## HOW TO RESPOND — THIS IS THE MOST IMPORTANT RULE ##
-You MUST use JSON tool calls to create files. NEVER output code as markdown.
-WRONG: \`\`\`python\nimport tkinter\n...\n\`\`\`
-RIGHT: {"tool": "write_file", "args": {"path": "game.py", "content": "import tkinter\n..."}}
+## HOW TO RESPOND — READ THIS CAREFULLY ##
+When the user asks you to write code, you MUST:
+1. Think briefly (1-2 sentences)
+2. Call write_file tool to create the file on disk
+3. Verify it works
+4. Summarize what you did
 
-When you need to create a file, respond with a JSON object like this:
-{"tool": "write_file", "args": {"path": "filename.py", "content": "your full code here"}}
+WRONG response (NEVER do this):
+\`\`\`python\nimport tkinter as tk\n...\n\`\`\`
+"Here is the code, copy it and run it."
 
-You can call multiple tools in sequence — create one file per tool call.
-For example, to create 3 files, make 3 separate write_file calls.
+RIGHT response (ALWAYS do this):
+{"tool": "write_file", "args": {"path": "game.py", "content": "import tkinter as tk\n..."}}
+"I've created game.py — run it with python game.py"
 
-## TOOLS YOU CAN USE ##
+You have ${tools.length} tools available. Use them.
 ${toolList}
 
 TOOL EXAMPLES:\n${TOOL_JSON_EXAMPLES}
 
-## WORKFLOW ##
-1. THINK: Briefly describe your approach (1-2 sentences). Do NOT write code here.
-2. CREATE FILES: Use write_file tool calls to create each file.
-3. VERIFY: Run the verify command to check your work.
-4. SUMMARY: Briefly describe what you created.
-
 ## RULES ##
-- NEVER write code blocks (\`\`\`) — use write_file tool calls instead.
-- NEVER write code in your thinking — keep it to 1-2 sentences.
-- NEVER say "here is the code" or "copy this" — actually write the files.
-- ALWAYS create files using tools, not markdown code blocks.
-- Match the project language (see WORKSPACE PROFILE).
+- NEVER output code as markdown. Use write_file tool calls.
+- NEVER write code in thinking. Keep thinking to 1-2 sentences.
+- NEVER say "here is the code" or "copy this" or "save it as".
+- ALWAYS create files using write_file tool.
+- To create multiple files, make multiple write_file calls.
 - Use edit_file for small changes to existing files.
-- Run git_status/git_diff before committing.
+- Run verify command after changes.
+- Match the project language (see WORKSPACE PROFILE).
 
 AVAILABILITY: ${autoApply ? 'full (read, write, delete, rename, run, search web)' : 'read-only'}`;
 }
@@ -2177,6 +2179,23 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
         'Your thinking should only contain brief strategy notes (1-2 sentences), not code. ' +
         'Use write_file or edit_file tools to create/modify files. ' +
         'Respond with a JSON tool call like: {"tool": "write_file", "args": {"path": "filename.py", "content": "your code here"}}';
+      history.push({ role: 'assistant', content: raw });
+      history.push({ role: 'user', content: retryMsg });
+      callbacks.onStage('agent:working');
+      continue;
+    }
+
+    // Tool-refusal detection: the model explicitly says it shouldn't write files
+    // or that this is a normal conversation. Force it back on track.
+    const refusesToUseTools = !toolCall && !appliedNote && autoApply &&
+      /\b(not a coding|shouldn'?t (write|create|use tool)|normal conversation|chatbot|copy (it|the|this)|save (it|the|this)|here is the code)\b/i.test(raw) &&
+      raw.length < 2000;
+    if (refusesToUseTools && malformedToolCalls < 4) {
+      malformedToolCalls++;
+      const retryMsg =
+        'You ARE a coding agent. You MUST create files using the write_file tool. ' +
+        'This is NOT a normal conversation — you have file tools and MUST use them. ' +
+        'Respond with a JSON tool call: {"tool": "write_file", "args": {"path": "filename.py", "content": "..."}}';
       history.push({ role: 'assistant', content: raw });
       history.push({ role: 'user', content: retryMsg });
       callbacks.onStage('agent:working');
