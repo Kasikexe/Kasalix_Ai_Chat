@@ -93,6 +93,8 @@ interface PipelineOptions {
   resumeState?: { history: { role: string; content: string }[] };
   /** Routing key for ask_user answers (usually the conversation id) */
   conversationId?: string;
+  /** Fired once with the model that generated the final response */
+  onModelInfo?: (model: string, source: 'local' | 'cloud') => void;
 }
 
 interface DetectedIntent {
@@ -662,6 +664,13 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
       model = resolved.model;
     }
   }
+
+  // ─── Report final model to frontend ─────────────────────────
+  // Tell the client which model is generating the response.
+  try {
+    const finalResolved = await getResolvedModel('chat');
+    opts.onModelInfo?.(model, finalResolved.source);
+  } catch {}
 
   // ─── AGENT LOOP (auto-apply mode) ─────────────────────────
   // In auto-apply mode the AI is autonomous: it can read files, run

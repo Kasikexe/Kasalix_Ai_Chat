@@ -595,6 +595,8 @@ streamChat(
     onQuestion?: (q: { key: string; question: string }) => void;
     /** Phase 3: fired when the agent wants to execute a mutating tool and needs approval */
     onApprovalRequest?: (q: { key: string; tool: string; args: Record<string, unknown> }) => void;
+    /** Fired once with the model that generated the response */
+    onModelInfo?: (model: string, source: string) => void;
   },
   signal?: AbortSignal,
   mode?: ConversationMode,
@@ -657,6 +659,7 @@ streamChat(
             case 'agent_question': callbacks.onQuestion?.({ key: parsed.key, question: parsed.question }); break;
             case 'agent_approval_request': callbacks.onApprovalRequest?.({ key: parsed.key, tool: parsed.tool, args: parsed.args || {} }); break;
             case 'thinking': callbacks.onThinking?.(parsed.content); break;
+            case 'model_info': callbacks.onModelInfo?.(parsed.model, parsed.source); break;
             case 'done': callbacks.onDone(); return true;
             case 'error': callbacks.onError(parsed.error); return true;
           }

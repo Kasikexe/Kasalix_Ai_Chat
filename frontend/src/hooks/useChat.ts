@@ -264,6 +264,16 @@ export function useChat(
               }).catch(() => {});
             }
           },
+          onModelInfo: (model, source) => {
+            const msgs = e.messages;
+            const lastIdx = msgs.length - 1;
+            if (lastIdx >= 0 && msgs[lastIdx].role === 'assistant') {
+              e.messages = msgs.map((m, i) =>
+                i === lastIdx ? { ...m, generatedBy: model, modelSource: source as 'local' | 'cloud' } : m
+              );
+              notify(e);
+            }
+          },
           onDone: async () => {
             // IMPORTANT: clear the streaming state FIRST — the auto-title call
             // below makes network requests that can hang (slow Ollama model

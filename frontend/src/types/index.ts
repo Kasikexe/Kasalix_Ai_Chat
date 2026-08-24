@@ -8,6 +8,10 @@ export interface Message {
   durationMs?: number;
   /** Reasoning/thinking text from models like qwen3, deepseek-r1 (collapsible in UI) */
   thinking?: string;
+  /** Which model generated this response */
+  generatedBy?: string;
+  /** Whether the model is local or cloud */
+  modelSource?: 'local' | 'cloud';
 }
 
 export interface Conversation {

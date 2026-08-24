@@ -176,6 +176,9 @@ chat.post('/', async (c) => {
                 );
               }
             },
+            onModelInfo: (modelName, source) => {
+              send({ type: 'model_info', model: modelName, source });
+            },
             conversationId: activeConvId,
             resumeState,
             temperature,
