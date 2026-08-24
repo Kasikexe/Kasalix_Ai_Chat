@@ -1663,7 +1663,10 @@ async function applyCodeBlockFiles(
 ): Promise<string> {
   const blocks = parseCodeBlockFiles(answer).slice(0, 20);
   logger.info(`[agent] parseCodeBlockFiles found ${blocks.length} block(s): ${blocks.map((b) => `${b.type}:${b.path}`).join(', ') || 'none'}`);
-  if (blocks.length === 0) return '';
+  if (blocks.length === 0) {
+    logger.info('[agent] No blocks to apply — code blocks may not have matched the auto-apply format');
+    return '';
+  }
   const applied: string[] = [];
   const failed: string[] = [];
   for (const b of blocks) {
@@ -1677,8 +1680,10 @@ async function applyCodeBlockFiles(
     }
     if (result.ok) {
       applied.push(b.path);
+      logger.info(`[agent] Auto-applied ${b.type}: ${b.path}`);
       if (result.fileWrite) onFileWritten?.(result.fileWrite);
     } else {
+      logger.info(`[agent] Auto-apply FAILED for ${b.path}: ${result.output.split('\n')[0].slice(0, 150)}`);
       failed.push(`${b.path} (${result.output.split('\n')[0].slice(0, 100)})`);
     }
   }
@@ -1796,36 +1801,38 @@ function buildSystemPrompt(workspacePath: string, userName: string, autoApply: b
 
   return `You are Koding — an autonomous coding agent helping ${userName || 'a user'} in: ${workspacePath}
 
-TOOL CALL FORMAT: respond with ONLY a JSON object, no markdown, no prose:\n${TOOL_JSON_EXAMPLES}
+## HOW TO RESPOND — THIS IS THE MOST IMPORTANT RULE ##
+You MUST use JSON tool calls to create files. NEVER output code as markdown.
+WRONG: \`\`\`python\nimport tkinter\n...\n\`\`\`
+RIGHT: {"tool": "write_file", "args": {"path": "game.py", "content": "import tkinter\n..."}}
 
-TOOLS:\n${toolList}
+When you need to create a file, respond with a JSON object like this:
+{"tool": "write_file", "args": {"path": "filename.py", "content": "your full code here"}}
 
-WORKFLOW — think, then act:
-1. THINK BRIEFLY: Before any tool call, state your approach in 1-2 short sentences max. DO NOT write code in your thinking — only describe your strategy.
-2. GATHER: Use list_files, read_file, search_files to understand the workspace. NEVER guess file contents.
-3. ACT: Use write_file or edit_file tools to create/modify files. Your thinking describes the plan; the TOOLS do the actual work.
-4. VERIFY: Run the project's verify command after changes. Fix failures until it passes.
-5. DONE: Respond with a brief friendly summary of what was created/changed.
+You can call multiple tools in sequence — create one file per tool call.
+For example, to create 3 files, make 3 separate write_file calls.
 
-CRITICAL RULES:
-- NEVER write code in your thinking/reasoning. Your thinking should be SHORT strategy notes (1-2 sentences). The TOOLS are how you create files.
-- If you need to create a file: {"tool": "write_file", "args": {"path": "filename.py", "content": "..."}}
-- If you need to rename/move a file: {"tool": "rename_file", "args": {"from": "old.ts", "to": "new.ts"}}
-- If you need to rename something everywhere: {"tool": "refactor_rename", "args": {"oldName": "fn", "newName": "newFn"}}
-- Before renaming/refactoring, use find_references to see all usages first.
-- To read docs/APIs from the web: {"tool": "read_url", "args": {"url": "https://..."}}
-- Do NOT describe code in your response and expect it to be applied. Use the actual tool calls.
-- LANGUAGE CONSISTENCY: match the project's language/framework (see WORKSPACE PROFILE). Never switch languages unless asked.
-- EDIT vs REWRITE: edit_file with small old_string for existing files. write_file rewrites are refused if they change >40% of lines.
-- GROUNDING: The WORKSPACE FILES listing is ground truth. Never claim a file exists without confirming it via list_files/read_file/search_files.
-- SANDBOX: commands stay inside the workspace. Never touch files outside it.
-- GIT: commit locally when done (never push). Check git_status/git_diff first.
-- RETRY: if a tool fails, fix your approach. Max 4 retries per failing call.
-- MEMORY: USER RULES (.agent-rules.md) are authoritative — follow them strictly, never edit them. AGENT MEMORY (.agent-memory.md) is your notes — use update_memory for durable knowledge.
-- PROTECTED: ${protectedDirsLabel()} are server internals — NEVER read, edit, or reference them.
-- BUGS: reproduce the bug FIRST (run the code), then fix, then re-run to confirm.
+## TOOLS YOU CAN USE ##
+${toolList}
 
-AVAILABILITY: ${autoApply ? 'full (read, write, delete, rename, run, search web)' : 'read-only — file writes reviewed by user'}`;
+TOOL EXAMPLES:\n${TOOL_JSON_EXAMPLES}
+
+## WORKFLOW ##
+1. THINK: Briefly describe your approach (1-2 sentences). Do NOT write code here.
+2. CREATE FILES: Use write_file tool calls to create each file.
+3. VERIFY: Run the verify command to check your work.
+4. SUMMARY: Briefly describe what you created.
+
+## RULES ##
+- NEVER write code blocks (\`\`\`) — use write_file tool calls instead.
+- NEVER write code in your thinking — keep it to 1-2 sentences.
+- NEVER say "here is the code" or "copy this" — actually write the files.
+- ALWAYS create files using tools, not markdown code blocks.
+- Match the project language (see WORKSPACE PROFILE).
+- Use edit_file for small changes to existing files.
+- Run git_status/git_diff before committing.
+
+AVAILABILITY: ${autoApply ? 'full (read, write, delete, rename, run, search web)' : 'read-only'}`;
 }
 
 /**
@@ -2160,9 +2167,9 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     // blocks are in the response, the model wrote the implementation in thinking
     // instead of using tools. Redirect it.
     const thinkingText = thinkingChunks.join('');
-    const thinkingHasCode = thinkingText.length > 200 && /(import |class |def |function |const |let |var |#include)/.test(thinkingText);
+    const thinkingHasCode = thinkingText.length > 100 && /(import |class |def |function |const |let |var |#include|self.)/.test(thinkingText);
     const responseHasNoCode = !toolCall && !appliedNote && !/```/.test(raw);
-    const responseIsEmptyOrClaimsNothing = raw.length < 300 && /\b(nothing|didn't|did not|no output|no code|no file|no result|pipeline didn't)\b/i.test(raw);
+    const responseIsEmptyOrClaimsNothing = raw.length < 500 && /\b(nothing|didn't|did not|no output|no code|no file|no result|pipeline didn't|cut off|cut short|stopped)\b/i.test(raw);
     if (thinkingHasCode && (responseHasNoCode || responseIsEmptyOrClaimsNothing) && autoApply && malformedToolCalls < 4) {
       malformedToolCalls++;
       const retryMsg =
