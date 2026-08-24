@@ -317,7 +317,27 @@ export function useChat(
               }
             }
           },
-          onAgentTool: (call) => e.handlers.onAgentTool?.(call),
+          onAgentTool: (call) => {
+            e.handlers.onAgentTool?.(call);
+            // Also inject as a visible activity message in the chat
+            const argPreview = typeof call.args?.path === 'string'
+              ? call.args.path
+              : typeof call.args?.command === 'string'
+              ? call.args.command
+              : typeof call.args?.query === 'string'
+              ? call.args.query
+              : '';
+            e.messages = [...e.messages, {
+              role: 'activity' as const,
+              content: `${call.tool}${argPreview ? ': ' + argPreview : ''}`,
+              activityTool: call.tool,
+              activityArgs: argPreview,
+              activityStatus: 'done' as const,
+              activityMs: 0,
+              timestamp: Date.now(),
+            }];
+            notify(e);
+          },
           onFileWritten: (write) => e.handlers.onFileWritten?.(write),
           onAgentCommand: (cmd) => e.handlers.onAgentCommand?.(cmd),
           onQuestion: (q) => e.handlers.onQuestion?.(q),
@@ -464,6 +484,27 @@ export function useChat(
   }, []);
 
   const e = entryRef.current!;
+  const addActivity = useCallback((activity: { tool: string; args: Record<string, unknown> }) => {
+    const e = entryRef.current!;
+    const argPreview = typeof activity.args?.path === 'string'
+      ? activity.args.path
+      : typeof activity.args?.command === 'string'
+      ? activity.args.command
+      : typeof activity.args?.query === 'string'
+      ? activity.args.query
+      : '';
+    e.messages = [...e.messages, {
+      role: 'activity' as const,
+      content: `${activity.tool}${argPreview ? ': ' + argPreview : ''}`,
+      activityTool: activity.tool,
+      activityArgs: argPreview,
+      activityStatus: 'done' as const,
+      activityMs: 0,
+      timestamp: Date.now(),
+    }];
+    notify(e);
+  }, []);
+
   return {
     messages: e.messages,
     isStreaming: e.isStreaming,
@@ -473,6 +514,7 @@ export function useChat(
     editMessage,
     deleteMessage,
     stopGeneration,
+    addActivity,
     conversationId: e.conversationId,
     currentStage: e.currentStage,
     stageHistory: e.stageHistory,

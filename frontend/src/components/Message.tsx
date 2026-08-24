@@ -564,6 +564,19 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  },
  }), [onApplyCode, onApplyEdit]);
 
+ // Activity messages — compact inline tool call indicators
+ if (message.role === 'activity') {
+   const tool = message.activityTool || '';
+   const args = message.activityArgs || '';
+   return (
+     <div className="flex items-center gap-2 px-4 py-1 text-[11px] font-mono text-gray-500 animate-fade-in">
+       <span className="w-1.5 h-1.5 rounded-full bg-gray-600 flex-shrink-0"/>
+       <span className="text-[#4a9988] flex-shrink-0">{tool}</span>
+       {args && <span className="truncate text-gray-500">{args}</span>}
+     </div>
+   );
+ }
+
  return (
  <div className={`group relative flex gap-3 px-4 py-6 animate-fade-in transition-colors duration-200 ${isUser ? '' : 'bg-gray-900/40'} ${selected ? 'bg-[#0e1a28]' : ''}`}>
  <div className="flex items-start gap-3">

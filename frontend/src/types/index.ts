@@ -1,4 +1,4 @@
-export type Role = 'user' | 'assistant' | 'system';
+export type Role = 'user' | 'assistant' | 'system' | 'activity';
 export type ConversationMode = 'chat' | 'agent';
 
 export interface Message {
@@ -12,6 +12,14 @@ export interface Message {
   generatedBy?: string;
   /** Whether the model is local or cloud */
   modelSource?: 'local' | 'cloud';
+  /** For activity messages: tool name */
+  activityTool?: string;
+  /** For activity messages: tool args summary */
+  activityArgs?: string;
+  /** For activity messages: success/error status */
+  activityStatus?: 'running' | 'done' | 'error';
+  /** For activity messages: elapsed time */
+  activityMs?: number;
 }
 
 export interface Conversation {

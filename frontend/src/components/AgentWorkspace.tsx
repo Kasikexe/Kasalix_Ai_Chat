@@ -3,18 +3,17 @@ import { useChat } from '../hooks/useChat';
 import { ChatWindow } from './ChatWindow';
 import { InputBar } from './InputBar';
 import { FileTree } from './FileTree';
-import { CodeEditorTabs } from './CodeEditorTabs';
-import { TerminalPanel, type TerminalPanelHandle, type TerminalEntry } from './TerminalPanel';
+
 import { DiffView } from './DiffView';
 import { ErrorBoundary } from './ErrorBoundary';
 import { WorkspaceSetup } from './WorkspaceSetup';
 import {
- Wrench, FolderOpen, Plus, ChevronDown, ChevronRight, ChevronLeft,
+ Wrench, FolderOpen, Plus, ChevronDown, ChevronRight,
  FilePlus2, Check, X, Loader, History, FileCode,
- Undo2, Pencil, PanelRightClose, PanelRightOpen,
+ Undo2, Pencil,
  Trash2, Play, Lightbulb, ClipboardList,
- MessageSquare, Terminal, GripVertical, Circle, CheckCircle2,
- Zap, Bot, FileDown, Eye, AlertTriangle,
+ MessageSquare, GripVertical,
+ Bot, FileDown, Eye, AlertTriangle,
 } from 'lucide-react';
 import { ServerDownInline } from './ServerDownInline';
 import { useServerStatus } from '../hooks/useServerStatus';
@@ -59,21 +58,8 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
  const convKey = conversation?.id || 'offline';
  const [workspacePath, setWorkspacePath] = useState(offlineWorkspace || conversation?.workspacePath || '');
  const [loadedPath, setLoadedPath] = useState(offlineWorkspace || conversation?.workspacePath || '');
- const [planningEnabled, setPlanningEnabled] = useState(false);
-
- // Auto-apply: when ON the AI writes/deletes files directly (revertible via
- // the Modified list). When OFF the AI proposes files and you approve each.
- const [autoApply, setAutoApply] = useState(() => {
- try {
- return localStorage.getItem('ai-chat:agentAutoApply') !== 'false';
- } catch {
- return true;
- }
- });
-
- // Live agent activity feed (tool calls the AI is making right now)
- const [agentActivity, setAgentActivity] = useState<{ tool: string; args: Record<string, unknown>; time: number }[]>([]);
- // Bump to refresh the file tree when the agent writes files
+ const [planningEnabled, setPlanningEnabled] = useState(false);  // Auto-apply is always ON — the AI writes/deletes files directly.
+  const autoApply = true; // Bump to refresh the file tree when the agent writes files
  const [treeRefreshToken, setTreeRefreshToken] = useState(0);
 
  // Refs to setters declared later in the component (used by agent callbacks)
@@ -86,18 +72,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
 
  // Agent run_command output is fed into the visible terminal so the agent isn't
  // a black box — you see exactly which commands it ran and their output.
- const terminalRef = useRef<TerminalPanelHandle>(null);
 
- const handleAgentTool = useCallback((call: { tool: string; args: Record<string, unknown> }) => {
- setAgentActivity((prev) => {
- // Batch consecutive identical tool calls into one row instead of a flood.
- const last = prev[prev.length - 1];
- if (last && last.tool === call.tool && JSON.stringify(last.args) === JSON.stringify(call.args)) {
- return prev;
- }
- return [...prev.slice(-9), { tool: call.tool, args: call.args, time: Date.now() }];
- });
- }, []);
 
  const handleFileWritten = useCallback((write: { path: string; changeType: string; originalContent?: string }) => {
  const filePath = normPath(write.path);
@@ -150,17 +125,10 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
  }];
  });
  }).catch(() => { /* file gone — tree refresh handles it */ });
- }, [loadedPath, toast]);
-
- // Agent command/verify output → visible terminal feed.
- const handleAgentCommand = useCallback((cmd: { command: string; output: string; failed: boolean }) => {
- const push = (entry: TerminalEntry) => terminalRef.current?.push(entry);
- push({ type: 'command', text: `$ ${cmd.command}`, timestamp: Date.now() });
- if (cmd.output) {
- for (const line of cmd.output.split('\n')) {
- if (line.trim()) push({ type: cmd.failed ? 'stderr' : 'stdout', text: line, timestamp: Date.now() });
- }
- }
+ }, [loadedPath, toast]); const handleAgentCommand = useCallback((cmd: { command: string; output: string; failed: boolean }) => {
+   // Log to console since terminal panel is hidden
+   console.log(`[koding] ${cmd.failed ? '❌' : '$'} ${cmd.command}`);
+   if (cmd.output) console.log(cmd.output);
  }, []);
 
  // ask_user: the agent paused the run to ask a question — show a modal.
@@ -215,17 +183,6 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
  setPendingApproval(null);
  };
 
- const handleAutoApplyToggle = useCallback(() => {
- setAutoApply((prev) => {
- const next = !prev;
- try {
- localStorage.setItem('ai-chat:agentAutoApply', String(next));
- } catch { /* ignore */ }
- return next;
- });
- setAgentActivity([]);
- }, []);
-
  const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, currentStage, stageHistory, liveDuration } = useChat(
  model,
  conversation?.messages || [],
@@ -236,7 +193,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
  undefined,
  planningEnabled,
  autoApply,
- handleAgentTool,
+ undefined,
  handleFileWritten,
  handleAgentCommand,
  handleQuestion,
@@ -247,12 +204,8 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
  // ─── Layout State ──────────────────────────────────────────
  const [showSetup, setShowSetup] = useState(!offlineWorkspace && !conversation?.workspacePath);
  const [leftPanelOpen, setLeftPanelOpen] = useState(true);
- const [rightPanelOpen, setRightPanelOpen] = useState(true);
- const [showTerminal, setShowTerminal] = useState(true);
- const [terminalHeight, setTerminalHeight] = useState(180);
  const [leftWidth, setLeftWidth] = useState(224);
- const [rightWidth, setRightWidth] = useState(320);
- const dragRef = useRef<{ type: 'left' | 'right'; startX: number; startSize: number } | null>(null);
+ const dragRef = useRef<{ type: 'left'; startX: number; startSize: number } | null>(null);
 
  // ─── File Editor State ─────────────────────────────────────
  const [openFiles, setOpenFiles] = useState<OpenFile[]>(() => openFilesCache.get(convKey) || []);
@@ -780,26 +733,21 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
  }, [isStreaming, planningEnabled]);
 
  // ─── Panel Resize Handlers ───────────────────────────────
- const handleDragStart = useCallback((e: React.MouseEvent | React.TouchEvent, type: 'left' | 'right') => {
- e.preventDefault();
- const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
- dragRef.current = {
- type,
- startX: clientX,
- startSize: type === 'left' ? leftWidth : rightWidth,
- };
- }, [leftWidth, rightWidth]);
+ const handleDragStart = useCallback((e: React.MouseEvent | React.TouchEvent, type: 'left') => {
+    e.preventDefault();
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    dragRef.current = {
+      type,
+      startX: clientX,
+      startSize: leftWidth,
+    };
+  }, [leftWidth]);
 
  useEffect(() => {
  const handleMouseMove = (e: MouseEvent | TouchEvent) => {
  if (!dragRef.current) return;
  const clientX = 'touches' in e ? (e as TouchEvent).touches[0].clientX : (e as MouseEvent).clientX;
- const delta = clientX - dragRef.current.startX;
- if (dragRef.current.type === 'left') {
- setLeftWidth(Math.max(120, Math.min(400, dragRef.current.startSize + delta)));
- } else {
- setRightWidth(Math.max(240, Math.min(600, dragRef.current.startSize - delta)));
- }
+ const delta = clientX - dragRef.current.startX; setLeftWidth(Math.max(120, Math.min(400, dragRef.current.startSize + delta)));
  };
  const handleDragEnd = () => { dragRef.current = null; };
  document.addEventListener('mousemove', handleMouseMove);
@@ -814,40 +762,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
  };
  }, []);
 
- // ─── Stage → TODO Progress ───────────────────────────────
- const STAGE_TODOS: { key: string; label: string }[] = [
- { key: 'agent:thinking', label: 'Think through the task' },
- { key: 'agent:plan', label: 'Creating a plan' },
- { key: 'agent:reading', label: 'Read workspace files' },
- { key: 'agent:tool', label: 'Use workspace tools' },
- { key: 'agent:verify', label: 'Verify changes' },
- { key: 'agent:working', label: 'Work through the task' },
- { key: 'agent:done', label: 'Finish up' },
- { key: 'reading:workspace', label: 'Read workspace files' },
- { key: 'search:web', label: 'Search the web' },
- { key: 'search:docs', label: 'Search documentation' },
- { key: 'code:generating', label: 'Write code' },
- { key: 'tool:executing', label: 'Execute tools' },
- { key: 'chat:thinking', label: 'Think through the problem' },
- { key: 'vision:analyzing', label: 'Analyze images' },
- { key: 'planning:create', label: 'Create a plan' },
- { key: 'planning:evaluating', label: 'Evaluate the plan' },
- { key: 'image:generating', label: 'Generate images' },
- { key: 'writing:files', label: 'Write files' },
- { key: 'summary:writing', label: 'Write summary' },
- ];
 
- // Honest progress: a todo is DONE only if its stage actually fired this turn;
- // the CURRENT one is the last fired stage that maps to a todo. Skipped steps
- // stay pending instead of being marked done by position.
- const firedKeys = new Set(stageHistory);
- const currentTodoIdx = (() => {
- for (let i = stageHistory.length - 1; i >= 0; i--) {
- const idx = STAGE_TODOS.findIndex((t) => t.key === stageHistory[i]);
- if (idx !== -1) return idx;
- }
- return -1;
- })();
 
  // Keyboard shortcuts
  useEffect(() => {
@@ -1040,112 +955,16 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
  </div>
  )}
 
- {/* ═══ CENTER: Code Editor + Terminal ═══ */}
- <div className="flex-1 flex flex-col min-w-0">
- {/* Workspace path header */}
- {workspacePath && (
- <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800 bg-gray-900/50">
- <FolderOpen size={12} className="text-[#7b9fc6] flex-shrink-0"/>
- <span className="text-xs text-gray-400 truncate flex-1">{workspacePath}</span>
-
- {/* Auto-apply toggle */}
- <button
- onClick={handleAutoApplyToggle}
- disabled={isStreaming}
- className={`flex items-center gap-1 px-2 py-1 rounded transition-colors disabled:opacity-50 ${
- autoApply
- ? 'bg-emerald-900/40 text-[#6ab5a5] border border-[#1a3a33] hover:bg-emerald-900/60'
- : 'bg-gray-800 text-gray-500 border border-gray-700 hover:text-gray-300'
- }`}
- title={autoApply
- ? 'Auto-apply ON — the AI writes and deletes files directly (revertible in the Modified list)'
- : 'Auto-apply OFF — the AI proposes files and you approve each one'}
- >
- <Zap size={11} />
- <span className="text-[10px] font-medium">Auto-apply</span>
- </button>
-
- {/* Toggle buttons */}
- <button onClick={() => setLeftPanelOpen(!leftPanelOpen)}
- className={`p-1 rounded transition-colors ${leftPanelOpen ? 'bg-gray-700 text-gray-200' : 'text-gray-500 hover:text-gray-300'}`}
- title={leftPanelOpen ? 'Hide file tree' : 'Show file tree'}
- >
- <FolderOpen size={12} />
- </button>
- <button onClick={() => setShowTerminal(!showTerminal)}
- className={`p-1 rounded transition-colors ${showTerminal ? 'bg-gray-700 text-gray-200' : 'text-gray-500 hover:text-gray-300'}`}
- title={showTerminal ? 'Hide terminal' : 'Show terminal'}
- >
- <Terminal size={12} />
- </button>
- <button onClick={() => setRightPanelOpen(!rightPanelOpen)}
- className={`p-1 rounded transition-colors ${rightPanelOpen ? 'bg-gray-700 text-gray-200' : 'text-gray-500 hover:text-gray-300'}`}
- title={rightPanelOpen ? 'Hide AI chat' : 'Show AI chat'}
- >
- {rightPanelOpen ? <PanelRightClose size={12} /> : <PanelRightOpen size={12} />}
- </button>
- </div>
- )}
-
- {/* Code Editor Area */}
- <div className="flex-1 min-h-0 flex flex-col">
- {/* Editor tabs */}
- <div className="flex-1 min-h-0 flex">
- <CodeEditorTabs
- files={openFiles}
- activeFile={activeFilePath}
- workspacePath={loadedPath}
- onFileSelect={setActiveFilePath}
- onFileClose={handleFileClose}
- onFileContentChange={handleFileContentChange}
- onFileSave={handleFileSave}
- onReloadFromDisk={handleReloadFromDisk}
- onKeepChanges={handleKeepChanges}
- />
- </div>
-
- {/* Terminal */}
- {showTerminal && (
- <TerminalPanel
- ref={terminalRef}
- cwd={workspacePath}
- height={terminalHeight}
- onHeightChange={setTerminalHeight}
- />
- )}
- </div>
- </div>
-
- {/* Right panel toggle button (when closed) */}
- {!rightPanelOpen && (
- <button onClick={() => setRightPanelOpen(true)}
- className="flex-shrink-0 w-6 flex items-center justify-center border-l border-gray-800 hover:bg-gray-800 transition-colors text-gray-500"
- title="Show AI chat"
- >
- <ChevronLeft size={12} />
- </button>
- )}
-
- {/* ═══ RIGHT DRAG HANDLE ═══ */}
- {rightPanelOpen && (
- <div
- onMouseDown={(e) => handleDragStart(e, 'right')}
- onTouchStart={(e) => handleDragStart(e, 'right')}
- className="w-1.5 flex-shrink-0 cursor-col-resize hover:bg-purple-500/30 active:bg-purple-500/50 transition-colors group relative"
- >
- <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-3"/>
- <GripVertical size={10} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity"/>
- </div>
- )}
-
- {/* ═══ RIGHT PANEL: AI Chat ═══ */}
- {rightPanelOpen && (
- <div style={{ width: rightWidth }} className="flex-shrink-0 border-l border-gray-800 bg-gray-900/80 flex flex-col">
+ {/* ═══ MAIN AREA: Chat (full width) ═══ */}
+ <div className="flex-1 flex flex-col min-w-0 bg-gray-900/80">
  {/* Header */}
  <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
  <div className="flex items-center gap-2">
  <MessageSquare size={14} className="text-[#7b9fc6]"/>
- <span className="text-xs text-gray-300 font-medium">AI Chat</span>
+ <span className="text-xs text-gray-300 font-medium">Koding</span>
+ {workspacePath && (
+ <span className="text-[10px] text-gray-500 font-mono truncate max-w-48">{workspacePath.split('/').pop()?.split('\\\\').pop() || workspacePath}</span>
+ )}
  {isStreaming && (
  <span className="flex items-center gap-1 text-[10px] text-[#7b9fc6]">
  <span className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-pulse"/>
@@ -1153,87 +972,22 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
  </span>
  )}
  </div>
- <button onClick={() => setRightPanelOpen(false)}
- className="p-1 hover:bg-gray-800 rounded text-gray-500 hover:text-gray-300 transition-colors"
+ <div className="flex items-center gap-1">
+ <button onClick={() => setLeftPanelOpen(!leftPanelOpen)}
+ className={`p-1 rounded transition-colors ${leftPanelOpen ? 'bg-gray-700 text-gray-200' : 'text-gray-500 hover:text-gray-300'}`}
+ title={leftPanelOpen ? 'Hide file tree' : 'Show file tree'}
  >
- <X size={14} />
+ <FolderOpen size={12} />
  </button>
  </div>
+ </div>
 
- {/* Agent activity feed — live tool calls during auto-apply runs */}
- {agentActivity.length > 0 && (
- <div className="border-b border-gray-800 bg-gray-900/60 px-3 py-2 max-h-32 overflow-y-auto">
- <div className="flex items-center gap-1.5 mb-1.5">
- <Bot size={11} className="text-[#4a9988]"/>
- <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Agent activity</span>
- {isStreaming && <span className="ml-auto flex items-center gap-1 text-[10px] text-[#4a9988]">
- <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"/>
- working
- </span>}
- </div>
- <div className="space-y-1">
- {agentActivity.map((act, idx) => {
- const isLast = idx === agentActivity.length - 1;
- const argPreview = typeof act.args?.path === 'string'
- ? act.args.path
- : typeof act.args?.command === 'string'
- ? act.args.command
- : typeof act.args?.query === 'string'
- ? act.args.query
- : '';
- return (
- <div key={act.time + '-' + idx} className={`flex items-center gap-1.5 text-[10px] font-mono ${isLast ? 'text-[#6ab5a5]' : 'text-gray-500'}`}>
- {isLast && isStreaming ? (
- <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse flex-shrink-0"/>
- ) : (
- <span className="w-1.5 h-1.5 bg-gray-600 rounded-full flex-shrink-0"/>
- )}
- <span className="text-[#4a9988] flex-shrink-0">{act.tool}</span>
- <span className="truncate text-gray-400">{argPreview}</span>
- </div>
- );
- })}
- </div>
- </div>
- )}
-
- {/* TODO Progress Panel — shows when streaming */}
- {isStreaming && currentStage && (
- <div className="border-b border-gray-800 bg-gray-900/60 px-3 py-2">
- <div className="flex items-center gap-1.5 mb-2">
- <ClipboardList size={11} className="text-[#7b9fc6]"/>
- <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Progress</span>
- </div>
- <div className="space-y-1">
- {STAGE_TODOS.map((todo, idx) => {
- const isDone = firedKeys.has(todo.key);
- const isCurrent = idx === currentTodoIdx;
- const isPending = !isDone && !isCurrent;
- return (
- <div key={todo.key} className={`flex items-center gap-2 text-[10px] transition-all ${
- isDone ? 'text-emerald-500' : isCurrent ? 'text-[#9bb8d6]' : 'text-gray-600'
- }`}>
- {isDone ? (
- <CheckCircle2 size={10} className="text-emerald-500 flex-shrink-0"/>
- ) : isCurrent ? (
- <Loader size={10} className="animate-spin text-[#7b9fc6] flex-shrink-0"/>
- ) : (
- <Circle size={10} className="text-gray-600 flex-shrink-0"/>
- )}
- <span className={`truncate ${isCurrent ? 'font-medium' : ''}`}>{todo.label}</span>
- </div>
- );
- })}
- </div>
- </div>
- )}
-
- {/* Chat messages — flex column so ChatWindow's flex-1 overflow-y-auto gets a bounded height and can scroll */}
+ {/* Chat messages */}
  <div className="flex-1 min-h-0 flex flex-col">
  {!online && messages.length === 0 ? (
  <ServerDownInline
  compact
- message="AI chat is unavailable while the server is offline. The code editor and terminal still work."
+ message="AI chat is unavailable while the server is offline."
  onRetry={() => window.location.reload()}
  />
  ) : (
@@ -1254,7 +1008,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
  )}
  </div>
 
- {/* Plan action bar — inline above input */}
+ {/* Plan action bar */}
  {planPending && (
  <div className="border-t border-violet-800/30 bg-violet-950/20 px-3 py-1.5">
  <div className="flex items-center gap-1.5">
@@ -1289,7 +1043,6 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
  draftKey={convKey}
  />
  </div>
- )}
  </div>
 
  {/* ═══ MODALS ═══ */}
