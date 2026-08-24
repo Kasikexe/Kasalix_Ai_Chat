@@ -1621,13 +1621,16 @@ TOOL CALL FORMAT: respond with ONLY a JSON object, no markdown, no prose:\n${TOO
 TOOLS:\n${toolList}
 
 WORKFLOW — think, then act:
-1. PLAN: Before any tool call, briefly state what you will do and why (2-3 sentences max). This keeps you on track.
+1. THINK BRIEFLY: Before any tool call, state your approach in 1-2 short sentences max. DO NOT write code in your thinking — only describe your strategy.
 2. GATHER: Use list_files, read_file, search_files to understand the workspace. NEVER guess file contents.
-3. ACT: Make targeted changes. Prefer edit_file with small old_string. Use write_file only for new files.
+3. ACT: Use write_file or edit_file tools to create/modify files. Your thinking describes the plan; the TOOLS do the actual work.
 4. VERIFY: Run the project's verify command after changes. Fix failures until it passes.
-5. DONE: Respond with a friendly summary. If auto-apply is OFF, use code blocks (path as first comment for new files, EDIT convention for edits).
+5. DONE: Respond with a brief friendly summary of what was created/changed.
 
-RULES:
+CRITICAL RULES:
+- NEVER write code in your thinking/reasoning. Your thinking should be SHORT strategy notes (1-2 sentences). The TOOLS (write_file, edit_file) are how you create files.
+- If you need to write a file, respond with a JSON tool call like: {"tool": "write_file", "args": {"path": "filename.py", "content": "..."}}
+- Do NOT describe code in your response and expect it to be applied. Use the actual tool calls.
 - LANGUAGE CONSISTENCY: match the project's language/framework (see WORKSPACE PROFILE). Never switch languages unless asked.
 - EDIT vs REWRITE: edit_file with small old_string for existing files. write_file rewrites are refused if they change >40% of lines.
 - GROUNDING: The WORKSPACE FILES listing is ground truth. Never claim a file exists without confirming it via list_files/read_file/search_files.
@@ -1804,7 +1807,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       const planPrompt = [
         { role: 'system' as const, content: system + '\n\n' + workspaceProfile },
         ...opts.messages,
-        { role: 'user' as const, content: lastUserMsg + '\n\nBefore starting, output a brief plan (2-5 bullet points) of what you will do and in what order. Start each line with "PLAN:". Then proceed with your first tool call or answer immediately after.' },
+        { role: 'user' as const, content: lastUserMsg + '\n\nBefore starting, output a brief plan (2-5 short bullet points) of what you will do and in what order. Start each line with "PLAN:". Each bullet should be ONE SHORT SENTENCE describing the step (e.g. "Create the player class", "Add collision detection"). Do NOT write any code in the plan — only describe what you will do. Then proceed with your first tool call immediately after.' },
       ];
       const planChunks: string[] = [];
       await streamChatWithRetry(opts, planPrompt, (c) => planChunks.push(c), () => {});
@@ -1948,6 +1951,26 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
         'You must call the write_file, edit_file, or delete_file tool to make changes. ' +
         'Do NOT just describe what you would do — actually do it using the tools. ' +
         'Respond with a JSON tool call like: {"tool": "write_file", "args": {"path": "filename.py", "content": "..."}}';
+      history.push({ role: 'assistant', content: raw });
+      history.push({ role: 'user', content: retryMsg });
+      callbacks.onStage('agent:working');
+      continue;
+    }
+
+    // Thinking-contains-code detection: if the thinking block contains code
+    // (imports, class/function defs, etc.) but no tools were called and no code
+    // blocks are in the response, the model wrote the implementation in thinking
+    // instead of using tools. Redirect it.
+    const thinkingText = thinkingChunks.join('');
+    const thinkingHasCode = thinkingText.length > 200 && /(import |class |def |function |const |let |var |#include)/.test(thinkingText);
+    const responseHasNoCode = !toolCall && !appliedNote && !/```/.test(raw);
+    if (thinkingHasCode && responseHasNoCode && autoApply && malformedToolCalls < 2) {
+      malformedToolCalls++;
+      const retryMsg =
+        'You wrote code in your thinking/reasoning but you must use the tools to actually create files. ' +
+        'Your thinking should only contain brief strategy notes (1-2 sentences), not code. ' +
+        'Use write_file or edit_file tools to create/modify files. ' +
+        'Respond with a JSON tool call like: {"tool": "write_file", "args": {"path": "filename.py", "content": "your code here"}}';
       history.push({ role: 'assistant', content: raw });
       history.push({ role: 'user', content: retryMsg });
       callbacks.onStage('agent:working');
