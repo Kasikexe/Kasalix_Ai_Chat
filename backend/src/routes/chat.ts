@@ -169,6 +169,7 @@ chat.post('/', async (c) => {
             onAgentCommand: (cmd) => send({ type: 'agent_command', command: cmd.command, output: cmd.output, failed: cmd.failed }),
             onQuestion: (key, question) => send({ type: 'agent_question', key, question }),
             onApprovalRequest: (key, tool, args) => send({ type: 'agent_approval_request', key, tool, args }),
+            onPlan: (plan) => send({ type: 'plan', plan }),
             onResumeState: (state) => {
               if (activeConvId) {
                 updateConversation(activeConvId, ownerId, { agentState: state }).catch((e) =>

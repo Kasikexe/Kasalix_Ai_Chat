@@ -89,6 +89,8 @@ interface PipelineOptions {
   onQuestion?: (key: string, question: string) => void;
   /** Koding mode: fired when a run is stopped/capped so the caller can persist resume state */
   onResumeState?: (state: { history: { role: string; content: string }[] }) => void;
+  /** Koding mode: fired when the planning phase produces a plan */
+  onPlan?: (plan: string) => void;
   /** Koding mode: resume a previously stopped run */
   resumeState?: { history: { role: string; content: string }[] };
   /** Routing key for ask_user answers (usually the conversation id) */
@@ -715,6 +717,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
         onQuestion: opts.onQuestion,
         onResumeState: opts.onResumeState,
         onApprovalRequest: opts.onApprovalRequest,
+        onPlan: opts.onPlan,
       },
       temperature,
       top_p,

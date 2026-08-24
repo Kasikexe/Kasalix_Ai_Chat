@@ -1958,6 +1958,8 @@ export interface AgentCallbacks {
   onResumeState?: (state: { history: { role: string; content: string }[] }) => void;
   /** Fired when the agent wants to execute a mutating tool and needs user approval */
   onApprovalRequest?: (key: string, tool: string, args: Record<string, unknown>) => void;
+  /** Fired when the planning phase produces a plan — the client displays it as a todo list */
+  onPlan?: (plan: string) => void;
 }
 
 /** Permission level for tool execution */
@@ -2199,6 +2201,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
         planText = planLines.map((l) => l.replace(/^\s*\d*\.?\s*PLAN:\s*/i, '').trim()).join('\n');
         await sessionLog.logPlan(planText);
         logger.info(`[agent] Plan: ${planText.slice(0, 200)}`);
+        callbacks.onPlan?.(planText);
       }
     } catch (e) {
       // Planning is best-effort — if it fails, continue without a plan
