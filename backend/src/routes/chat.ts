@@ -5,6 +5,8 @@ import { resolvePendingQuestion, resolvePendingApproval } from '../services/agen
 import { getMemory } from '../services/memory';
 import { extractMemoryFromTurn } from '../services/extractor';
 import { chat as ollamaChat, streamChat } from '../services/ollama';
+import { getResolvedModel } from '../services/model-assignments';
+import { getCloudSettings } from './settings';
 import { logger as appLogger } from '../services/logger';
 import type { ConversationMode, Message } from '../types';
 
@@ -330,7 +332,6 @@ chat.post('/title', async (c) => {
   try {
     const body = await c.req.json();
     const message: string = body.message;
-    const model: string = body.model || 'qwen2.5:3b';
 
     if (!message) {
       return c.json({ title: 'New Chat' });
@@ -349,8 +350,12 @@ chat.post('/title', async (c) => {
     let title = '';
     try {
       // Use non-streaming API for speed (#5)
+      // Resolve through cloud mode so title uses the same routing as chat
+      const { model: titleModel, source: titleSource } = await getResolvedModel('chat');
+      const cloudSettings = titleSource === 'cloud' ? await getCloudSettings() : null;
+      console.log(`[chat/title] Model: ${titleModel} (source: ${titleSource})`);
       title = await ollamaChat(
-        model,
+        titleModel,
         [
           {
             role: 'system',
@@ -358,7 +363,7 @@ chat.post('/title', async (c) => {
           },
           { role: 'user', content: cleaned },
         ],
-        { temperature: 0.3, max_tokens: 20 }
+        { temperature: 0.3, max_tokens: 20, baseUrl: cloudSettings?.cloudEndpoint || undefined, apiKey: cloudSettings?.cloudApiKey || undefined }
       );
     } catch (e) {
       console.error('[chat] Title generation failed:', e);

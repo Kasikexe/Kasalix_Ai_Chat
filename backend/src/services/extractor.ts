@@ -1,6 +1,7 @@
 import { streamChat } from './ollama';
 import { getMemory, mergeMemoryEntries } from './memory';
-import { getModelAssignment } from './model-assignments';
+import { getResolvedModel } from './model-assignments';
+import { getCloudSettings } from '../routes/settings';
 import type { Message } from '../types';
 
 interface ExtractionResult {
@@ -65,14 +66,20 @@ ONLY output the JSON object. No other text.`;
 
     let rawOutput = '';
     try {
-      const extractorModel = await getModelAssignment('extraction');
+      const { model: extractorModel, source: extractorSource } = await getResolvedModel('extraction');
+      const cloudSettings = extractorSource === 'cloud' ? await getCloudSettings() : null;
+      console.log(`[extractor] Model: ${extractorModel} (source: ${extractorSource})`);
       await streamChat(
         extractorModel,
         extractionMessages,
         (chunk) => {
           rawOutput += chunk;
         },
-        { think: false }
+        {
+          think: false,
+          baseUrl: cloudSettings?.cloudEndpoint || undefined,
+          apiKey: cloudSettings?.cloudApiKey || undefined,
+        }
       );
     } catch (e) {
       // Extraction failure is non-critical — don't crash the app
