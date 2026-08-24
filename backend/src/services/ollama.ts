@@ -23,6 +23,7 @@ const TOOL_CAPABLE_MODELS = [
   'qwen3', 'qwen2.5', 'qwen2.5-coder', 'llama3.1', 'llama3.2', 'llama3.3',
   'mistral', 'mixtral', 'gemma3', 'phi4', 'phi-4', 'gpt-oss',
   'command-r', 'aya-expanse', 'minicpm-v', 'nemotron', 'molmo',
+  'minimax', 'deepseek', 'glm', 'internlm',
 ];
 
 /** Whether a model family supports Ollama's native `tools`/tool_calls. */

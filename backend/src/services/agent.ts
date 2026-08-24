@@ -1395,13 +1395,42 @@ const BLOCK_DELETE_PATH_RE = /^(?:\/\/|#|--)\s*DELETE:\s*([^\s]+)/i;
 const BLOCK_EDIT_PATH_RE = /^(?:\/\/|#|--|;|%|<!--)\s*EDIT:\s*([^\s]+?)(?:\s*-->)?$/i;
 const BLOCK_CODE_RE = /```(?:\w*)\n([\s\S]*?)```/g;
 
+/**
+ * Try to extract a filename from the text immediately before a code block.
+ * Handles patterns like:
+ *   `player.py`
+ *   Here's player.py:
+ *   Save as constants.py
+ *   // platformer.py
+ */
+function guessFilenameFromContext(beforeText: string): string | null {
+  if (!beforeText) return null;
+  // Look for a quoted filename at end of preceding text
+  const quoteMatch = beforeText.match(/`([\w./-]+\.[a-zA-Z]\w*)`\s*$/);
+  if (quoteMatch) return quoteMatch[1];
+  // Look for filename after common patterns
+  const patterns = [
+    /(?:save|write|create|file|as|name[d]?|called|output)[:\s]+([\w./-]+\.[a-zA-Z]\w*)\s*$/i,
+    /([\w./-]+\.[a-zA-Z]\w*)\s*:/,
+  ];
+  for (const p of patterns) {
+    const m = beforeText.match(p);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 /** Parse the code blocks in a final answer into file operations (in order). */
 export function parseCodeBlockFiles(content: string): CodeBlockFile[] {
   const out: CodeBlockFile[] = [];
-  const re = new RegExp(BLOCK_CODE_RE.source, 'g');
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(content)) !== null) {
-    const block = match[1];
+  // Split into alternating [text, code, text, code, ...] segments
+  const segments = content.split(/(```[\s\S]*?```)/);
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    if (!seg.startsWith('```')) continue; // skip text segments
+    const innerMatch = seg.match(/```(?:\w*)\n([\s\S]*?)```/);
+    if (!innerMatch) continue;
+    const block = innerMatch[1];
     const lines = block.split('\n');
     const first = lines[0]?.trim() || '';
 
@@ -1416,11 +1445,11 @@ export function parseCodeBlockFiles(content: string): CodeBlockFile[] {
     const editM = first.match(BLOCK_EDIT_PATH_RE);
     if (editM) {
       let oldStart = -1, sep = -1, newStart = -1;
-      for (let i = 1; i < lines.length; i++) {
-        const t = lines[i].trim();
-        if (oldStart === -1 && /^OLD:$/i.test(t)) { oldStart = i; continue; }
-        if (oldStart !== -1 && sep === -1 && /^-{3,}$/.test(t)) { sep = i; continue; }
-        if (sep !== -1 && /^NEW:$/i.test(t)) { newStart = i; break; }
+      for (let j = 1; j < lines.length; j++) {
+        const t = lines[j].trim();
+        if (oldStart === -1 && /^OLD:$/i.test(t)) { oldStart = j; continue; }
+        if (oldStart !== -1 && sep === -1 && /^-{3,}$/.test(t)) { sep = j; continue; }
+        if (sep !== -1 && /^NEW:$/i.test(t)) { newStart = j; break; }
       }
       if (oldStart !== -1 && sep !== -1 && newStart !== -1) {
         const oldString = lines.slice(oldStart + 1, sep).join('\n').trim();
@@ -1434,6 +1463,14 @@ export function parseCodeBlockFiles(content: string): CodeBlockFile[] {
     const pathM = first.match(BLOCK_FILE_PATH_RE);
     if (pathM) {
       out.push({ type: 'create', path: pathM[1], content: lines.slice(1).join('\n').trimStart() });
+      continue;
+    }
+
+    // Heuristic: guess filename from the text BEFORE this code block
+    const prevText = i > 0 ? segments[i - 1] : '';
+    const guessedPath = guessFilenameFromContext(prevText);
+    if (guessedPath) {
+      out.push({ type: 'create', path: guessedPath, content: block.trimStart() });
     }
   }
   return out;
@@ -1889,10 +1926,36 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     let appliedNote = '';
     if (!toolCall && autoApply) {
       appliedNote = await applyCodeBlockFiles(root, raw, callbacks.onFileWritten);
+      // If no files were applied but the response contains code blocks,
+      // the model may have used a format we don't recognize. Log it and
+      // give the user feedback so they know nothing was auto-applied.
+      if (!appliedNote && /```/.test(raw)) {
+        logger.info('[agent] Response contains code blocks but none matched the # path format — no files auto-applied');
+      }
+    }
+
+    // Lazy assistant detection: the model claims to have done something
+    // ("Done!", "I've created", "I've refactored") but did not use any tools
+    // and did not output any code blocks. Force a retry.
+    const claimsDone = !toolCall && !appliedNote && autoApply &&
+      /\b(?:done|i'?ve|finished|completed|created|wrote|refactored|moved|extracted|split)\b/i.test(raw) &&
+      !/```/i.test(raw) &&
+      raw.length < 500;
+    if (claimsDone && malformedToolCalls < 2) {
+      malformedToolCalls++;
+      const retryMsg =
+        'You said you were done but you did NOT actually create or modify any files. ' +
+        'You must call the write_file, edit_file, or delete_file tool to make changes. ' +
+        'Do NOT just describe what you would do — actually do it using the tools. ' +
+        'Respond with a JSON tool call like: {"tool": "write_file", "args": {"path": "filename.py", "content": "..."}}';
+      history.push({ role: 'assistant', content: raw });
+      history.push({ role: 'user', content: retryMsg });
+      callbacks.onStage('agent:working');
+      continue;
     }
 
     // If the response still looked like a (broken) tool call after the retries
-    // were exhausted, don't hand the user raw JSON garbage as the answer.
+    // were exhausted, do not hand the user raw JSON garbage as the answer.
     const malformedNote =
       looksLikeToolAttempt && !toolCall && malformedToolCalls >= 2
         ? '\n\n_(I tried to execute a tool call from your last response but it was not valid JSON, so nothing was executed.)_'
