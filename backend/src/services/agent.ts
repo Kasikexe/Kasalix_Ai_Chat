@@ -427,8 +427,8 @@ export const AGENT_TOOL_DEFS: AgentToolDef[] = [
   },
   {
     name: 'delegate_to_subagent',
-    description: 'Delegate a focused sub-task to a sub-agent that runs independently. The sub-agent gets its own context and tool access. Use this for: (1) parallel tasks ("fix the tests while I refactor the API"), (2) complex sub-tasks that need their own reasoning chain, (3) tasks where you want a different model to handle a specific part. The sub-agent shares the same workspace. Returns the sub-agent\'s final answer.',
-    args: '{"task": "Run all tests and report which ones fail", "model": "optional - use a different model"}',
+    description: 'Delegate a focused sub-task to a sub-agent that runs independently. The sub-agent gets its own context and tool access. Use type to spawn specialized agents: "explore" (fast read-only search), "plan" (architecture planning), "reviewer" (code review). Returns the sub-agent\'s final answer.',
+    args: '{"task": "Run all tests and report which ones fail", "type": "explore|plan|reviewer|general", "model": "optional - use a different model"}',
     mutating: true,
   },
   {
@@ -1499,14 +1499,28 @@ export async function executeTool(root: string, call: ToolCall, autoApply: boole
       const task = typeof args.task === 'string' ? args.task : '';
       if (!task.trim()) return { ok: false, output: 'delegate_to_subagent requires a "task" string argument describing the sub-task.' };
       const subModel = typeof args.model === 'string' && args.model.trim() ? args.model.trim() : undefined;
+      const subType = typeof args.type === 'string' ? args.type.trim() : 'general';
+      // Build specialized system prompt based on type
+      let subSystemPrompt = '';
+      const fileTree = await listWorkspaceTree(root);
+      const groundTruth = 'WORKSPACE FILES:\n' + fileTree;
+      if (subType === 'explore') {
+        subSystemPrompt = `You are an EXPLORE sub-agent — fast read-only codebase search. Your task: ${task}\n\nYou can ONLY read files and search. You CANNOT write, edit, or delete anything.\nSearch thoroughly: use glob, grep, read_file, list_files. Report all findings concisely.\n\n${groundTruth}`;
+      } else if (subType === 'plan') {
+        subSystemPrompt = `You are a PLAN sub-agent — architecture planning. Your task: ${task}\n\nExplore the codebase and produce a detailed implementation plan. You CANNOT write code — only read files and output a plan.\nFormat your plan as numbered steps with file paths.\n\n${groundTruth}`;
+      } else if (subType === 'reviewer') {
+        subSystemPrompt = `You are a CODE REVIEW sub-agent. Your task: ${task}\n\nRead the specified files, review the code for bugs, style issues, and improvements. You CANNOT write code — only read and report.\nBe specific: reference file paths and line numbers.\n\n${groundTruth}`;
+      } else {
+        subSystemPrompt = `You are a focused sub-agent. Your task: ${task}\n\nYou have the same tools as the parent agent. Complete the task and respond with your findings/results. Be concise — the parent agent is waiting for your output.\n\n${groundTruth}`;
+      }
       try {
         const subResult = await runSubAgent(root, task, subModel, {
           model: subModel || 'default',
-          messages: [],
+          messages: [{ role: 'system', content: subSystemPrompt }],
           autoApply,
           callbacks: { onStage: () => {}, onChunk: () => {} },
         }, autoApply);
-        return { ok: true, output: `[SUB-AGENT RESULT]\n${subResult}` };
+        return { ok: true, output: `[SUB-AGENT (${subType}) RESULT]\n${subResult}` };
       } catch (e) {
         return { ok: false, output: `Sub-agent failed: ${e instanceof Error ? e.message : String(e)}` };
       }
