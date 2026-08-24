@@ -62,7 +62,8 @@ export function clearModelCache(): void {
 }
 
 function convertMessagesForOllama(messages: (Message | ToolLoopMessage)[]): any[] {
-  return messages.map((msg) => {
+  const VALID_ROLES = new Set(['user', 'assistant', 'system', 'tool']);
+  return messages.filter((msg) => VALID_ROLES.has(msg.role)).map((msg) => {
     const imageMatch = msg.content.match(/\[image:(data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+))\]/);
     if (imageMatch) {
       const textContent = msg.content
