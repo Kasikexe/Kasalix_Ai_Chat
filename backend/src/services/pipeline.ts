@@ -655,8 +655,12 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   // can't think, route to the dedicated Chat (Thinking) model instead.
   const thinkingMode: 'auto' | 'off' = opts.thinkingMode ?? (opts.thinkingEnabled === false ? 'off' : 'auto');
   const lastUserMsgForThink = [...messages].reverse().find((m) => m.role === 'user');
-  const think = thinkingMode === 'off' ? false : needsThinking(lastUserMsgForThink?.content ?? '');
-  console.log(`[pipeline] Thinking mode: ${thinkingMode} → think: ${think}`);
+  // In agent (Koding) mode, always think if the model supports it — coding tasks
+  // benefit from reasoning about approach before acting. For chat mode, use the
+  // heuristic to decide if thinking adds value.
+  const isAgentMode = mode === 'agent';
+  const think = thinkingMode === 'off' ? false : (isAgentMode ? true : needsThinking(lastUserMsgForThink?.content ?? ''));
+  console.log(`[pipeline] Thinking mode: ${thinkingMode}, agent: ${isAgentMode} → think: ${think}`);
   if (think && !(await modelSupportsThinking(model))) {
     const resolved = await getResolvedModel('chat_thinking');
     if (resolved.model && resolved.model !== model) {

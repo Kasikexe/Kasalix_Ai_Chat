@@ -17,16 +17,24 @@ import { getDataDir } from '../utils/helpers';
 const OLLAMA_BASE_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const CACHE_FILE = path.join(getDataDir(), 'model-capabilities.json');
 
+// Bump this when the probe logic changes to invalidate old caches
+const CACHE_VERSION = 2;
+
 interface ModelCaps {
   tools: boolean;
   thinking: boolean;
 }
 
+interface CacheFile {
+  version: number;
+  models: Record<string, ModelCaps>;
+}
+
 // In-memory cache: model name → capabilities
 const capsCache = new Map<string, ModelCaps>();
 
-// Probe timeout — don't hang longer than this per model
-const PROBE_TIMEOUT_MS = 8_000;
+// Probe timeout — small models (1-3B) can be slow on first load, give them time
+const PROBE_TIMEOUT_MS = 15_000;
 
 // ─── Disk persistence ─────────────────────────────────────────────────
 
@@ -35,8 +43,15 @@ async function loadCache(): Promise<void> {
   try {
     const raw = await fs.readFile(CACHE_FILE, 'utf-8');
     const data = JSON.parse(raw);
+    // Invalidate old cache format (v1 had models at top level, v2 wraps them)
     if (data && typeof data === 'object') {
-      for (const [model, caps] of Object.entries(data)) {
+      const models = data.models || data; // v1 compat: data was the models map directly
+      if (typeof data.version === 'number' && data.version < CACHE_VERSION) {
+        console.log(`[capabilities] Cache version ${data.version} < ${CACHE_VERSION} — clearing`);
+        capsCache.clear();
+        return;
+      }
+      for (const [model, caps] of Object.entries(models)) {
         if (caps && typeof caps === 'object' && 'tools' in caps && 'thinking' in caps) {
           capsCache.set(model, caps as ModelCaps);
         }
@@ -51,9 +66,9 @@ async function loadCache(): Promise<void> {
 /** Save cached capabilities to disk. */
 async function saveCache(): Promise<void> {
   try {
-    const obj: Record<string, ModelCaps> = {};
+    const obj: CacheFile = { version: CACHE_VERSION, models: {} };
     for (const [model, caps] of capsCache) {
-      obj[model] = caps;
+      obj.models[model] = caps;
     }
     await fs.writeFile(CACHE_FILE, JSON.stringify(obj, null, 2), 'utf-8');
   } catch (e) {
@@ -96,7 +111,8 @@ async function probeTools(model: string): Promise<boolean> {
 /**
  * Probe a model to determine if it supports thinking mode.
  * Sends a minimal request with `think: true` — if the response
- * includes a `thinking` field, the model supports it.
+ * includes a `thinking` or `reasoning` field, the model supports it.
+ * Ollama uses "thinking" for some endpoints and "reasoning" for others.
  */
 async function probeThinking(model: string): Promise<boolean> {
   try {
@@ -116,8 +132,9 @@ async function probeThinking(model: string): Promise<boolean> {
     clearTimeout(timer);
     if (!res.ok) return false;
     const data = await res.json();
-    // Models that support thinking return a "thinking" field in the message
-    return !!(data.message?.thinking);
+    // Models that support thinking return either "thinking" or "reasoning"
+    // field in the message — check both.
+    return !!(data.message?.thinking || data.message?.reasoning);
   } catch {
     return false;
   }
@@ -229,5 +246,5 @@ const FALLBACK_TOOL_MODELS = [
 ];
 
 const FALLBACK_THINKING_MODELS = [
-  'qwen3', 'deepseek-r1', 'qwq', 'magpie',
+  'qwen3', 'qwen', 'deepseek-r1', 'deepseek-r1', 'qwq', 'magpie', 'kimi', 'glm', 'internlm',
 ];
