@@ -137,19 +137,7 @@ function applyConfig(config) {
 }
 
 /**
- * Bump the patch segment in place (0.10.0 → 0.10.1) so every build produces
- * a NEW artifact name and never overwrites the previous release's files.
- * Returns the new version string.
- */
-function bumpPatch(config) {
-  const parts = config.version.split('.').map(Number);
-  for (let i = 0; i < 3; i++) if (isNaN(parts[i])) parts[i] = 0;
-  parts[2]++;
-  config.version = `${parts[0]}.${parts[1]}.${parts[2]}`;
-  return config.version;
-}
-
-/** Persist the (possibly auto-bumped) version to build-config.json + package.json. */
+/** Persist the version to build-config.json + package.json. */
 function persistVersion(config) {
   saveJson(CONFIG_PATH, config);
   applyConfig(config);
@@ -345,16 +333,13 @@ function showMenu() {
   console.log('  [8] Build both (EXE + APK)');
   console.log('  [Q] Quit');
   console.log('');
-  console.log('  ℹ️  Building without bumping auto-increments the patch (never overwrites artifacts)');
+  console.log('  ℹ️  Version is taken from frontend/build-config.json');
   console.log('');
 }
 
 async function interactiveMenu(config) {
   let running = true;
-  // Track whether the user explicitly chose a version this session (options
-  // 1-4). If they go straight to "Build" without one, we auto-bump the patch
-  // so the new artifacts never overwrite the previous release's files.
-  let versionChanged = false;
+
   while (running) {
     showBanner(config);
     showMenu();
@@ -369,7 +354,6 @@ async function interactiveMenu(config) {
         parts[idx]++;
         config.version = `${parts[0]}.${parts[1]}.${parts[2]}`;
         const labels = ['Major', 'Minor', 'Patch'];
-        versionChanged = true;
         console.log(`  ✅ ${labels[idx]} bump: ${config.version}`);
         await ask('  Press Enter to continue...');
         break;
@@ -378,7 +362,6 @@ async function interactiveMenu(config) {
         const v = await ask(`  Enter version (current: ${config.version}): `);
         if (v.trim()) {
           config.version = v.trim();
-          versionChanged = true;
         }
         break;
       }
@@ -396,30 +379,21 @@ async function interactiveMenu(config) {
         break;
       }
       case '6': {
-        if (!versionChanged) {
-          console.log(`  🔄 Auto-bumped patch: ${config.version} → ${bumpPatch(config)}`);
-          persistVersion(config);
-        }
+        persistVersion(config);
         rl.close();
         await buildElectron(config);
         running = false;
         break;
       }
       case '7': {
-        if (!versionChanged) {
-          console.log(`  🔄 Auto-bumped patch: ${config.version} → ${bumpPatch(config)}`);
-          persistVersion(config);
-        }
+        persistVersion(config);
         rl.close();
         await buildAndroid(config);
         running = false;
         break;
       }
       case '8': {
-        if (!versionChanged) {
-          console.log(`  🔄 Auto-bumped patch: ${config.version} → ${bumpPatch(config)}`);
-          persistVersion(config);
-        }
+        persistVersion(config);
         rl.close();
         await buildElectron(config);
         console.log('\n  ──────────────────────────────────────────────\n');
@@ -452,10 +426,8 @@ async function main() {
     await interactiveMenu(config);
   } else {
     const building = args.includes('--electron') || args.includes('--android') || args.includes('--all');
-    // Non-interactive builds always auto-bump the patch so artifacts from one
-    // run never overwrite the previous release's files.
+    // Always persist the version from build-config.json
     if (building) {
-      console.log(`  🔄 Auto-bumped patch: ${config.version} → ${bumpPatch(config)}`);
       persistVersion(config);
     }
     if (args.includes('--electron')) await buildElectron(config);

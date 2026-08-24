@@ -353,3 +353,77 @@ html.light mark.search-highlight.active {
 .prose h2 { font-size: 1.2rem; }
 .prose h3 { font-size: 1.05rem; }
 .prose p { margin: 0.5rem 0; line-height: 1.6; }
+
+/* ═══ Design Polish ═══ */
+
+/* 1. Card hover lift */
+.hover-lift {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-1px);
+}
+
+/* 2. Skeleton loader */
+.skeleton {
+  background: linear-gradient(90deg, #1a1a1a 25%, #222 50%, #1a1a1a 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* 3. Focus ring */
+:focus-visible {
+  outline: 2px solid #5b7fa6;
+  outline-offset: 2px;
+}
+
+button:focus-visible {
+  outline: 2px solid #5b7fa6;
+  outline-offset: 2px;
+}
+
+/* 4. Status dot pulse */
+.dot-pulse {
+  animation: dot-pulse 2s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* 5. Monospace font consistency */
+.font-mono {
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+}
+
+/* 6. Empty state */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 16px;
+  color: #555;
+  text-align: center;
+}
+
+.empty-state-icon {
+  font-size: 32px;
+  opacity: 0.3;
+  margin-bottom: 4px;
+}
+
+.empty-state-text {
+  font-size: 13px;
+  color: #666;
+  max-width: 240px;
+  line-height: 1.5;
+}

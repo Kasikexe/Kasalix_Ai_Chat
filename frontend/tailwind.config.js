@@ -4,10 +4,24 @@ export default {
   darkMode: 'class',
   theme: {
     extend: {
+      colors: {
+        accent: {
+          DEFAULT: '#5b7fa6',
+          hover: '#7b9fc6',
+          dim: 'rgba(91, 127, 166, 0.15)',
+        },
+        muted: {
+          teal: '#4a9988',
+          'teal-dim': 'rgba(68, 170, 153, 0.12)',
+          red: '#c44',
+          'red-dim': 'rgba(204, 68, 68, 0.12)',
+          amber: '#b8966a',
+          'amber-dim': 'rgba(184, 150, 106, 0.12)',
+        },
+      },
       animation: {
         'fade-in': 'fadeIn 0.3s ease-in-out',
         'pulse-soft': 'pulseSoft 1.5s ease-in-out infinite',
-        'gradient': 'gradient 3s ease infinite',
         'bounce-in': 'bounceIn 0.5s ease-out',
         'spin-slow': 'spin 3s linear infinite',
       },
@@ -19,11 +33,6 @@ export default {
         pulseSoft: {
           '0%, 100%': { opacity: '0.4' },
           '50%': { opacity: '1' },
-        },
-        gradient: {
-          '0%': { backgroundPosition: '0% 50%' },
-          '50%': { backgroundPosition: '100% 50%' },
-          '100%': { backgroundPosition: '0% 50%' },
         },
         bounceIn: {
           '0%': { opacity: '0', transform: 'scale(0.3)' },

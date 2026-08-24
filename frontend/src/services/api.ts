@@ -121,6 +121,7 @@ export const MODEL_ASSIGNMENT_ICONS: Record<keyof ModelAssignments, string> = {
 export interface AppSettings {
   hiddenModels: string[];
   modelAssignments?: Record<string, string>;
+  cloudModelAssignments?: Record<string, string>;
   updatedAt: number;
 }
 
@@ -320,7 +321,7 @@ export const api = {
     );
   },
 
-  async saveSettings(payload: { hiddenModels?: string[]; modelAssignments?: Record<string, string> }): Promise<AppSettings> {
+  async saveSettings(payload: { hiddenModels?: string[]; modelAssignments?: Record<string, string>; cloudModelAssignments?: Record<string, string> }): Promise<AppSettings> {
     return handleResponse<AppSettings>(
       await fetch(`${API_BASE}/settings`, authedFetch(`${API_BASE}/settings`, {
         method: 'PUT',
@@ -544,6 +545,17 @@ export const api = {
     );
   },
 
+  /** Phase 3: Approve or deny a tool call (key from agent_approval_request event). */
+  async approveAgentTool(key: string, approved: boolean): Promise<void> {
+    await handleResponse(
+      await fetch(`${API_BASE}/chat/approve`, authedFetch(`${API_BASE}/chat/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, approved }),
+      }))
+    );
+  },
+
   async generateTitle(message: string, model: string): Promise<string> {
     try {
       // Hard timeout: title generation is a cosmetic nicety — it must never
@@ -581,6 +593,8 @@ streamChat(
     onAgentCommand?: (cmd: { command: string; output: string; failed: boolean }) => void;
     /** Agent mode: fired when the AI asks the user a clarifying question (ask_user) */
     onQuestion?: (q: { key: string; question: string }) => void;
+    /** Phase 3: fired when the agent wants to execute a mutating tool and needs approval */
+    onApprovalRequest?: (q: { key: string; tool: string; args: Record<string, unknown> }) => void;
   },
   signal?: AbortSignal,
   mode?: ConversationMode,
@@ -641,6 +655,7 @@ streamChat(
             case 'file_written': callbacks.onFileWritten?.({ path: parsed.path, changeType: parsed.changeType, originalContent: parsed.originalContent }); break;
             case 'agent_command': callbacks.onAgentCommand?.({ command: parsed.command, output: parsed.output, failed: !!parsed.failed }); break;
             case 'agent_question': callbacks.onQuestion?.({ key: parsed.key, question: parsed.question }); break;
+            case 'agent_approval_request': callbacks.onApprovalRequest?.({ key: parsed.key, tool: parsed.tool, args: parsed.args || {} }); break;
             case 'thinking': callbacks.onThinking?.(parsed.content); break;
             case 'done': callbacks.onDone(); return true;
             case 'error': callbacks.onError(parsed.error); return true;

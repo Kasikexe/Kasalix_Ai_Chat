@@ -233,6 +233,12 @@ async function startServer() {
     stopBtn.disabled = false;
     startBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg> Running`;
 
+    // Start uptime timer
+    startUptimeTimer();
+    refreshModePill();
+    startUsageRefresh();
+    startTrajectoryRefresh();
+
     // Hide startup overlay
     startupOverlay.classList.add('hidden');
 
@@ -252,7 +258,7 @@ async function startServer() {
       $checkServer.classList.add('error');
     }
     startupLog.textContent += '❌ Server failed to start: ' + (result.error || 'Unknown error') + '\n';
-    startupOverlay.classList.remove('hidden');
+    startupOverlay.classList.add('hidden');
   }
 }
 
@@ -266,6 +272,11 @@ async function stopServer() {
     stopBtn.disabled = true;
     startBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg> Start Server`;
     serverUrl.querySelector('.value').textContent = '—';
+    $('copyUrlBtn').style.display = 'none';
+    stopUptimeTimer();
+    stopUsageRefresh();
+    stopTrajectoryRefresh();
+    $('cloudUsageCard').style.display = 'none';
   }
   stopBtn.disabled = false;
 }
@@ -284,7 +295,244 @@ function updateServerBadge(running) {
 function updateServerURL(port, https) {
   const protocol = https ? 'https' : 'http';
   const value = serverUrl.querySelector('.value');
-  value.textContent = `${protocol}://localhost:${port}`;
+  const url = `${protocol}://localhost:${port}`;
+  value.textContent = url;
+  $('copyUrlBtn').style.display = 'inline-flex';
+}
+
+// ─── Uptime Timer ──────────────────────────────────────────────
+let serverStartTime = null;
+let uptimeInterval = null;
+
+function startUptimeTimer() {
+  serverStartTime = Date.now();
+  if (uptimeInterval) clearInterval(uptimeInterval);
+  uptimeInterval = setInterval(updateUptime, 1000);
+  updateUptime();
+}
+
+function stopUptimeTimer() {
+  serverStartTime = null;
+  if (uptimeInterval) clearInterval(uptimeInterval);
+  uptimeInterval = null;
+  const el = $('uptimeValue');
+  if (el) el.textContent = '—';
+}
+
+function updateUptime() {
+  if (!serverStartTime) return;
+  const elapsed = Date.now() - serverStartTime;
+  const hrs = Math.floor(elapsed / 3600000);
+  const mins = Math.floor((elapsed % 3600000) / 60000);
+  const secs = Math.floor((elapsed % 60000) / 1000);
+  const el = $('uptimeValue');
+  if (!el) return;
+  if (hrs > 0) el.textContent = `${hrs}h ${mins}m`;
+  else if (mins > 0) el.textContent = `${mins}m ${secs}s`;
+  else el.textContent = `${secs}s`;
+}
+
+// ─── Mode Pill ────────────────────────────────────────────────
+async function refreshModePill() {
+  try {
+    const settings = await API.getApiKeySettings();
+    if (settings && settings.cloudMode) {
+      const mode = settings.cloudMode;
+      const icon = mode === 'auto' ? '🔄' : mode === 'local' ? '🖥️' : '☁️';
+      const label = mode === 'auto' ? 'Auto' : mode === 'local' ? 'Local Only' : 'Cloud Only';
+      const modeClass = `mode-${mode}`;
+      $('modePillIcon').textContent = icon;
+      const valEl = $('modePillValue');
+      valEl.textContent = label;
+      valEl.className = 'info-pill-value ' + modeClass;
+    }
+  } catch {}
+}
+
+// ─── Cloud Usage Bar ────────────────────────────────────────
+let cloudUsageData = null;
+let usageRefreshInterval = null;
+
+async function refreshCloudUsage() {
+  try {
+    const usage = await API.getCloudUsage();
+    if (!usage || (!usage.monthlyLimit && usage.totalRequests === 0)) {
+      // No data — hide card
+      $('cloudUsageCard').style.display = 'none';
+      $('cloudUsageCost').style.display = 'none';
+      $('costBreakdownCard').style.display = 'none';
+      return;
+    }
+
+    const card = $('cloudUsageCard');
+    card.style.display = 'block';
+    cloudUsageData = usage;
+    const used = usage.totalRequests;
+    const limit = usage.monthlyLimit || 0;
+
+    if (limit > 0) {
+      // With limit set — show progress bar
+      const pct = Math.min(100, Math.round((used / limit) * 100));
+      const isWarning = pct >= 80;
+      const isDanger = pct >= 100;
+      const countEl = $('cloudUsageCount');
+      countEl.textContent = `${used} / ${limit}`;
+      countEl.className = 'cloud-usage-count' + (isDanger ? ' danger' : isWarning ? ' warning' : '');
+      const fillEl = $('cloudUsageFill');
+      fillEl.style.width = Math.min(100, pct) + '%';
+      fillEl.className = 'cloud-usage-fill' + (isDanger ? ' danger' : isWarning ? ' warning' : '');
+      const tokensEl = $('cloudUsageTokens');
+      tokensEl.textContent = usage.totalTokens > 0 ? `~${formatTokenCount(usage.totalTokens)} tokens used` : '';
+      $('cloudUsagePeriod').textContent = `${pct}% of monthly limit`;
+    } else {
+      // No limit — show simple count
+      $('cloudUsageCount').textContent = `${used} requests`;
+      $('cloudUsageFill').style.width = '100%';
+      $('cloudUsageFill').className = 'cloud-usage-fill';
+      $('cloudUsageTokens').textContent = usage.totalTokens > 0 ? `~${formatTokenCount(usage.totalTokens)} tokens used` : '';
+      $('cloudUsagePeriod').textContent = 'No limit set';
+    }
+
+    // ─── Cost estimate ───
+    const costEl = $('cloudUsageCost');
+    const costValueEl = $('cloudCostValue');
+    if (usage.totalEstimatedCost !== undefined && usage.totalEstimatedCost > 0) {
+      costEl.style.display = 'flex';
+      costValueEl.textContent = formatCost(usage.totalEstimatedCost);
+      costValueEl.className = 'cloud-cost-value' + (usage.totalEstimatedCost > 10 ? ' high' : usage.totalEstimatedCost > 50 ? ' danger' : '');
+    } else if (usage.totalTokens > 0 && usage.costBreakdown && usage.costBreakdown.length > 0) {
+      // Has token data but no pricing matches — still show
+      costEl.style.display = 'flex';
+      costValueEl.textContent = 'Pricing unknown';
+      costValueEl.className = 'cloud-cost-value';
+    } else {
+      costEl.style.display = 'none';
+    }
+
+    // ─── Cost breakdown by model ───
+    updateCostBreakdown(usage);
+  } catch (e) {
+    console.error('[cloud-usage] Refresh failed:', e);
+    const card = $('cloudUsageCard');
+    if (card) card.style.display = 'none';
+    const costCard = $('costBreakdownCard');
+    if (costCard) costCard.style.display = 'none';
+  }
+}
+
+function formatTokenCount(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return String(n);
+}
+
+/** Format a dollar amount for display */
+function formatCost(amount) {
+  if (amount < 0.01) return '$' + amount.toFixed(4);
+  if (amount < 1) return '$' + amount.toFixed(3);
+  if (amount < 100) return '$' + amount.toFixed(2);
+  return '$' + amount.toFixed(2);
+}
+
+/** Render cost breakdown by model in the API Keys tab */
+function updateCostBreakdown(usage) {
+  const card = $('costBreakdownCard');
+  const list = $('costBreakdownList');
+  const badge = $('costTotalBadge');
+  if (!card || !list) return;
+
+  const breakdown = usage.costBreakdown || [];
+  if (breakdown.length === 0) {
+    card.style.display = 'none';
+    return;
+  }
+
+  card.style.display = 'block';
+
+  // Total cost badge
+  const totalCost = usage.totalEstimatedCost || 0;
+  badge.textContent = formatCost(totalCost);
+  badge.className = 'cost-total-badge' + (totalCost > 10 ? ' high' : totalCost > 50 ? ' danger' : '');
+
+  // Render each model row
+  list.innerHTML = breakdown.map(item => {
+    const tokens = formatTokenCount(item.inputTokens + item.outputTokens);
+    const inputTokens = formatTokenCount(item.inputTokens);
+    const outputTokens = formatTokenCount(item.outputTokens);
+    const cost = item.totalCost > 0 ? formatCost(item.totalCost) : '—';
+    const requests = (usage.byModel && usage.byModel[item.model]) || 0;
+    return `
+      <div class="cost-row">
+        <span class="cost-model-name" title="${esc(item.model)}">${esc(item.model)}</span>
+        <span class="cost-tokens" title="In: ${inputTokens} / Out: ${outputTokens}">${tokens} tok</span>
+        <span class="cost-amount">${cost}</span>
+        <span class="cost-requests">${requests} req</span>
+      </div>
+    `;
+  }).join('');
+}
+
+// Refresh usage every 15 seconds when server is running
+function startUsageRefresh() {
+  refreshCloudUsage();
+  if (usageRefreshInterval) clearInterval(usageRefreshInterval);
+  usageRefreshInterval = setInterval(() => {
+    if (state.serverRunning) refreshCloudUsage();
+  }, 15000);
+}
+
+function stopUsageRefresh() {
+  if (usageRefreshInterval) clearInterval(usageRefreshInterval);
+  usageRefreshInterval = null;
+}
+
+// ─── Copy URL Button ──────────────────────────────────────────
+$('copyUrlBtn').addEventListener('click', () => {
+  const url = serverUrl.querySelector('.value').textContent;
+  if (!url || url === '—') return;
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = $('copyUrlBtn');
+    btn.textContent = '✓';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = '📋'; btn.classList.remove('copied'); }, 1500);
+  }).catch(() => {});
+});
+
+// ─── Live Server Log Panel ────────────────────────────────────
+const MAX_LOG_LINES = 200;
+let logExpanded = false;
+
+$('toggleLogBtn').addEventListener('click', () => {
+  logExpanded = !logExpanded;
+  $('logPanel').classList.toggle('expanded', logExpanded);
+  $('toggleLogBtn').classList.toggle('expanded', logExpanded);
+});
+
+$('clearLogBtn').addEventListener('click', () => {
+  $('logPanel').innerHTML = '<div class="log-empty">Waiting for server output…</div>';
+});
+
+function appendLogLine(text) {
+  const panel = $('logPanel');
+  if (!panel) return;
+  // Remove empty state
+  const empty = panel.querySelector('.log-empty');
+  if (empty) empty.remove();
+  // Classify log level
+  let cls = '';
+  if (/error|fail|❌/i.test(text)) cls = ' log-error';
+  else if (/warn|⚠️/i.test(text)) cls = ' log-warn';
+  else if (/✓|success|✅/i.test(text)) cls = ' log-success';
+  // Timestamp
+  const ts = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const div = document.createElement('div');
+  div.className = 'log-line' + cls;
+  div.innerHTML = `<span class="log-ts">${ts}</span>${esc(text)}`;
+  panel.appendChild(div);
+  // Trim old lines
+  while (panel.children.length > MAX_LOG_LINES) panel.removeChild(panel.firstChild);
+  // Auto-scroll if not at bottom
+  panel.scrollTop = panel.scrollHeight;
 }
 
 function updateIPs(ips) {
@@ -354,12 +602,16 @@ API.onDashboardUpdate((data) => {
       startBtn.disabled = false;
       stopBtn.disabled = true;
       startBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg> Start Server`;
+      stopUptimeTimer();
+      stopUsageRefresh();
+      stopTrajectoryRefresh();
+      $('cloudUsageCard').style.display = 'none';
     }
   }
 });
 
 API.onServerLog((text) => {
-  // Logs are received here for a log viewer if needed
+  if (text) appendLogLine(text);
 });
 
 // ─── Event Handlers ──────────────────────────────────────────────
@@ -649,6 +901,7 @@ const views = {
   models: $('view-models'),
   speedtest: $('view-speedtest'),
   plugins: $('view-plugins'),
+  apikeys: $('view-apikeys'),
 };
 
 function switchView(name) {
@@ -659,6 +912,7 @@ function switchView(name) {
   if (name === 'models') enterModelsView();
   if (name === 'speedtest') enterSpeedTestView();
   if (name === 'plugins') enterPluginsView();
+  if (name === 'apikeys') enterApiKeysView();
 }
 
 tabs.forEach((t) => t.addEventListener('click', () => switchView(t.dataset.view)));
@@ -671,6 +925,7 @@ function refreshAuthedView() {
   if (activeTab.dataset.view === 'models') enterModelsView();
   if (activeTab.dataset.view === 'speedtest') enterSpeedTestView();
   if (activeTab.dataset.view === 'plugins') enterPluginsView();
+  if (activeTab.dataset.view === 'apikeys') enterApiKeysView();
 }
 
 // ══════════════════════════════════════════════════════
@@ -705,6 +960,33 @@ const DEFAULT_ASSIGNMENTS = {
 
 let installedModels = [];
 let localAssignments = {};
+let cloudAssignments = {};
+let availableCloudModels = [];
+let fetchingCloudModels = false;
+let cloudModelsError = '';
+
+async function fetchAvailableCloudModels() {
+  fetchingCloudModels = true;
+  cloudModelsError = '';
+  try {
+    const result = await API.fetchCloudModels();
+    if (result && result.models && result.models.length > 0) {
+      availableCloudModels = result.models;
+      cloudModelsError = '';
+    } else {
+      availableCloudModels = [];
+      if (result && result.error) {
+        cloudModelsError = result.error;
+        console.warn('[models] Cloud models fetch:', result.error);
+      }
+    }
+  } catch (e) {
+    availableCloudModels = [];
+    cloudModelsError = e instanceof Error ? e.message : String(e);
+    console.error('[models] Failed to fetch cloud models:', e);
+  }
+  fetchingCloudModels = false;
+}
 
 async function enterModelsView() {
   if (!settingsAuthed) {
@@ -722,13 +1004,20 @@ async function enterModelsView() {
 
 async function loadModelsView() {
   $('modelsGrid').innerHTML = '<div class="models-loading">Loading models…</div>';
-  const [mRes, sRes] = await Promise.all([API.getInstalledModels(), API.getSettings()]);
+  const [mRes, sRes, apiKeySettings] = await Promise.all([API.getInstalledModels(), API.getSettings(), API.getApiKeySettings()]);
+  // Fetch available cloud models (await so chips render after load)
+  await fetchAvailableCloudModels();
   installedModels = (mRes && mRes.models) || [];
   const saved = (sRes && sRes.modelAssignments) || {};
+  const savedCloud = (sRes && sRes.cloudModelAssignments) || {};
+  // Sync API keys state for mode label
+  if (apiKeySettings && apiKeySettings.cloudMode) apiKeysState.cloudMode = apiKeySettings.cloudMode;
   localAssignments = { ...DEFAULT_ASSIGNMENTS };
+  cloudAssignments = {};
   // An explicit value wins — including an empty string, which is how the host
   // sets a category to "None" (must NOT fall back to the default on reload).
   for (const k of MODEL_KEYS) if (k in saved) localAssignments[k] = saved[k] ?? '';
+  for (const k of MODEL_KEYS) if (k in savedCloud) cloudAssignments[k] = savedCloud[k] ?? '';
   // Legacy: older settings stored separate thinking/fast chat models —
   // migrate the old "thinking" choice to the single chat role.
   if (!saved.chat && saved.chat_thinking) localAssignments.chat = saved.chat_thinking;
@@ -769,7 +1058,9 @@ function renderModelsGrid() {
   // on that same model and there's nothing extra to configure.
   const chatSupportsThinking = !!installedModels.find((m) => m.name === localAssignments.chat)?.supportsThinking;
   const visibleKeys = MODEL_KEYS.filter((k) => k !== 'chat_thinking' || !chatSupportsThinking);
-  grid.innerHTML = visibleKeys.map((key) => {
+
+  // ── Local section ──────────────────────────────
+  const localSection = visibleKeys.map((key) => {
     const cur = localAssignments[key];
     const suggestion = suggestFor(key);
     const chips = installedModels
@@ -778,18 +1069,13 @@ function renderModelsGrid() {
         const size = m.details && m.details.parameter_size
           ? `<span class="chip-size">${esc(m.details.parameter_size)}</span>`
           : '';
-        // Only relevant for chat roles — other roles never use thinking.
         const noThink = (key === 'chat' || key === 'chat_thinking') && m.supportsThinking === false;
         return `<button class="model-chip${sel ? ' selected' : ''}" data-key="${key}" data-model="${m.name}">${esc(m.name)}${noThink ? '<span class="chip-nothink">no thinking</span>' : ''}${size}</button>`;
       })
       .join('');
-    // Warn the host when the selected chat model can't think — and explain
-    // what happens instead (a separate Thinking model is used while the
-    // toggle is on).
     const thinkingNote = key === 'chat' && cur && !installedModels.find((m) => m.name === cur)?.supportsThinking
       ? '<div class="model-note">⚠️ This model has no thinking mode — a separate Thinking model below is used while the Thinking toggle is on.</div>'
       : '';
-    // Explain when the thinking model is used.
     const thinkingRoleNote = key === 'chat_thinking'
       ? '<div class="model-note">Used only when the Thinking toggle is ON, because the Chat model above can\'t think.</div>'
       : '';
@@ -816,7 +1102,110 @@ function renderModelsGrid() {
     </div>`;
   }).join('');
 
-  grid.querySelectorAll('.model-chip').forEach((chip) => {
+  // ── Cloud section ──────────────────────────────
+  const cloudLoading = fetchingCloudModels
+    ? '<div class="models-loading">Fetching Ollama Cloud models…</div>'
+    : availableCloudModels.length === 0
+      ? `<div class="models-loading">${cloudModelsError ? '⚠️ ' + esc(cloudModelsError) : 'No Ollama Cloud models found. Check your endpoint and API key in the API Keys tab.'}</div>`
+    : '';
+
+  // Estimate usage level for a model (1=light, 4=heavy) based on name patterns
+  function estimateUsageLevel(modelId) {
+    const id = modelId.toLowerCase();
+    // Level 4 — extra heavy (200B+)
+    if (/(671b|675b|480b|1t|120b)/.test(id)) return { level: 4, label: 'Heavy', color: '#c44' };
+    // Level 3 — heavy (70B-199B)
+    if (/(120b|123b|235b|250b|405b|70b)/.test(id)) return { level: 3, label: 'High', color: '#b86' };
+    // Level 2 — moderate (13B-69B)
+    if (/(27b|30b|33b|34b|8b|14b|9b)/.test(id) && !/(20b)/.test(id)) return { level: 2, label: 'Moderate', color: '#5b7fa6' };
+    // Level 1 — light (<13B)
+    return { level: 1, label: 'Light', color: '#4a9' };
+  }
+
+  // Cloud tier limits (from ollama.com/pricing)
+  const tierInfo = (() => {
+    // Try to detect tier from cloud usage data
+    if (cloudUsageData && cloudUsageData.monthlyLimit > 0) {
+      if (cloudUsageData.monthlyLimit > 50000) return { tier: 'Max', color: '#c44' };
+      if (cloudUsageData.monthlyLimit > 5000) return { tier: 'Pro', color: '#5b7fa6' };
+    }
+    return { tier: 'Free', color: '#4a9' };
+  })();
+
+  // Build usage progress bar for the models tab
+  let usageBarHtml = '';
+  if (cloudUsageData && (cloudUsageData.totalRequests > 0 || cloudUsageData.monthlyLimit > 0)) {
+    const used = cloudUsageData.totalRequests;
+    const limit = cloudUsageData.monthlyLimit || 0;
+    const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+    const tokens = cloudUsageData.totalTokens > 0 ? `~${formatTokenCount(cloudUsageData.totalTokens)} tokens` : '';
+    usageBarHtml = `
+      <div class="models-usage-bar">
+        <div class="models-usage-info">
+          <span class="models-usage-tier" style="color:${tierInfo.color}">${tierInfo.tier} tier</span>
+          ${limit > 0
+            ? `<span class="models-usage-count">${used} / ${limit} requests (${pct}%)</span>`
+            : `<span class="models-usage-count">${used} requests</span>`}
+          ${tokens ? `<span class="models-usage-tokens">${tokens}</span>` : ''}
+        </div>
+        ${limit > 0 ? `<div class="models-usage-track"><div class="models-usage-fill" style="width:${Math.min(100, pct)}%;background:${pct >= 90 ? 'var(--red)' : pct >= 70 ? 'var(--orange)' : 'var(--accent)'}"></div></div>` : ''}
+      </div>`;
+  }
+
+  const cloudSection = visibleKeys.map((key) => {
+    const cur = cloudAssignments[key] || '';
+    const chips = availableCloudModels
+      .map((m) => {
+        const sel = m.id === cur;
+        const usage = estimateUsageLevel(m.id);
+        return `<button class="model-chip cloud-chip${sel ? ' selected' : ''}" data-key="${key}" data-model="${esc(m.id)}" title="Usage: ${usage.label} (Level ${usage.level})">${esc(m.id)}<span class="chip-usage" style="color:${usage.color}">${usage.level}</span></button>`;
+      })
+      .join('');
+    const noneBtn = `<button class="model-chip cloud-chip none${cur === '' ? ' selected' : ''}" data-key="${key}" data-model="" title="Clear this category — no cloud model used">None</button>`;
+    return `<div class="model-card">
+      <div class="model-card-head">
+        <span class="model-card-icon">${MODEL_ICONS[key]}</span>
+        <div class="model-card-titles">
+          <div class="model-card-label">${MODEL_LABELS[key]}</div>
+          <div class="model-card-key">${key.replace(/_/g, ' ')}</div>
+        </div>
+        <span class="model-card-current" title="${cur ? esc(cur) : 'No cloud model'}">${cur ? esc(cur) : 'Not set'}</span>
+      </div>
+      <div class="model-chips">
+        ${noneBtn}
+        ${availableCloudModels.length ? chips : (fetchingCloudModels ? '<span class="models-loading-small">Loading…</span>' : '<span style="font-size:11px;color:var(--text-muted)">No Ollama Cloud models — configure endpoint and API key in API Keys tab</span>')}
+      </div>
+    </div>`;
+  }).join('');
+
+  grid.innerHTML = `
+    <div class="models-section">
+      <div class="models-section-header">
+        <span class="section-icon">🖥️</span>
+        <div>
+          <h3>Local Models (Ollama)</h3>
+          <p>Pick from installed Ollama models on this machine</p>
+        </div>
+      </div>
+      <div class="models-grid-inner">${localSection}</div>
+    </div>
+    <div class="models-section">
+      <div class="models-section-header">
+        <span class="section-icon">☁️</span>
+        <div>
+          <h3>Ollama Cloud</h3>
+          <p>Pick from Ollama Cloud models (used when mode is Auto or Cloud)</p>
+        </div>
+        <button class="cloud-refresh-btn" id="refreshCloudModelsBtn" title="Refresh Ollama Cloud models">🔄 Refresh</button>
+      </div>
+      ${cloudLoading}
+      ${usageBarHtml}
+      <div class="models-grid-inner">${cloudSection}</div>
+    </div>
+  `;
+
+  // Local model chip clicks (exclude cloud chips which also have .model-chip)
+  grid.querySelectorAll('.model-chip:not(.cloud-chip)').forEach((chip) => {
     chip.addEventListener('click', () => {
       localAssignments[chip.dataset.key] = chip.dataset.model;
       renderModelsGrid();
@@ -825,13 +1214,59 @@ function renderModelsGrid() {
       status.className = 'save-status';
     });
   });
+
+  // Cloud model chip clicks
+  grid.querySelectorAll('.cloud-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      cloudAssignments[chip.dataset.key] = chip.dataset.model;
+      renderModelsGrid();
+      const status = $('modelsSaveStatus');
+      status.textContent = 'Unsaved changes';
+      status.className = 'save-status';
+    });
+  });
+
+  // Refresh cloud models button
+  const refreshBtn = $('refreshCloudModelsBtn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      refreshBtn.textContent = '⏳ Loading…';
+      refreshBtn.disabled = true;
+      await fetchAvailableCloudModels();
+      renderModelsGrid();
+      refreshBtn.textContent = '🔄 Refresh';
+      refreshBtn.disabled = false;
+    });
+  }
+
+  // Update summary banner
+  updateModelsSummary();
+}
+
+function updateModelsSummary() {
+  const summaryEl = $('modelsSummary');
+  if (!summaryEl) return;
+  summaryEl.style.display = 'flex';
+  // Count local assignments (non-empty)
+  const localCount = MODEL_KEYS.filter(k => localAssignments[k] && localAssignments[k] !== '').length;
+  // Count cloud assignments (non-empty)
+  const cloudCount = MODEL_KEYS.filter(k => cloudAssignments[k] && cloudAssignments[k] !== '').length;
+  $('localAssignedCount').textContent = localCount;
+  $('cloudAssignedCount').textContent = cloudCount;
+  // Show current mode
+  const modeEl = $('modelsModeLabel');
+  if (modeEl && apiKeysState.cloudMode) {
+    const mode = apiKeysState.cloudMode;
+    modeEl.textContent = mode === 'auto' ? 'Auto' : mode === 'local' ? 'Local Only' : 'Cloud Only';
+    modeEl.className = 'ms-value mode-' + mode;
+  }
 }
 
 $('modelsSaveBtn').addEventListener('click', async () => {
   const status = $('modelsSaveStatus');
   status.textContent = 'Saving…';
   status.className = 'save-status';
-  const res = await API.saveSettings({ modelAssignments: localAssignments });
+  const res = await API.saveSettings({ modelAssignments: localAssignments, cloudModelAssignments: cloudAssignments });
   if (res && res.modelAssignments) {
     status.textContent = '✓ Saved';
     status.className = 'save-status ok';
@@ -844,6 +1279,7 @@ $('modelsSaveBtn').addEventListener('click', async () => {
 
 $('modelsResetBtn').addEventListener('click', () => {
   localAssignments = { ...DEFAULT_ASSIGNMENTS };
+  cloudAssignments = {};
   renderModelsGrid();
   const status = $('modelsSaveStatus');
   status.textContent = 'Defaults loaded — click Save';
@@ -1318,9 +1754,362 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Load saved settings (autoStart, httpMode) — AWAIT so startup respects them
   await loadGuiSettings();
 
+  // Load routing mode pill
+  refreshModePill();
+
   // Check for latest GitHub release
   checkLatestRelease();
 
   // Run startup sequence
   runStartup();
 });
+
+// ══════════════════════════════════════════════════════
+// Toast Notifications
+// ══════════════════════════════════════════════════════
+function ensureToastContainer() {
+  let container = document.querySelector('.toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+  }
+  return container;
+}
+
+function showToast(message, type = 'info', duration = 5000) {
+  const container = ensureToastContainer();
+  const icons = { error: '❌', warning: '⚠️', success: '✅', info: 'ℹ️' };
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `
+    <span class="toast-icon">${icons[type] || 'ℹ️'}</span>
+    <span class="toast-text">${message}</span>
+    <button class="toast-close" title="Dismiss">✕</button>
+  `;
+  const close = () => {
+    toast.classList.add('toast-exit');
+    setTimeout(() => toast.remove(), 300);
+  };
+  toast.querySelector('.toast-close').addEventListener('click', close);
+  container.appendChild(toast);
+  if (duration > 0) setTimeout(close, duration);
+  return toast;
+}
+
+// Expose globally so other scripts/modules can use it
+window.showToast = showToast;
+
+// ══════════════════════════════════════════════════════
+// API Keys View
+// ══════════════════════════════════════════════════════
+let apiKeysState = {
+  cloudMode: 'auto', // 'auto' | 'local' | 'cloud'
+  cloudApiKey: '',
+  cloudEndpoint: '',
+};
+
+async function enterApiKeysView() {
+  // Load current settings from backend
+  try {
+    const settings = await API.getApiKeySettings();
+    if (settings) {
+      if (settings.cloudMode) apiKeysState.cloudMode = settings.cloudMode;
+      if (settings.cloudApiKey !== undefined) apiKeysState.cloudApiKey = settings.cloudApiKey;
+      if (settings.cloudEndpoint !== undefined) apiKeysState.cloudEndpoint = settings.cloudEndpoint;
+    }
+  } catch {}
+  // Load usage limits
+  try {
+    const usage = await API.getCloudUsage();
+    if (usage) {
+      const limitInput = $('cloudUsageLimitInput');
+      const budgetInput = $('cloudTokenBudgetInput');
+      if (limitInput) limitInput.value = usage.monthlyLimit || '';
+      if (budgetInput) budgetInput.value = usage.tokenBudget || '';
+    }
+  } catch {}
+  renderApiKeysView();
+}
+
+function renderApiKeysView() {
+  // Update mode buttons
+  document.querySelectorAll('.apikeys-mode-btn').forEach((btn) => {
+    btn.classList.toggle('selected', btn.dataset.mode === apiKeysState.cloudMode);
+  });
+  // Update inputs
+  const keyInput = $('cloudApiKeyInput');
+  const endpointInput = $('cloudEndpointInput');
+  if (keyInput) keyInput.value = apiKeysState.cloudApiKey;
+  if (endpointInput) endpointInput.value = apiKeysState.cloudEndpoint;
+  // Update key status indicator
+  updateApiKeyStatus();
+}
+
+function updateApiKeyStatus() {
+  const statusEl = $('apiKeyStatus');
+  const dotEl = $('apiKeyDot');
+  const textEl = $('apiKeyStatusText');
+  const maskedEl = $('apiKeyMasked');
+  if (!statusEl) return;
+  if (apiKeysState.cloudApiKey && apiKeysState.cloudApiKey.length > 0) {
+    statusEl.classList.add('has-key');
+    dotEl.className = 'dot dot-online';
+    textEl.textContent = 'Key configured';
+    // Show masked version: first 4 chars + stars + last 4 chars
+    const k = apiKeysState.cloudApiKey;
+    if (k.length > 8) maskedEl.textContent = k.slice(0, 4) + '••••••••' + k.slice(-4);
+    else maskedEl.textContent = '••••••••';
+  } else {
+    statusEl.classList.remove('has-key');
+    dotEl.className = 'dot dot-offline';
+    textEl.textContent = 'No key configured';
+    maskedEl.textContent = '';
+  }
+}
+
+// Mode button clicks
+document.querySelectorAll('.apikeys-mode-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    apiKeysState.cloudMode = btn.dataset.mode;
+    renderApiKeysView();
+  });
+});
+
+// Toggle API key visibility
+$('toggleApiKeyVisibility').addEventListener('click', () => {
+  const input = $('cloudApiKeyInput');
+  if (input.type === 'password') {
+    input.type = 'text';
+  } else {
+    input.type = 'password';
+  }
+});
+
+// Save button
+$('apikeysSaveBtn').addEventListener('click', async () => {
+  const status = $('apikeysStatus');
+  status.textContent = 'Saving…';
+  status.className = 'save-status';
+
+  apiKeysState.cloudApiKey = ($('cloudApiKeyInput').value || '').trim();
+  apiKeysState.cloudEndpoint = ($('cloudEndpointInput').value || '').trim();
+
+  // Auto-fill endpoint to ollama.com if API key is set but endpoint is empty
+  if (apiKeysState.cloudApiKey && !apiKeysState.cloudEndpoint) {
+    apiKeysState.cloudEndpoint = 'https://ollama.com';
+    $('cloudEndpointInput').value = 'https://ollama.com';
+  }
+
+  const res = await API.saveApiKeySettings({
+    cloudMode: apiKeysState.cloudMode,
+    cloudApiKey: apiKeysState.cloudApiKey,
+    cloudEndpoint: apiKeysState.cloudEndpoint,
+  });
+
+  if (res && !res.error) {
+    status.textContent = '✓ Saved';
+    status.className = 'save-status ok';
+    updateApiKeyStatus();
+    refreshModePill();
+    // Save usage limits
+    const monthlyLimit = parseInt($('cloudUsageLimitInput')?.value) || 0;
+    const tokenBudget = parseInt($('cloudTokenBudgetInput')?.value) || 0;
+    await API.setCloudUsageLimit({ monthlyLimit, tokenBudget });
+    refreshCloudUsage();
+    setTimeout(() => { status.textContent = ''; }, 2500);
+  } else {
+    status.textContent = '❌ ' + ((res && res.error) || 'Failed to save');
+    status.className = 'save-status err';
+  }
+});
+
+// Connection test button
+$('testApiKeyBtn').addEventListener('click', async () => {
+  const resultEl = $('testResult');
+  const btn = $('testApiKeyBtn');
+  btn.disabled = true;
+  resultEl.textContent = 'Testing…';
+  resultEl.className = 'apikeys-test-result test-testing';
+  // Collect current values
+  const key = ($('cloudApiKeyInput').value || '').trim();
+  const endpoint = ($('cloudEndpointInput').value || '').trim();
+  if (!key) {
+    resultEl.textContent = '❌ No API key entered';
+    resultEl.className = 'apikeys-test-result test-error';
+    btn.disabled = false;
+    return;
+  }
+  // Save first, then attempt a quick request through the backend
+  await API.saveApiKeySettings({
+    cloudMode: apiKeysState.cloudMode,
+    cloudApiKey: key,
+    cloudEndpoint: endpoint,
+  });
+  apiKeysState.cloudApiKey = key;
+  apiKeysState.cloudEndpoint = endpoint;
+  try {
+    // Use getSettings as a lightweight connectivity check
+    const res = await API.getSettings();
+    if (res && !res.error) {
+      resultEl.textContent = '✓ Settings reachable — key saved';
+      resultEl.className = 'apikeys-test-result test-success';
+    } else {
+      resultEl.textContent = '⚠ Key saved but backend unreachable';
+      resultEl.className = 'apikeys-test-result test-error';
+    }
+  } catch (e) {
+    resultEl.textContent = '❌ ' + (e.message || 'Connection failed');
+    resultEl.className = 'apikeys-test-result test-error';
+  }
+  btn.disabled = false;
+  setTimeout(() => { resultEl.textContent = ''; }, 5000);
+});
+
+// Cloud unavailable notification — called from dashboard update or backend events
+API.onServerLog((text) => {
+  if (text && text.includes('[cloud] Unavailable')) {
+    showToast('Cloud provider unavailable. Falling back to local models.', 'warning', 6000);
+  }
+});
+
+// Reset usage counters button
+$('resetUsageBtn').addEventListener('click', async () => {
+  const resultEl = $('resetUsageResult');
+  const btn = $('resetUsageBtn');
+  btn.disabled = true;
+  resultEl.textContent = 'Resetting…';
+  resultEl.className = 'apikeys-test-result test-testing';
+  try {
+    const res = await API.resetCloudUsage();
+    if (res && !res.error) {
+      resultEl.textContent = '✓ Usage counters reset';
+      resultEl.className = 'apikeys-test-result test-success';
+      refreshCloudUsage();
+    } else {
+      resultEl.textContent = '❌ ' + ((res && res.error) || 'Failed');
+      resultEl.className = 'apikeys-test-result test-error';
+    }
+  } catch (e) {
+    resultEl.textContent = '❌ ' + (e.message || 'Failed');
+    resultEl.className = 'apikeys-test-result test-error';
+  }
+  btn.disabled = false;
+  setTimeout(() => { resultEl.textContent = ''; }, 5000);
+});
+
+// ─── Trajectory Panel ─────────────────────────────────────────────────
+const TRAJECTORY_ICONS = {
+  'run:start': '▶️', 'run:end': '⏹️', 'message': '💬',
+  'tool:call': '🔧', 'tool:result': '📋', 'plan': '📝',
+  'plan:update': '✅', 'verify': '🔍', 'thinking': '🧠',
+  'stage': '🔄', 'error': '❌',
+};
+const TRAJECTORY_CLASSES = {
+  'run:start': 'te-run', 'run:end': 'te-run', 'message': 'te-message',
+  'tool:call': 'te-tool-call', 'tool:result': 'te-tool-result',
+  'plan': 'te-plan', 'plan:update': 'te-plan', 'verify': 'te-verify',
+  'thinking': 'te-message', 'stage': 'te-stage', 'error': 'te-error',
+};
+
+async function loadTrajectorySessions() {
+  const sel = $('trajectorySelect');
+  if (!sel) return;
+  try {
+    const result = await API.listSessionLogs();
+    const logs = (result && result.logs) || [];
+    sel.innerHTML = '';
+    if (logs.length === 0) {
+      sel.innerHTML = '<option value="">No sessions yet</option>';
+      return;
+    }
+    for (const log of logs) {
+      const opt = document.createElement('option');
+      opt.value = log.runId;
+      opt.textContent = `${log.runId} (${new Date(log.mtime).toLocaleString()})`;
+      sel.appendChild(opt);
+    }
+    sel.value = logs[0].runId;
+    await loadTrajectoryEvents(logs[0].runId);
+  } catch {
+    sel.innerHTML = '<option value="">Failed to load</option>';
+  }
+}
+
+async function loadTrajectoryEvents(runId) {
+  const container = $('trajectoryEvents');
+  if (!container || !runId) return;
+  container.innerHTML = '<div class="log-empty">Loading…</div>';
+  try {
+    const result = await API.readSessionLog(runId);
+    const events = (result && result.events) || [];
+    if (events.length === 0) {
+      container.innerHTML = '<div class="log-empty">No events in this session.</div>';
+      return;
+    }
+    container.innerHTML = '';
+    for (const ev of events) {
+      const cls = TRAJECTORY_CLASSES[ev.type] || 'te-message';
+      const icon = TRAJECTORY_ICONS[ev.type] || '•';
+      const label = ev.type.replace(/:/g, ' ');
+      const time = new Date(ev.ts).toLocaleTimeString();
+      const statusHtml = ev.meta?.ok === false || ev.meta?.passed === false
+        ? '<span class="te-status failed">failed</span>'
+        : (ev.meta?.passed === true ? '<span class="te-status passed">passed</span>' : '');
+      const roleHtml = ev.role
+        ? `<span class="te-tag">${esc(ev.role)}</span>`
+        : '';
+      const labelHtml = ev.label
+        ? `<span class="te-tag">${esc(ev.label)}</span>`
+        : '';
+      let contentHtml = '';
+      if (ev.content && ev.content.length > 0) {
+        const preview = ev.content.length > 200 ? ev.content.slice(0, 200) + '…' : ev.content;
+        contentHtml = `<div class="te-content" onclick="this.classList.toggle('expanded')">${esc(preview)}</div>`;
+      }
+      const div = document.createElement('div');
+      div.className = `trajectory-event ${cls}`;
+      div.innerHTML = `
+        <div class="te-header">
+          <span class="te-icon">${icon}</span>
+          <span class="te-label">${esc(label)}</span>
+          ${labelHtml}${roleHtml}${statusHtml}
+          <span class="te-time">${time}</span>
+        </div>
+        ${contentHtml}`;
+      container.appendChild(div);
+    }
+    container.scrollTop = container.scrollHeight;
+  } catch (e) {
+    container.innerHTML = `<div class="log-empty">Error loading trajectory: ${esc(String(e))}</div>`;
+  }
+}
+
+$('toggleTrajectoryBtn')?.addEventListener('click', () => {
+  const panel = $('trajectoryPanel');
+  const card = $('trajectoryCard');
+  if (panel.style.display === 'none') {
+    panel.style.display = 'block';
+    card.classList.remove('log-collapsed');
+    loadTrajectorySessions();
+  } else {
+    panel.style.display = 'none';
+    card.classList.add('log-collapsed');
+  }
+});
+
+$('trajectorySelect')?.addEventListener('change', (e) => {
+  const runId = e.target.value;
+  if (runId) loadTrajectoryEvents(runId);
+});
+
+let trajectoryRefreshInterval = null;
+function startTrajectoryRefresh() {
+  const card = $('trajectoryCard');
+  if (card) card.style.display = 'block';
+  loadTrajectorySessions();
+  trajectoryRefreshInterval = setInterval(loadTrajectorySessions, 30000);
+}
+function stopTrajectoryRefresh() {
+  if (trajectoryRefreshInterval) { clearInterval(trajectoryRefreshInterval); trajectoryRefreshInterval = null; }
+}

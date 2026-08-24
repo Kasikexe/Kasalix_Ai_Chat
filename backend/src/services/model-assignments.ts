@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { getDataDir } from '../utils/helpers';
+import { getCloudSettings } from '../routes/settings';
 
 const SETTINGS_FILE = path.join(getDataDir(), 'settings.json');
 
@@ -120,4 +121,45 @@ export async function getModelAssignment(category: keyof ModelAssignments): Prom
 
   // 3. Fall back to hardcoded default
   return DEFAULTS[category];
+}
+
+/**
+ * Get the resolved model for a category, taking cloud mode into account.
+ * - 'cloud' mode: prefer cloud model assignment, fall back to local
+ * - 'auto' mode: prefer cloud model if configured, fall back to local
+ * - 'local' mode: always use local assignment
+ * The `source` out-param tells the caller whether the model is 'local' or 'cloud'.
+ */
+export async function getResolvedModel(
+  category: keyof ModelAssignments
+): Promise<{ model: string; source: 'local' | 'cloud' }> {
+  const localModel = await getModelAssignment(category);
+  try {
+    const cloud = await getCloudSettings();
+    if (cloud.cloudMode !== 'local') {
+      const cma = await getCloudModelAssignment(category);
+      if (cma) {
+        return { model: cma, source: 'cloud' };
+      }
+    }
+  } catch {}
+  return { model: localModel, source: 'local' };
+}
+
+/**
+ * Get the cloud model name for a given category.
+ * Returns the user-configured cloud model name, or an empty string if not set.
+ */
+export async function getCloudModelAssignment(category: keyof ModelAssignments): Promise<string> {
+  try {
+    const data = await fs.readFile(SETTINGS_FILE, 'utf-8');
+    const settings = JSON.parse(data);
+    const cma = settings.cloudModelAssignments;
+    if (cma && typeof cma[category] === 'string') {
+      return cma[category];
+    }
+  } catch {
+    // File doesn't exist or parse error — fall through
+  }
+  return '';
 }

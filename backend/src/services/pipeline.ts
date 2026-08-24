@@ -3,7 +3,7 @@ import path from 'path';
 import { streamChat, streamChatWithTools, modelSupportsTools, modelSupportsThinking } from './ollama';
 import type { ToolLoopMessage } from './ollama';
 import { getMemory } from './memory';
-import { getModelAssignment } from './model-assignments';
+import { getResolvedModel } from './model-assignments';
 import { getWebContext } from './search';
 import { generateImage } from './image';
 import { executeTool, detectTool, getAllTools, isProbablyMathExpression } from './tools/index';
@@ -11,7 +11,43 @@ import type { ToolResult } from './tools/index';
 import { runAgentLoop, collectReferencedFiles } from './agent';
 import { withAiRules } from './ai-rules';
 import { findDangerousRequest, DANGEROUS_REPLY } from './content-guard';
+import { getCloudSettings } from '../routes/settings';
 import type { ConversationMode, Message } from '../types';
+
+/**
+ * Rough token estimate: ~4 characters per token for English text.
+ * Used when the actual token count isn't available from the API.
+ */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+/** Increment cloud usage counter (fire-and-forget, never blocks the pipeline) */
+async function trackCloudUsage(modelName: string, inputTokens?: number, outputTokens?: number): Promise<void> {
+  try {
+    const totalTokens = (inputTokens || 0) + (outputTokens || 0);
+    const res = await fetch('http://localhost:' + (process.env.PORT || 3001) + '/api/cloud-usage/increment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cookie': 'settings_auth=1' },
+      body: JSON.stringify({
+        model: modelName,
+        tokens: totalTokens,
+        inputTokens: inputTokens || 0,
+        outputTokens: outputTokens || 0,
+      }),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.ok) {
+      const usage = await res.json();
+      // Log warning when approaching limit
+      if (usage.monthlyLimit > 0 && usage.totalRequests >= usage.monthlyLimit * 0.9) {
+        console.warn(`[cloud-usage] Approaching monthly limit: ${usage.totalRequests}/${usage.monthlyLimit}`);
+      }
+    }
+  } catch {
+    // Usage tracking is best-effort — never break the pipeline
+  }
+}
 
 interface PipelineOptions {
   model: string;
@@ -31,21 +67,25 @@ interface PipelineOptions {
   temperature?: number;
   top_p?: number;
   max_tokens?: number;
-  /** Agent mode: whether the AI may write/delete files directly (tool loop) */
+  /** Koding mode: whether the AI may write/delete files directly (tool loop) */
   autoApply?: boolean;
-  /** Agent mode: fired when the AI writes/deletes a file (for live UI updates) */
+  /** Koding mode: fired when the AI writes/deletes a file (for live UI updates) */
   onFileWritten?: (write: { path: string; changeType: string; originalContent?: string }) => void;
-  /** Agent mode: fired when the AI starts a tool call */
+  /** Koding mode: fired when the AI starts a tool call */
   onAgentTool?: (call: { tool: string; args: Record<string, unknown> }) => void;
+  /** Phase 3: fired when the agent wants to execute a mutating tool and needs approval */
+  onApprovalRequest?: (key: string, tool: string, args: Record<string, unknown>) => void;
+  /** Phase 3: permission level for tool execution */
+  toolPermission?: 'auto' | 'read-only' | 'ask-each';
   /** Fired with each reasoning chunk from thinking models (qwen3, deepseek-r1, etc.) */
   onThinking?: (chunk: string) => void;
-  /** Agent mode: fired when the AI runs a shell command or auto-verify (terminal feed) */
+  /** Koding mode: fired when the AI runs a shell command or auto-verify (terminal feed) */
   onAgentCommand?: (cmd: { command: string; output: string; failed: boolean }) => void;
-  /** Agent mode: fired when the AI asks the user a clarifying question (ask_user) */
+  /** Koding mode: fired when the AI asks the user a clarifying question (ask_user) */
   onQuestion?: (key: string, question: string) => void;
-  /** Agent mode: fired when a run is stopped/capped so the caller can persist resume state */
+  /** Koding mode: fired when a run is stopped/capped so the caller can persist resume state */
   onResumeState?: (state: { history: { role: string; content: string }[] }) => void;
-  /** Agent mode: resume a previously stopped run */
+  /** Koding mode: resume a previously stopped run */
   resumeState?: { history: { role: string; content: string }[] };
   /** Routing key for ask_user answers (usually the conversation id) */
   conversationId?: string;
@@ -211,8 +251,7 @@ async function detectIntent(messages: Message[], mode?: ConversationMode): Promi
     'make an image', 'make a picture', 'make a photo',
     'draw', 'paint', 'render an image', 'render a picture',
     'image of', 'picture of', 'generate me',
-    'create me', 'make me', 'generate art',
-    'ai image', 'generate image', 'generate picture',
+    'create me', 'make me', 'generate art', 'ai image', 'generate image', 'generate picture',
   ];
   const wantsImage = !content.includes('[image:') && imagePhrases.some((phrase) => content.includes(phrase));
 
@@ -233,7 +272,7 @@ async function detectIntent(messages: Message[], mode?: ConversationMode): Promi
   ];
   const wantsFileInfo = fileQueryPhrases.some((phrase) => content.includes(phrase));
 
-  // Broader code-related phrases for agent mode (catches more requests).
+  // Broader code-related phrases for Koding mode (catches more requests).
   // These are multi-word requests or strong code signals — NOT bare generic
   // words like "app" or "file", so conversational messages like "tell me
   // about yourself" or "what do you think of this design?" do NOT trigger
@@ -242,13 +281,12 @@ async function detectIntent(messages: Message[], mode?: ConversationMode): Promi
     'write a', 'write an', 'write the', 'write code', 'write a function',
     'write a script', 'write a program', 'write a component', 'write a file',
     'generate a', 'generate an', 'generate code', 'generate a function',
-    'generate a component',
-    'create a', 'create an', 'create code', 'create a function',
-    'create a script', 'create a component', 'create a file', 'create a page',
-    'build a', 'build an', 'build a website', 'build an app', 'build a page',
-    'build a component', 'build a project',
-    'make a', 'make an', 'make a website', 'make an app', 'make a page',
-    'make a component', 'make a file',
+    'generate a component', 'create a', 'create an', 'create code',
+    'create a function', 'create a script', 'create a component',
+    'create a file', 'create a page', 'build a', 'build an',
+    'build a website', 'build an app', 'build a page', 'build a component',
+    'build a project', 'make a', 'make an', 'make a website',
+    'make an app', 'make a page', 'make a component', 'make a file',
     'implement a', 'implement an', 'implement this', 'implement the',
     'add a', 'add an', 'add the', 'add code', 'add a function',
     'add a component', 'add a file', 'add a button', 'add a page',
@@ -298,7 +336,7 @@ async function detectIntent(messages: Message[], mode?: ConversationMode): Promi
 
   let wantsCode: boolean;
   if (mode === 'agent') {
-    // Agent mode: phrase-based detection only — there is NO blanket
+    // Koding mode: phrase-based detection only — there is NO blanket
     // "message is long enough → run the code pipeline" rule. A 4+ word
     // conversational message ("how are you doing today?", "tell me about
     // yourself") stays in simple chat; the code pipeline only runs when the
@@ -386,7 +424,7 @@ async function runVisibleStage(
 
 /**
  * Detect programming language/framework from user text and search for documentation.
- * Only runs in agent mode before code generation.
+ * Only runs in Koding mode before code generation.
  */
 // ─── Model-driven tool calling ────────────────────────────
 
@@ -564,6 +602,41 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
     return DANGEROUS_REPLY;
   }
 
+  // ─── Cloud mode routing ──────────────────────────────────────
+  // Resolve the main chat model using cloud mode settings.
+  // getResolvedModel checks cloudModelAssignments and returns the cloud model
+  // when cloud/auto mode is active and a cloud model is configured for the role.
+  try {
+    const cloudSettings = await getCloudSettings();
+    const { cloudMode, cloudApiKey } = cloudSettings;
+    console.log(`[pipeline] Cloud mode: ${cloudMode}, hasApiKey: ${!!cloudApiKey}`);
+
+    if (cloudMode === 'cloud' && !cloudApiKey) {
+      // Cloud-only mode but no API key — notify and fall back to local
+      console.log('[cloud] Unavailable — no API key configured');
+      onStage?.('cloud:unavailable');
+    }
+
+    // Resolve the main model through getResolvedModel so cloud models are
+    // actually used when configured in cloud/auto mode.
+    const resolvedChat = await getResolvedModel('chat');
+    if (resolvedChat.source === 'cloud') {
+      console.log(`[pipeline] Chat model resolved to cloud: ${resolvedChat.model}`);
+    } else {
+      console.log(`[pipeline] Chat model resolved to local: ${resolvedChat.model}`);
+    }
+    // Use the resolved model as the base for the pipeline
+    model = resolvedChat.model;
+    if (resolvedChat.source === 'cloud') {
+      // Estimate input tokens from messages
+      const inputText = messages.map(m => m.content).join('\n');
+      const inputTokenEst = estimateTokens(inputText);
+      trackCloudUsage(resolvedChat.model, inputTokenEst);
+    }
+  } catch (e) {
+    console.error('[pipeline] Failed to resolve chat model:', e);
+  }
+
   // ─── Adaptive thinking ────────────────────────────────────
   // 'off' never thinks; otherwise (default 'auto') decide per message whether
   // reasoning actually helps. When thinking IS needed but the base chat model
@@ -573,10 +646,10 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   const think = thinkingMode === 'off' ? false : needsThinking(lastUserMsgForThink?.content ?? '');
   console.log(`[pipeline] Thinking mode: ${thinkingMode} → think: ${think}`);
   if (think && !modelSupportsThinking(model)) {
-    const thinkingModel = await getModelAssignment('chat_thinking');
-    if (thinkingModel && thinkingModel !== model) {
-      console.log(`[pipeline] Auto-thinking: ${model} can't think → using ${thinkingModel}`);
-      model = thinkingModel;
+    const resolved = await getResolvedModel('chat_thinking');
+    if (resolved.model && resolved.model !== model) {
+      console.log(`[pipeline] Auto-thinking: ${model} can't think → using ${resolved.model} (source: ${resolved.source})`);
+      model = resolved.model;
     }
   }
 
@@ -586,7 +659,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   // Image/vision requests stay on the regular pipeline (they need the
   // vision-analysis and image-generation stages).
   if (mode === 'agent' && opts.autoApply === true && !intent.hasImage && !intent.wantsImage) {
-    console.log('[pipeline] Agent mode with auto-apply — running autonomous loop');
+    console.log('[pipeline] Koding mode with auto-apply — running autonomous loop');
     const memoryContext = await buildMemoryContext(userId);
     return await runAgentLoop({
       model,
@@ -598,6 +671,8 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
       think,
       askKey: opts.conversationId,
       resumeState: opts.resumeState,
+      toolPermission: opts.toolPermission,
+
       callbacks: {
         onStage,
         onChunk,
@@ -607,6 +682,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
         onAgentCommand: opts.onAgentCommand,
         onQuestion: opts.onQuestion,
         onResumeState: opts.onResumeState,
+        onApprovalRequest: opts.onApprovalRequest,
       },
       temperature,
       top_p,
@@ -824,8 +900,14 @@ Rules:
 
     try {
       // Vision model doesn't need thinking mode (it's factual description)
-      const visionModel = await getModelAssignment('vision');
+      const { model: visionModel, source: visionSource } = await getResolvedModel('vision');
+      console.log(`[pipeline] Vision model: ${visionModel} (source: ${visionSource})`);
       imageDescription = await runInternalStage('vision', visionModel, visionMessages, false, signal, { temperature, top_p, max_tokens });
+      if (visionSource === 'cloud') {
+        const inputTokenEst = estimateTokens(visionMessages.map(m => m.content).join('\n'));
+        const outputTokenEst = estimateTokens(imageDescription);
+        trackCloudUsage(visionModel, inputTokenEst, outputTokenEst);
+      }
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') throw e;
       console.error('[pipeline] Vision stage failed:', e);
@@ -869,9 +951,15 @@ Output ONLY the plan — no introductory text, no conclusion, no code blocks.`,
     ];
 
     try {
-      const planningModel = await getModelAssignment('code');
+      const { model: planningModel, source: planningSource } = await getResolvedModel('code');
+      console.log(`[pipeline] Planning model: ${planningModel} (source: ${planningSource})`);
       planOutput = await runVisibleStage('planning', planningModel, planMessages, false, onChunk, signal, { temperature, top_p, max_tokens });
       console.log(`[pipeline] Planning done. Length: ${planOutput.length}`);
+      if (planningSource === 'cloud') {
+        const inputTokenEst = estimateTokens(planMessages.map(m => m.content).join('\n'));
+        const outputTokenEst = estimateTokens(planOutput);
+        trackCloudUsage(planningModel, inputTokenEst, outputTokenEst);
+      }
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') throw e;
       console.error('[pipeline] Planning stage failed:', e);
@@ -882,7 +970,8 @@ Output ONLY the plan — no introductory text, no conclusion, no code blocks.`,
   if (intent.wantsImage && intent.imagePrompt) {
     const userText = intent.imagePrompt;
 
-    const imageModel = await getModelAssignment('image_generation');
+    const { model: imageModel, source: imageSource } = await getResolvedModel('image_generation');
+    console.log(`[pipeline] Image gen model: ${imageModel || '(none)'} (source: ${imageSource})`);
 
     // Try to generate image
     try {
@@ -902,6 +991,10 @@ Output ONLY the plan — no introductory text, no conclusion, no code blocks.`,
         generatedImageFilename = result.filename;
 
         console.log(`[pipeline] Image generated: ${result.filename}`);
+        if (imageSource === 'cloud') {
+          const inputTokenEst = estimateTokens(userText);
+          trackCloudUsage(imageModel, inputTokenEst);
+        }
       }
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') throw e;
@@ -918,7 +1011,7 @@ Output ONLY the plan — no introductory text, no conclusion, no code blocks.`,
       .replace(/\[image:data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+\]/g, '')
       .trim();
 
-    // Agent mode docs lookup: detect language and fetch docs before code gen
+    // Koding mode docs lookup: detect language and fetch docs before code gen
     let docsContext = '';
     if (mode === 'agent' && userText) {
       onStage('search:docs');
@@ -950,10 +1043,7 @@ Output ONLY the plan — no introductory text, no conclusion, no code blocks.`,
       ? `You are an expert developer working in a code agent workspace for ${userName || 'a user'}.
 Your workspace directory is: ${workspacePath || '(not set)'}
 
-${fileListing ? `Here are the ACTUAL files already in the workspace:
-${fileListing}
-
-Do NOT recreate files that already exist unless the user asks. Update them instead.` : ''}
+${fileListing ? `Here are the ACTUAL files already in the workspace:\n${fileListing}\n\nDo NOT recreate files that already exist unless the user asks. Update them instead.` : ''}
 All file paths you generate MUST be relative to this directory.
 
 Generate clean, working code in markdown code blocks.
@@ -989,141 +1079,72 @@ const y = 20;
 - The OLD: section must match the CURRENT file content exactly (read it from the provided file contents). Only include the lines you are changing. This keeps edits surgical and fast — do NOT rewrite entire existing files when only part changes.
 - For a COMPLETE rewrite of an existing file (most of the file changes), a full code block is acceptable.
 
-CRITICAL — COMPLETE FILES ONLY for new files and rewrites: Every full-file code block MUST contain the ENTIRE file from start to finish. NEVER use placeholders like "# rest of the code", "...", "// remaining code unchanged", or similar shortcuts. Partial code with placeholders will corrupt the user's files.
+- For DELETING a file: output a code block with "// DELETE: path/to/file.ext" as the only line.
 
-After the code blocks, write a 1-2 sentence technical summary.${planInstructions}`
-      : `You are an expert developer. Generate clean, working code in markdown code blocks with language tags. After the code, write a 1-2 sentence technical summary of what you built.${planInstructions}`;
+CRITICAL: Output ONLY code blocks. No explanations before or after.` + planInstructions
+      : `You are an expert developer. Generate clean, working code based on the user's request.
 
-    // Inject the AI ruleset — agent mode gets core + agent rules, chat gets core + chat rules
-    codeSystemPrompt = await withAiRules(codeSystemPrompt, mode === 'agent' ? 'agent' : 'chat');
+${docsContext}
 
+${codeContext}
+
+Output code in markdown code blocks.
+Start EVERY code block with a comment showing the file path:
+// filename.ext
+
+${planInstructions}
+
+Output ONLY code blocks. No explanations before or after.`;
+
+    const codeSystem = withContext(await withAiRules(codeSystemPrompt, mode === 'agent' ? 'agent' : 'chat'));
     const codeMessages: Message[] = [
-      {
-        role: 'system',
-        content: codeSystemPrompt,
-      },
-      ...messages.slice(0, -1),
-      { role: 'user', content: codeContext },
+      { role: 'system', content: codeSystem },
+      ...messages,
     ];
 
     try {
-      // Code model doesn't need thinking mode either
-      const codeModel = await getModelAssignment('code');
-      // Tell the UI the code model is now running. It streams internally, so
-      // without this stage the previous one (often 'search:docs') stays on
-      // screen for the entire generation.
-      onStage('code:generating');
-      codeOutput = await runInternalStage('code', codeModel, codeMessages, false, signal, { temperature, top_p, max_tokens });
-      // After code generation completes, show writing stage
-      onStage('writing:files');
+      const { model: codeModel, source: codeSource } = await getResolvedModel('code');
+      console.log(`[pipeline] Code model: ${codeModel} (source: ${codeSource})`);
+      codeOutput = await runInternalStage('code', codeModel, codeMessages, think, signal, { temperature, top_p, max_tokens }, onThinking);
+      console.log(`[pipeline] Code done. Length: ${codeOutput.length}`);
+      if (codeSource === 'cloud') {
+        const inputTokenEst = estimateTokens(codeMessages.map(m => m.content).join('\n'));
+        const outputTokenEst = estimateTokens(codeOutput);
+        trackCloudUsage(codeModel, inputTokenEst, outputTokenEst);
+      }
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') throw e;
-      console.error('[pipeline] Code stage failed:', e);
+      console.error('[pipeline] Code generation failed:', e);
+      codeOutput = `I encountered an error generating code. Please try again.\n\nError: ${e instanceof Error ? e.message : String(e)}`;
     }
-
-
   }
 
-  // STAGE 4: Final response (VISIBLE to user)
-  onStage('summary:writing');
+  // ─── Final response (internal — summarize pipeline output for the user)
+  // The code and image stages above ran silently. Now compose a user-facing
+  // summary that shows what was done.
+  onStage('chat:thinking');
 
-  // Build the generated image tag to include in the final response
-  const imageTag = generatedImageFilename
-    ? `\n\n[generated_image:${generatedImageFilename}]`
-    : '';
+  const pipelineContext: string[] = [];
+  if (imageDescription) pipelineContext.push(`The user's image shows: ${imageDescription}`);
+  if (planOutput) pipelineContext.push(`Plan created:\n${planOutput}`);
+  if (codeOutput) pipelineContext.push(`Generated code:\n${codeOutput}`);
+  if (generatedImageFilename) pipelineContext.push(`Generated image: ${generatedImageFilename}`);
+  if (imageGenNote) pipelineContext.push(imageGenNote);
 
-  let finalMessages: Message[];
+  const summaryPrompt = pipelineContext.length > 0
+    ? `The pipeline has completed. Here is a summary of the results:\n\n${pipelineContext.join('\n\n---\n\n')}\n\nNow provide a brief, friendly summary to the user. If there's code, present the key files. If there's an image, show it. If there's a plan, present it. Be conversational — not robotic.`
+    : 'The pipeline has completed but produced no output. Tell the user something went wrong and ask them to try again.';
 
-  if (codeOutput) {
-    // Code request with image (or just code)
-    const userText = messages[messages.length - 1].content
-      .replace(/\[image:data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+\]/g, '')
-      .trim();
+  const summaryMessages: Message[] = [
+    { role: 'system', content: await withAiRules(
+      `You are a helpful assistant summarizing pipeline output for the user.
+Be concise and conversational. Present results clearly.
+${generatedImageFilename ? `Generated image file: ${generatedImageFilename} — show it to the user.` : ''}`,
+      'chat'
+    ) },
+    ...messages,
+    { role: 'user', content: summaryPrompt },
+  ];
 
-    const finalSystemPrompt = mode === 'agent'
-      ? `You are a friendly AI coding agent working in a file workspace, helping ${userName || 'the user'}.
-Your workspace is at: ${workspacePath || '(not set)'}
-All files you work on live inside this directory.
-
-${fileListing ? `Current workspace files:
-${fileListing}
-
-` : ''}The user asked: "${userText}"
-
-${imageDescription ? `Vision analysis of the image: ${imageDescription}\n\n` : ''}A code AI generated this:
-
-${codeOutput}
-
-Your job: Write a brief, friendly response (3-5 sentences) that:
-- States which files were created or modified
-- Includes the code in markdown code blocks with their FILE PATH COMMENTS on the first line (copy EXACTLY from the code above — the file path markers are REQUIRED)
-- CRITICAL: Each code block must contain the COMPLETE file — NEVER use "# rest of the code", "...", or similar placeholders
-- Is conversational and helpful
-- Do NOT repeat technical analysis verbatim`
-      : `You are a friendly assistant. The user asked: "${userText}"
-
-${imageDescription ? `Vision analysis of the image: ${imageDescription}\n\n` : ''}A code AI generated this:
-
-${codeOutput}
-
-Your job: Write a brief, friendly response (3-5 sentences) that:
-- Acknowledges what was built in plain language
-- Includes the code in markdown code blocks (copy from the code above)
-- Is conversational and helpful
-- Doesn't repeat the analysis verbatim`;
-
-    finalMessages = [
-      {
-        role: 'system',
-        content: finalSystemPrompt,
-      },
-    ];
-  } else if (generatedImageFilename) {
-    // Image generation only (no code)
-    const userText = intent.imagePrompt || messages[messages.length - 1].content
-      .replace(/\[image:[^\]]+\]/g, '').trim();
-
-    finalMessages = [
-      {
-        role: 'system',
-        content: `You are a friendly assistant. The user asked you to generate an image.
-
-Their request: "${userText}"
-
-The image was generated successfully.
-
-Your job: Write a brief, friendly response (2-3 sentences) describing what was generated. Mention any notable details about the image. Be enthusiastic but concise.`,
-      },
-    ];
-  } else if (imageDescription) {
-    // Image only, no code request
-    finalMessages = [
-      {
-        role: 'system',
-        content: `You are a friendly assistant. The user sent an image.
-
-Vision AI description: ${imageDescription}
-
-Your job: Write a brief, friendly response (2-3 sentences) that describes what's in the image in conversational language. Don't mention the AI analysis process.`,
-      },
-    ];
-  } else {
-    // Fallback (shouldn't happen given intent detection)
-    finalMessages = messages;
-  }
-
-  // Run the final visible stage
-  let finalOutput = await runVisibleStage('final', model, finalMessages, think, onChunk, signal, { temperature, top_p, max_tokens }, onThinking);
-
-  // Programmatically append the generated image tag (reliable — not left to AI discretion)
-  if (generatedImageFilename) {
-    finalOutput += `\n\n[generated_image:${generatedImageFilename}]`;
-  }
-
-  // Append a note when image generation was requested but no model is assigned.
-  if (imageGenNote) {
-    finalOutput += imageGenNote;
-  }
-
-  return finalOutput;
+  return await runVisibleStage('chat', model, summaryMessages, false, onChunk, signal, { temperature, top_p, max_tokens }, onThinking);
 }

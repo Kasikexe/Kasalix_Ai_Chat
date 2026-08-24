@@ -43,6 +43,7 @@ interface StreamHandlers {
   onFileWritten?: (write: { path: string; changeType: string; originalContent?: string }) => void;
   onAgentCommand?: (cmd: { command: string; output: string; failed: boolean }) => void;
   onQuestion?: (q: { key: string; question: string }) => void;
+  onApprovalRequest?: (q: { key: string; tool: string; args: Record<string, unknown> }) => void;
 }
 
 interface LiveEntry {
@@ -150,7 +151,8 @@ export function useChat(
   onFileWritten?: (write: { path: string; changeType: string; originalContent?: string }) => void,
   onAgentCommand?: (cmd: { command: string; output: string; failed: boolean }) => void,
   onQuestion?: (q: { key: string; question: string }) => void,
-  onConversationStarted?: (id: string) => void
+  onConversationStarted?: (id: string) => void,
+  onApprovalRequest?: (q: { key: string; tool: string; args: Record<string, unknown> }) => void
 ) {
   const key = initialConversationId ?? 'new';
   ensureLiveTimer();
@@ -162,6 +164,7 @@ export function useChat(
     onFileWritten,
     onAgentCommand,
     onQuestion,
+    onApprovalRequest,
   });
 
   // The entry lives in the module store; this ref ALWAYS points at the store
@@ -251,6 +254,15 @@ export function useChat(
               ? e.stageHistory
               : [...e.stageHistory, stage];
             notify(e);
+            // Cloud unavailable notification — show a toast so the user knows
+            if (stage === 'cloud:unavailable') {
+              // Dynamic import to avoid circular deps; ToastProvider is always mounted
+              import('./useToast').then(({ useToast }) => {
+                // We can't call the hook here (it's a callback, not a component),
+                // so we dispatch a custom event that App.tsx listens for.
+                window.dispatchEvent(new CustomEvent('cloud-unavailable'));
+              }).catch(() => {});
+            }
           },
           onDone: async () => {
             // IMPORTANT: clear the streaming state FIRST — the auto-title call
@@ -299,6 +311,7 @@ export function useChat(
           onFileWritten: (write) => e.handlers.onFileWritten?.(write),
           onAgentCommand: (cmd) => e.handlers.onAgentCommand?.(cmd),
           onQuestion: (q) => e.handlers.onQuestion?.(q),
+          onApprovalRequest: (q) => e.handlers.onApprovalRequest?.(q),
           onError: (err) => {
             // Store duration even on error if there's partial content
             const duration = Date.now() - e.startTime;

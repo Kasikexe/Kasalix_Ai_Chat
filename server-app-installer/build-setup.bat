@@ -26,54 +26,15 @@ if %errorlevel% neq 0 (
     set "USE_NPM=0"
 )
 
-:: ── 2. Set version number ───────────────────────────
+:: ── 2. Read version from frontend/package.json ────
 
-echo [1/7] Setting version number...
+echo [1/7] Reading version...
 echo.
 
 :: Read current version from frontend/package.json
 for /f "usebackq delims=" %%a in (`node -e "const p=require('../frontend/package.json');console.log(p.version)"`) do set "CURRENT_VERSION=%%a"
 if not defined CURRENT_VERSION set "CURRENT_VERSION=1.0.0"
-echo   Current version: %CURRENT_VERSION%
-
-:: Auto-bump the patch (x.y.z -> x.y.(z+1)) when the user presses Enter,
-:: so each build gets a fresh artifact name and never overwrites the previous one.
-set "AUTO_VERSION=%CURRENT_VERSION%"
-for /f "tokens=1,2,3 delims=." %%a in ("%CURRENT_VERSION%") do (
-    if "%%c"=="" (
-        set "AUTO_VERSION=%%a.%%b.1"
-    ) else (
-        set /a "AUTO_PATCH=%%c+1"
-        set "AUTO_VERSION=%%a.%%b.!AUTO_PATCH!"
-    )
-)
-
-set /p "NEW_VERSION=Enter new version (press Enter to auto-bump to %AUTO_VERSION%): "
-if not defined NEW_VERSION set "NEW_VERSION=%AUTO_VERSION%"
-set "NEW_VERSION=%NEW_VERSION: =%"
-if not defined NEW_VERSION set "NEW_VERSION=%AUTO_VERSION%"
-if "%NEW_VERSION%"=="" set "NEW_VERSION=%AUTO_VERSION%"
-
-:: Validate version format (x.y or x.y.z)
-echo !NEW_VERSION!| findstr /r "^[0-9][0-9]*\.[0-9][0-9]*$" >nul 2>nul
-if !errorlevel! neq 0 (
-    echo !NEW_VERSION!| findstr /r "^[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$" >nul 2>nul
-    if !errorlevel! neq 0 (
-        echo [ERROR] Invalid version format. Use e.g. 1.6 or 1.6.0
-        pause
-        exit /b 1
-    )
-)
-
-:: Update version in frontend/package.json and frontend/build-config.json
-node -e "const fs=require('fs');const p=require('../frontend/package.json');p.version='%NEW_VERSION%';fs.writeFileSync('../frontend/package.json',JSON.stringify(p,null,2)+'\n');const b=require('../frontend/build-config.json');b.version='%NEW_VERSION%';fs.writeFileSync('../frontend/build-config.json',JSON.stringify(b,null,2)+'\n')"
-if errorlevel 1 (
-    echo [ERROR] Failed to update version files.
-    pause
-    exit /b 1
-)
-
-echo [OK] Version set to %NEW_VERSION%
+echo   Version: %CURRENT_VERSION%
 echo.
 
 :: ── 3. Install backend dependencies ─────────────────
@@ -117,17 +78,9 @@ popd
 echo [OK] Frontend built.
 echo.
 
-:: ── 5. Read version from frontend package.json ──────
-
-echo [4/7] Reading version...
-for /f "usebackq delims=" %%a in (`node -e "const p=require('../frontend/package.json');console.log(p.version)"`) do set "APP_VERSION=%%a"
-if not defined APP_VERSION (
-    echo [ERROR] Could not read version from frontend/package.json
-    pause
-    exit /b 1
-)
-echo [OK] Version: %APP_VERSION%
-echo.
+:: ── 5. Use version read in step 2 ──────────────────
+set "APP_VERSION=%CURRENT_VERSION%"
+echo [4/7] Version: %APP_VERSION%
 
 :: ── 6. Build Server GUI Electron App ────────────────
 

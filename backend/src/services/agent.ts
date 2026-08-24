@@ -10,6 +10,7 @@ import { getWebContext } from './search';
 import { getModelAssignment } from './model-assignments';
 import { readProjectRules, findAgentMemoryFile, readAgentMemory, appendAgentMemory } from './project-rules';
 import { PROTECTED_DIRS, isProtectedPath, protectedDirsLabel } from '../utils/protected-dirs';
+import { SessionLog, readSessionLog, listSessionLogs } from './session-log';
 const execAsync = promisify(exec);
 
 // ─── Sandbox helpers (same rules as routes/files.ts + /api/terminal) ─────
@@ -195,6 +196,36 @@ export function pruneToBudget(msgs: { role: string; content: string }[]): { role
   let total =
     system.reduce((s, m) => s + estimateTokens(m.content), 0) +
     rest.reduce((s, m) => s + estimateTokens(m.content), 0);
+
+  // Phase 5.14: Tool-result pruning — shrink verbose tool results before dropping messages
+  if (total > MAX_CONTEXT_TOKENS) {
+    for (let i = 0; i < rest.length; i++) {
+      const m = rest[i];
+      if (m.role === 'user' && m.content.startsWith('[TOOL RESULT') && estimateTokens(m.content) > 500) {
+        const truncated = m.content.slice(0, 800) + '\n...[pruned to save context]';
+        total -= estimateTokens(m.content) - estimateTokens(truncated);
+        rest[i] = { ...m, content: truncated };
+      }
+    }
+  }
+
+  // Phase 5.13: Smart compaction — summarize oldest tool results before dropping
+  if (total > MAX_CONTEXT_TOKENS) {
+    for (let i = 0; i < rest.length && total > MAX_CONTEXT_TOKENS; i++) {
+      const m = rest[i];
+      if (m.role === 'user' && m.content.startsWith('[TOOL RESULT') && estimateTokens(m.content) > 200) {
+        // Extract tool name and provide a one-line summary
+        const toolMatch = m.content.match(/\[TOOL RESULT — (\w+)\]/);
+        const toolName = toolMatch ? toolMatch[1] : 'tool';
+        const originalTokens = estimateTokens(m.content);
+        const summary = `[TOOL RESULT — ${toolName}] (summarized from ${originalTokens} tokens) Output received and processed.`;
+        total -= originalTokens - estimateTokens(summary);
+        rest[i] = { ...m, content: summary };
+      }
+    }
+  }
+
+  // Drop oldest messages if still over budget
   while (rest.length > 6 && total > MAX_CONTEXT_TOKENS) {
     const removed = rest.shift()!;
     total -= estimateTokens(removed.content);
@@ -232,6 +263,36 @@ async function askUserQuestion(question: string, opts: AgentLoopOptions): Promis
       resolve: (answer) => {
         opts.signal?.removeEventListener('abort', onAbort);
         resolve(answer);
+      },
+    });
+  });
+}
+
+// ─── Tool approval (Phase 3) ─────────────────────────────────────────
+const pendingApprovals = new Map<string, { resolve: (approved: boolean) => void }>();
+
+export function resolvePendingApproval(key: string, approved: boolean): boolean {
+  const p = pendingApprovals.get(key);
+  if (!p) return false;
+  pendingApprovals.delete(key);
+  p.resolve(approved);
+  return true;
+}
+
+function waitForApproval(key: string, signal?: AbortSignal): Promise<boolean> {
+  return new Promise<boolean>((resolve, reject) => {
+    const onAbort = () => {
+      pendingApprovals.delete(key);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    if (signal) {
+      if (signal.aborted) { onAbort(); return; }
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+    pendingApprovals.set(key, {
+      resolve: (approved) => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve(approved);
       },
     });
   });
@@ -317,7 +378,7 @@ export const AGENT_TOOL_DEFS: AgentToolDef[] = [
   },
   {
     name: 'git_commit',
-    description: 'Stage ALL changes and create a LOCAL git commit with the given summary. ALWAYS write a concise, accurate summary (what changed and why) based on your diff — never generic text like "update files". Uses "Kasalix Agent" as the author unless you pass a name. IMPORTANT: commits are LOCAL ONLY — this tool NEVER pushes to GitHub or any remote, so never claim to have pushed anything. Returns an error if the workspace is not a git repo or there is nothing to commit.',
+    description: 'Stage ALL changes and create a LOCAL git commit with the given summary. ALWAYS write a concise, accurate summary (what changed and why) based on your diff — never generic text like "update files". Uses "Koding" as the author unless you pass a name. IMPORTANT: commits are LOCAL ONLY — this tool NEVER pushes to GitHub or any remote, so never claim to have pushed anything. Returns an error if the workspace is not a git repo or there is nothing to commit.',
     args: '{"summary": "Raise max connections to 500 and add retry logic"} or {"summary": "...", "name": "User Name"}',
     mutating: true,
   },
@@ -339,6 +400,12 @@ export const AGENT_TOOL_DEFS: AgentToolDef[] = [
     args: '{"path": "src/old.ts"}',
     mutating: true,
   },
+  {
+    name: 'delegate_to_subagent',
+    description: 'Delegate a focused sub-task to a sub-agent that runs independently. The sub-agent gets its own context and tool access. Use this for: (1) parallel tasks ("fix the tests while I refactor the API"), (2) complex sub-tasks that need their own reasoning chain, (3) tasks where you want a different model to handle a specific part. The sub-agent shares the same workspace. Returns the sub-agent\'s final answer.',
+    args: '{"task": "Run all tests and report which ones fail", "model": "optional - use a different model"}',
+    mutating: true,
+  },
 ];
 
 const TOOL_JSON_EXAMPLES = `Available tools — to use one, respond with ONLY a single JSON object, no markdown, no other text:
@@ -355,7 +422,9 @@ const TOOL_JSON_EXAMPLES = `Available tools — to use one, respond with ONLY a 
 {"tool": "git_commit", "args": {"summary": "Raise max connections to 500"}}
 {"tool": "read_rules", "args": {}}
 {"tool": "update_memory", "args": {"rule": "The test command is: python -m unittest"}}
-{"tool": "ask_user", "args": {"question": "TypeScript or JavaScript?"}}`;
+{"tool": "ask_user", "args": {"question": "TypeScript or JavaScript?"}}
+{"tool": "delegate_to_subagent", "args": {"task": "Run the test suite and report failures"}}
+{"tool": "delegate_to_subagent", "args": {"task": "Search for deprecated APIs in the codebase", "model": "qwen3:8b"}}`;
 
 // ─── Tool execution ─────────────────────────────────────────────────────
 
@@ -743,6 +812,66 @@ export async function runGit(root: string, args: string[]): Promise<string> {
   return ((stdout || '') + (stderr ? `\n[stderr]\n${stderr}` : '')).trim();
 }
 
+// ─── Sub-agent delegation (Phase 6.15) ─────────────────────────────────
+// Spawns a focused sub-agent loop with a simplified context. The sub-agent
+// shares the same workspace and tools but runs independently with its own
+// session log. Use for parallel tasks, complex sub-tasks, or model-specific work.
+
+async function runSubAgent(
+  root: string,
+  task: string,
+  model: string | undefined,
+  parentOpts: AgentLoopOptions,
+  autoApply: boolean
+): Promise<string> {
+  // Build a minimal system prompt for the sub-agent
+  const subSystem = `You are a focused sub-agent. Your task: ${task}\n\nYou have the same tools as the parent agent. Complete the task and respond with your findings/results. Be concise — the parent agent is waiting for your output.`;
+
+  // Build workspace context
+  const fileTree = await listWorkspaceTree(root);
+  const groundTruth = 'WORKSPACE FILES:\n' + fileTree;
+
+  const subMessages = [
+    { role: 'system' as const, content: subSystem + '\n\n' + groundTruth },
+    { role: 'user' as const, content: task },
+  ];
+
+  const subModel = model || parentOpts.model;
+  let output = '';
+
+  // Run a simplified agent loop (max 10 iterations for sub-agent)
+  const subHistory: { role: string; content: string }[] = [...subMessages];
+  for (let iter = 0; iter < 10; iter++) {
+    const bounded = pruneToBudget(subHistory);
+    const chunks: string[] = [];
+    try {
+      await streamChatWithRetry(
+        { ...parentOpts, model: subModel },
+        bounded,
+        (c) => chunks.push(c),
+        () => {}
+      );
+    } catch (e) {
+      output += `\n[Sub-agent error: ${e instanceof Error ? e.message : String(e)}]`;
+      break;
+    }
+    const raw = chunks.join('');
+    const toolCall = extractToolCall(raw);
+
+    if (!toolCall) {
+      output = raw;
+      break;
+    }
+
+    // Execute the tool
+    const result = await executeTool(root, toolCall, autoApply);
+    subHistory.push({ role: 'assistant' as const, content: raw });
+    subHistory.push({ role: 'user', content: `[TOOL RESULT — ${toolCall.tool}]\n${result.output}` });
+  }
+
+  return output || '(sub-agent completed with no output)';
+}
+
 export async function executeTool(root: string, call: ToolCall, autoApply: boolean): Promise<AgentToolResult> {
   const args = call.args || {};
 
@@ -906,7 +1035,7 @@ export async function executeTool(root: string, call: ToolCall, autoApply: boole
       try {
         const status = await runGit(root, ['status', '--short']);
         if (!status.trim()) return { ok: true, output: 'Nothing to commit — the working tree is clean.' };
-        const author = typeof args.name === 'string' && args.name.trim() ? args.name.trim() : 'Kasalix Agent';
+        const author = typeof args.name === 'string' && args.name.trim() ? args.name.trim() : 'Koding';
         const email = 'agent@kasalix.local';
         // Stage everything EXCEPT protected server dirs — they must never be committed.
         await runGit(root, ['add', '-A', ...gitExcludeArgs()]);
@@ -1218,6 +1347,24 @@ export async function executeTool(root: string, call: ToolCall, autoApply: boole
       }
     }
 
+    case 'delegate_to_subagent': {
+      if (!autoApply) return { ok: false, output: 'delegate_to_subagent is disabled — auto-apply mode is OFF.' };
+      const task = typeof args.task === 'string' ? args.task : '';
+      if (!task.trim()) return { ok: false, output: 'delegate_to_subagent requires a "task" string argument describing the sub-task.' };
+      const subModel = typeof args.model === 'string' && args.model.trim() ? args.model.trim() : undefined;
+      try {
+        const subResult = await runSubAgent(root, task, subModel, {
+          model: subModel || 'default',
+          messages: [],
+          autoApply,
+          callbacks: { onStage: () => {}, onChunk: () => {} },
+        }, autoApply);
+        return { ok: true, output: `[SUB-AGENT RESULT]\n${subResult}` };
+      } catch (e) {
+        return { ok: false, output: `Sub-agent failed: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+
     default:
       return { ok: false, output: `Unknown tool "${call.tool}". Available: ${AGENT_TOOL_DEFS.map((t) => t.name).join(', ')}` };
   }
@@ -1383,13 +1530,20 @@ export interface AgentCallbacks {
   onQuestion?: (key: string, question: string) => void;
   /** Fired when the run is stopped/capped so the caller can persist resume state */
   onResumeState?: (state: { history: { role: string; content: string }[] }) => void;
+  /** Fired when the agent wants to execute a mutating tool and needs user approval */
+  onApprovalRequest?: (key: string, tool: string, args: Record<string, unknown>) => void;
 }
+
+/** Permission level for tool execution */
+export type ToolPermission = 'auto' | 'read-only' | 'ask-each';
 
 export interface AgentLoopOptions {
   model: string;
   messages: { role: string; content: string }[];
   workspacePath?: string;
   autoApply: boolean;
+  /** Permission level: 'auto' = execute all, 'read-only' = no mutations, 'ask-each' = ask user for each mutating tool */
+  toolPermission?: ToolPermission;
   userName?: string;
   signal?: AbortSignal;
   callbacks: AgentCallbacks;
@@ -1414,31 +1568,31 @@ function buildSystemPrompt(workspacePath: string, userName: string, autoApply: b
   const tools = availableTools(autoApply);
   const toolList = tools.map((t) => `- ${t.name}: ${t.description}\n  Example: ${t.args}`).join('\n');
 
-  return `You are an autonomous coding agent helping ${userName || 'a user'} inside their workspace at: ${workspacePath}
+  return `You are Koding — an autonomous coding agent helping ${userName || 'a user'} in: ${workspacePath}
 
-You can use tools to inspect the workspace, run commands, and (in auto-apply mode) write and delete files.
+TOOL CALL FORMAT: respond with ONLY a JSON object, no markdown, no prose:\n${TOOL_JSON_EXAMPLES}
 
-TOOL DESCRIPTIONS (what each tool does, with an example call):\n${toolList}
+TOOLS:\n${toolList}
 
-${TOOL_JSON_EXAMPLES}
+WORKFLOW — think, then act:
+1. PLAN: Before any tool call, briefly state what you will do and why (2-3 sentences max). This keeps you on track.
+2. GATHER: Use list_files, read_file, search_files to understand the workspace. NEVER guess file contents.
+3. ACT: Make targeted changes. Prefer edit_file with small old_string. Use write_file only for new files.
+4. VERIFY: Run the project's verify command after changes. Fix failures until it passes.
+5. DONE: Respond with a friendly summary. If auto-apply is OFF, use code blocks (path as first comment for new files, EDIT convention for edits).
 
 RULES:
-1. To call a tool, respond with ONLY the JSON object above — no markdown fences, no prose, no trailing explanation. You will receive the tool result next.
-2. Use list_files and read_file BEFORE writing or editing anything. NEVER guess file contents — always read the actual file. NEVER invent a file name or create a file you have not confirmed exists (or is needed) — always check the WORKSPACE PROFILE and file listing first.
-3. LANGUAGE CONSISTENCY: always work in the SAME language and framework as the existing project (see the WORKSPACE PROFILE). If the project is Python, edit/create .py files — NEVER switch to config.js, .html, or other languages unless the user explicitly asks. When asked to change something, first find the file that contains it (search_files), then edit THAT file.
-4. EDIT vs REWRITE: For a change to an EXISTING file, prefer edit_file with a SMALL old_string matching just the lines you are changing. write_file on an existing file applies only your changed lines (the rest is preserved) but a version that rewrites most of the file is REFUSED — so NEVER re-emit a file unless you preserve every unchanged line exactly. Before creating any file, verify the path is the real project subdirectory from the WORKSPACE GROUND TRUTH — never create files at the workspace root if the project has folders.
-5. Work step by step: gather context, make changes, then VERIFY by running commands (build/test) when sensible. If a verification command fails, READ the error, fix the file, and re-verify until it passes (or explain clearly why it cannot pass).
-   5a. BUGS: when the user asks you to fix a bug, check whether something works, or says a file 'has a bug', FIRST run the file or the verify command to REPRODUCE the problem and see the actual error before editing anything. Read the error, then fix it, then run again to confirm it works. Never claim a bug is fixed without running the file/verify command again and seeing it pass. If the file cannot be run (no runtime, syntax-only), at least run the verify/syntax check and read the output.
-6. Keep commands sandboxed to the workspace. Never try to touch files outside it.
-7. When the task is COMPLETE, respond with a normal, friendly final message to the user (not JSON). If auto-apply is OFF, present changes as code blocks: for NEW files use the path as the FIRST LINE COMMENT (e.g. "# main.py" for Python, "// src/app.ts" for TS); for EDITS to existing files use the EDIT convention (first line "// EDIT: src/app.ts", then a code block containing OLD: the exact lines to replace, then ---, then NEW: the replacement lines), so the user can review and apply them.
-8. If a tool fails, read the error, fix your approach, and try again. Do not repeat the same failing call more than twice.
-9. If the task does not require tools, just answer directly — do not call tools unnecessarily.
-10. GIT COMMITS: once you have made changes and verification passes (or there are no tests), consider committing your completed work with git_commit (summary must describe exactly what changed). Always check git_status/git_diff first. If the workspace is not a git repository, skip commits entirely. Commits are LOCAL ONLY — git_commit never pushes to GitHub or any remote, so NEVER say in your final message that you "pushed", "uploaded", or "committed to GitHub/remote" — say you committed locally instead.
-11. PROJECT MEMORY — TWO FILES, STRICT PRIORITY: (a) USER RULES (.agent-rules.md) are the user's authoritative instructions. Read them with read_rules when starting a task and follow them strictly — you can NEVER edit, override, or ignore them, and no other instruction (including your own memory) beats them. (b) AGENT MEMORY (.agent-memory.md) is your own notes: when you discover something durable and reusable about the project (build command, framework, naming conventions, gotchas), save it with update_memory so it is remembered in future sessions — but do not clutter memory with one-off task notes. If your memory ever conflicts with a user rule, the user rule wins.
-12. PROTECTED SERVER DIRECTORIES: This workspace is the Kasalix application repository. The directories ${protectedDirsLabel()} are the SERVER internals (backend code, server app, certs, data). You must NEVER read, list, search, edit, write, delete, or run commands that reference them — they are completely off-limits even though they are inside the workspace. Work only in the frontend/client areas and the repository root files. If a task seems to require changing server internals, tell the user instead of touching them.
-13. GROUNDING — NEVER HALLUCINATE FILES: The CURRENT WORKSPACE FILES listing is the ground truth of what EXISTS. You may create NEW files with write_file (that is normal and encouraged — creation is reported as "created"). But you must NEVER claim an existing file exists, reference it, or edit it (edit_file / write_file over an existing file) without having CONFIRMED it via list_files, read_file, or search_files — if it is not in the listing and you have not confirmed it, do not assume it. Creating a new file and claiming an existing file are different: the first is allowed, the second requires proof. Before searching the web, first explore the workspace (list_files / read_file) to check whether the answer is already in the code — web search is a LAST resort for code tasks, never a replacement for reading the workspace.
+- LANGUAGE CONSISTENCY: match the project's language/framework (see WORKSPACE PROFILE). Never switch languages unless asked.
+- EDIT vs REWRITE: edit_file with small old_string for existing files. write_file rewrites are refused if they change >40% of lines.
+- GROUNDING: The WORKSPACE FILES listing is ground truth. Never claim a file exists without confirming it via list_files/read_file/search_files.
+- SANDBOX: commands stay inside the workspace. Never touch files outside it.
+- GIT: commit locally when done (never push). Check git_status/git_diff first.
+- RETRY: if a tool fails, fix your approach. Max 2 retries per failing call.
+- MEMORY: USER RULES (.agent-rules.md) are authoritative — follow them strictly, never edit them. AGENT MEMORY (.agent-memory.md) is your notes — use update_memory for durable knowledge.
+- PROTECTED: ${protectedDirsLabel()} are server internals — NEVER read, edit, or reference them.
+- BUGS: reproduce the bug FIRST (run the code), then fix, then re-run to confirm.
 
-Current tool availability: ${autoApply ? 'full (read, write, delete, run)' : 'read-only (list, read, search, run) — file writes are reviewed by the user'}`;
+AVAILABILITY: ${autoApply ? 'full (read, write, delete, run)' : 'read-only — file writes reviewed by user'}`;
 }
 
 /**
@@ -1467,6 +1621,11 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     return out;
   }
 
+  // ── Session log ──────────────────────────────────────────────────────
+  const sessionLog = new SessionLog();
+  await sessionLog.init();
+  logger.info(`[agent] Session log: ${sessionLog.getFilePath()}`);
+
   callbacks.onStage('agent:thinking');
 
   // Initial context: file listing + language profile injected so the model
@@ -1493,6 +1652,28 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
   // (which includes tool results the conversation itself doesn't store) and
   // append the user's new message (the "continue" prompt) instead of
   // restarting the loop from scratch.
+  //
+  // Phase 2.7: If no resumeState is provided, try to rebuild from the
+  // most recent session log for this workspace — the log is the persistent
+  // source of truth, surviving crashes and restarts.
+  let sessionLogHistory: { role: string; content: string }[] = [];
+  if (!opts.resumeState?.history?.length) {
+    try {
+      const logList = await listSessionLogs();
+      if (logList.length > 0) {
+        const events = await readSessionLog(logList[0].runId);
+        sessionLogHistory = events
+          .filter((e) => e.type === 'message' && e.role && e.content)
+          .map((e) => ({ role: e.role!, content: e.content! }));
+        if (sessionLogHistory.length > 0) {
+          logger.info(`[agent] Resumed ${sessionLogHistory.length} messages from session log ${logList[0].runId}`);
+        }
+      }
+    } catch (e) {
+      logger.info(`[agent] Could not resume from session log: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   const history: { role: string; content: string }[] = opts.resumeState?.history?.length
     ? [
         ...opts.resumeState.history,
@@ -1501,6 +1682,14 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
           .slice(-1)
           .map((m) => ({ role: 'user' as const, content: '[RESUMING a previously stopped run] ' + m.content })),
       ]
+    : sessionLogHistory.length > 0
+      ? [
+          ...sessionLogHistory,
+          ...opts.messages
+            .filter((m) => m.role === 'user')
+            .slice(-1)
+            .map((m) => ({ role: 'user' as const, content: '[RESUMING from session log] ' + m.content })),
+        ]
     : [
         {
           role: 'system',
@@ -1557,12 +1746,44 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     callbacks.onAgentCommand?.({ command: verify.command, output: baselineOut, failed: baselineOut.startsWith('FAILED') });
   }
 
+  // ── Planning phase ──────────────────────────────────────────────────
+  // Before entering the tool loop, ask the model to briefly outline its plan.
+  // This gives the model a structured approach and reduces drift on multi-step
+  // tasks. The plan is injected into the first iteration's context.
+  let planText = '';
+  if (!opts.resumeState?.history?.length) {
+    try {
+      callbacks.onStage('agent:plan');
+      await sessionLog.logStage('agent:plan');
+      const planPrompt = [
+        { role: 'system' as const, content: system + '\n\n' + workspaceProfile },
+        ...opts.messages,
+        { role: 'user' as const, content: lastUserMsg + '\n\nBefore starting, output a brief plan (2-5 bullet points) of what you will do and in what order. Start each line with "PLAN:". Then proceed with your first tool call or answer immediately after.' },
+      ];
+      const planChunks: string[] = [];
+      await streamChatWithRetry(opts, planPrompt, (c) => planChunks.push(c), () => {});
+      const planRaw = planChunks.join('');
+      // Extract lines that start with PLAN:
+      const planLines = planRaw.split('\n').filter((l) => /\bPLAN:/i.test(l));
+      if (planLines.length > 0) {
+        planText = planLines.map((l) => l.replace(/^\s*\d*\.?\s*PLAN:\s*/i, '').trim()).join('\n');
+        await sessionLog.logPlan(planText);
+        logger.info(`[agent] Plan: ${planText.slice(0, 200)}`);
+      }
+    } catch (e) {
+      // Planning is best-effort — if it fails, continue without a plan
+      logger.info(`[agent] Planning phase failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   const seenCalls = new Map<string, number>();
   // Small models often ATTEMPT a tool call but emit malformed JSON (e.g.
   // unescaped newlines inside a multi-line write_file "content"). If a response
   // clearly tries to call a tool but doesn't parse, let the model retry instead
   // of silently treating it as the final answer (which would drop the write).
   let malformedToolCalls = 0;
+  // Plan state — tracks completed steps for progress reporting
+  const completedSteps: string[] = [];
   // Honest stage reporting: fire agent:reading only the first time the agent
   // actually lists/reads the workspace, so the UI todo reflects real progress.
   let readingStageFired = false;
@@ -1596,8 +1817,13 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     const boundedBase = history.length > MAX_HISTORY
       ? [history[0], ...history.slice(-(MAX_HISTORY - 1))]
       : history;
+    // Inject plan into the first iteration's context
+    const planBlock = (iter === 0 && planText)
+      ? '\n\nYOUR PLAN (update as you complete steps):\n' + planText.split('\n').map((l, i) => `${i + 1}. [ ] ${l}`).join('\n')
+      : (completedSteps.length > 0 ? '\n\nCOMPLETED STEPS:\n' + completedSteps.map((s) => `- [x] ${s}`).join('\n') : '');
+
     const bounded: { role: string; content: string }[] = pruneToBudget([
-      { role: 'system', content: groundTruthBlock },
+      { role: 'system', content: groundTruthBlock + planBlock },
       ...boundedBase,
     ]);
 
@@ -1614,7 +1840,22 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     await streamChatWithRetry(opts, bounded, (c) => chunks.push(c), (t) => thinkingChunks.push(t));
     const raw = chunks.join('');
 
+    // Phase 2.6 improvement: Send thinking/reasoning to frontend even for
+    // tool call iterations, so the user sees what the model was thinking
+    // before each action. Previously this was only shown for the final answer.
+    if (thinkingChunks.length > 0) {
+      for (const t of thinkingChunks) callbacks.onThinking?.(t);
+    }
     const toolCall = extractToolCall(raw);
+
+    // Phase 2.6 improvement: Send any non-JSON reasoning text that preceded
+    // the tool call, so the user sees what the model was thinking before action.
+    if (toolCall) {
+      const reasoningText = raw.replace(/\{\s*"tool".*$/s, '').trim();
+      if (reasoningText && reasoningText.length > 5) {
+        callbacks.onChunk(`_🤔 ${reasoningText}_\n\n`);
+      }
+    }
 
     // Malformed tool attempt recovery: the response contains JSON tool markers
     // ("tool" / "args") but did not parse into a valid call. Give the model up
@@ -1650,6 +1891,8 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
 
     // Replay the streamed chunks so the message appears progressively, then return.
     if (!toolCall) {
+      await sessionLog.logMessage('assistant', raw);
+      await sessionLog.end();
       callbacks.onStage('agent:done');
       for (const t of thinkingChunks) callbacks.onThinking?.(t);
       for (const c of chunks) callbacks.onChunk(c);
@@ -1673,6 +1916,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
 
     callbacks.onToolStart?.(toolCall);
     callbacks.onStage('agent:tool');
+    await sessionLog.logToolCall(toolCall.tool, toolCall.args);
     logger.info(`[agent] Tool call: ${toolCall.tool} ${JSON.stringify(toolCall.args).slice(0, 120)}`);
 
     // ask_user pauses the loop until the user answers via the frontend modal.
@@ -1690,7 +1934,23 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       continue;
     }
 
+    // ── Phase 3: Approval gate for mutating tools ──────────────────────
+    if (MUTATING_TOOLS.has(toolCall.tool) && opts.toolPermission === 'ask-each') {
+      const approvalKey = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      callbacks.onApprovalRequest?.(approvalKey, toolCall.tool, toolCall.args);
+      callbacks.onStage('agent:waiting');
+      // Wait for user approval via the pending approval map
+      const approved = await waitForApproval(approvalKey, opts.signal);
+      if (!approved) {
+        history.push({ role: 'assistant', content: raw });
+        history.push({ role: 'user', content: `[TOOL DENIED — ${toolCall.tool}] The user denied this tool call. Explain what you were trying to do and suggest an alternative approach.` });
+        await sessionLog.logToolResult(toolCall.tool, 'Denied by user', false);
+        continue;
+      }
+    }
+
     const result = await executeTool(root, toolCall, autoApply);
+    await sessionLog.logToolResult(toolCall.tool, result.output, result.ok);
 
     if (toolCall.tool === 'run_command') {
       const cmd = typeof toolCall.args?.command === 'string' ? toolCall.args.command : '';
@@ -1710,10 +1970,21 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     }
 
     history.push({ role: 'assistant', content: raw });
+    await sessionLog.logMessage('assistant', raw);
     history.push({
       role: 'user',
       content: `[TOOL RESULT — ${toolCall.tool}]\n${result.output}`,
     });
+    await sessionLog.logMessage('user', `[TOOL RESULT — ${toolCall.tool}]\n${result.output}`);
+
+    // Track plan progress — if a file was written/deleted, mark it as done
+    if (result.fileWrite && (toolCall.tool === 'write_file' || toolCall.tool === 'edit_file' || toolCall.tool === 'delete_file')) {
+      const step = `${toolCall.tool}: ${result.fileWrite.path}`;
+      if (!completedSteps.includes(step)) {
+        completedSteps.push(step);
+        await sessionLog.logPlanUpdate(`Completed: ${step}`);
+      }
+    }
 
     // Auto-verify after any file mutation: run the project's test/build
     // command and feed the outcome back so the model fixes failures.
@@ -1740,9 +2011,12 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
         role: 'user',
         content: `[VERIFICATION RESULT — ${verify.label} (${verify.command})]\n${verifyOut}\n\nThis is a verification you requested. If it PASSED, continue with the next step or finish the task. If it FAILED, call a tool (e.g. read_file / edit_file) to fix the code, then the verification will run again automatically.`,
       });
+      await sessionLog.logVerify(verify.command, verifyOut, !verifyOut.startsWith('FAILED'));
       callbacks.onAgentCommand?.({ command: verify.command, output: verifyOut, failed: verifyOut.startsWith('FAILED') });
     }
   }
+  // End session log
+  await sessionLog.end();
   } catch (e) {
     // Stopped or crashed mid-run — persist the internal history so a later
     // "continue" can resume from here instead of restarting from scratch.
@@ -1753,6 +2027,8 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
   // Hit iteration cap — stop gracefully but save state so the user can resume.
   const msg = 'I reached the maximum number of steps for this request. Here is my progress so far — tell me to continue if you want me to keep going.';
   fireResumeState();
+  await sessionLog.logMessage('assistant', msg);
+  await sessionLog.end();
   callbacks.onStage('agent:done');
   callbacks.onChunk(msg);
   return msg;

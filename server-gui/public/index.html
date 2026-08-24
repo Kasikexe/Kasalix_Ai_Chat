@@ -65,6 +65,10 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="8" height="8" rx="1"/><rect x="14" y="2" width="8" height="8" rx="1"/><rect x="2" y="14" width="8" height="8" rx="1"/><rect x="14" y="14" width="8" height="8" rx="1"/></svg>
       Plugins
     </button>
+    <button class="tab" data-view="apikeys">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+      API Keys
+    </button>
   </nav>
 
   <!-- ═══ DASHBOARD VIEW ═══ -->
@@ -94,6 +98,7 @@
           <div class="server-url" id="serverUrl">
             <span class="label">URL:</span>
             <span class="value">—</span>
+            <button class="btn-copy" id="copyUrlBtn" title="Copy URL to clipboard" style="display:none">📋</button>
           </div>
         </div>
         <div class="server-options">
@@ -110,6 +115,38 @@
             </div>
           </label>
         </div>
+        <!-- Cloud Usage Bar -->
+        <div class="cloud-usage-card" id="cloudUsageCard" style="display:none">
+          <div class="cloud-usage-header">
+            <span class="cloud-usage-title">☁️ Cloud Usage</span>
+            <span class="cloud-usage-count" id="cloudUsageCount">0 / 0</span>
+          </div>
+          <div class="cloud-usage-bar">
+            <div class="cloud-usage-fill" id="cloudUsageFill" style="width:0%"></div>
+          </div>
+          <div class="cloud-usage-detail" id="cloudUsageDetail">
+            <span id="cloudUsageTokens">—</span>
+            <span id="cloudUsagePeriod">This month</span>
+          </div>
+          <div class="cloud-usage-cost" id="cloudUsageCost" style="display:none">
+            <span class="cloud-cost-icon">💲</span>
+            <span class="cloud-cost-label">Est. cost:</span>
+            <span class="cloud-cost-value" id="cloudCostValue">$0.00</span>
+          </div>
+        </div>
+        <!-- Mode + Uptime strip -->
+        <div class="server-info-strip">
+          <div class="info-pill" id="modePill">
+            <span class="info-pill-icon" id="modePillIcon">🔄</span>
+            <span class="info-pill-label">Mode:</span>
+            <span class="info-pill-value" id="modePillValue">Auto</span>
+          </div>
+          <div class="info-pill" id="uptimePill">
+            <span class="info-pill-icon">⏱️</span>
+            <span class="info-pill-label">Uptime:</span>
+            <span class="info-pill-value" id="uptimeValue">—</span>
+          </div>
+        </div>
       </div>
 
       <!-- Network Card -->
@@ -124,6 +161,8 @@
           <div class="ip-row placeholder">Detecting...</div>
         </div>
       </div>
+
+
 
       <!-- App Icon Card -->
       <div class="card">
@@ -265,6 +304,44 @@
           <div class="user-row placeholder">Authenticate to see users</div>
         </div>
       </div>
+
+      <!-- Live Log Card -->
+      <div class="card log-card">
+        <div class="card-title log-card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+          </svg>
+          Server Log
+          <button class="btn-icon log-expand-btn" id="toggleLogBtn" title="Expand / collapse log">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <button class="btn-icon log-clear-btn" id="clearLogBtn" title="Clear log">🗑</button>
+        </div>
+        <div class="log-panel" id="logPanel">
+          <div class="log-empty">Waiting for server output…</div>
+        </div>
+      </div>
+
+      <!-- Trajectory Panel -->
+      <div class="card" id="trajectoryCard" style="display:none">
+        <div class="card-title log-card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+          Agent Trajectory
+          <button class="btn-icon log-expand-btn" id="toggleTrajectoryBtn" title="Expand / collapse">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <select id="trajectorySelect" class="trajectory-select" title="Select a session log">
+            <option value="">No sessions</option>
+          </select>
+        </div>
+        <div class="trajectory-panel" id="trajectoryPanel" style="display:none">
+          <div class="trajectory-events" id="trajectoryEvents">
+            <div class="log-empty">Select a session to view its trajectory.</div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
   </div>
@@ -287,6 +364,25 @@
     </div>
     <div class="view-locked" id="modelsLocked" style="display:none">
       <p>🔒 Unlock the admin panel (Settings Password on the Dashboard) to edit model assignments.</p>
+    </div>
+    <!-- Quick assignment summary -->
+    <div class="models-summary" id="modelsSummary" style="display:none">
+      <div class="models-summary-pill">
+        <span class="ms-label">Local:</span>
+        <span class="ms-count" id="localAssignedCount">0</span>
+        <span class="ms-dim">assigned</span>
+      </div>
+      <div class="models-summary-divider"></div>
+      <div class="models-summary-pill">
+        <span class="ms-label">Cloud:</span>
+        <span class="ms-count" id="cloudAssignedCount">0</span>
+        <span class="ms-dim">configured</span>
+      </div>
+      <div class="models-summary-divider"></div>
+      <div class="models-summary-pill">
+        <span class="ms-label">Mode:</span>
+        <span class="ms-value" id="modelsModeLabel">Auto</span>
+      </div>
     </div>
     <div class="models-grid" id="modelsGrid">
       <div class="models-loading">Loading models…</div>
@@ -336,6 +432,133 @@
     </div>
     <div class="plugins-catalog" id="pluginsCatalog">
       <div class="plugins-loading">Loading catalog…</div>
+    </div>
+  </div>
+
+  <!-- ═══ API KEYS VIEW ═══ -->
+  <div class="view" id="view-apikeys" style="display:none">
+    <div class="view-header">
+      <div class="view-title-row">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+        <div>
+          <h2>API Keys</h2>
+          <p>Configure cloud API keys and model routing mode</p>
+        </div>
+      </div>
+      <div class="view-actions">
+        <span class="save-status" id="apikeysStatus"></span>
+        <button class="btn btn-small btn-primary" id="apikeysSaveBtn">Save</button>
+      </div>
+    </div>
+    <div class="apikeys-content">
+      <!-- Model Routing Mode -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Model Routing Mode
+        </div>
+        <p class="apikeys-desc">Choose how the server routes model requests between local (Ollama) and cloud providers.</p>
+        <div class="apikeys-mode-grid">
+          <button class="apikeys-mode-btn" data-mode="auto">
+            <span class="mode-icon">🔄</span>
+            <span class="mode-label">Auto</span>
+            <span class="mode-desc">Try cloud first, fall back to local if unavailable</span>
+          </button>
+          <button class="apikeys-mode-btn" data-mode="local">
+            <span class="mode-icon">🖥️</span>
+            <span class="mode-label">Local Only</span>
+            <span class="mode-desc">Only use local Ollama models, no cloud fallback</span>
+          </button>
+          <button class="apikeys-mode-btn" data-mode="cloud">
+            <span class="mode-icon">☁️</span>
+            <span class="mode-label">Cloud Only</span>
+            <span class="mode-desc">Only use Ollama Cloud, no fallback to local</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Cloud API Key -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+          Ollama Cloud API Key
+        </div>
+        <p class="apikeys-desc">Enter your API key for cloud-based Ollama or compatible cloud provider.</p>
+        <!-- Key status indicator -->
+        <div class="apikeys-key-status" id="apiKeyStatus">
+          <span class="dot dot-offline" id="apiKeyDot"></span>
+          <span id="apiKeyStatusText">No key configured</span>
+          <span class="apikeys-key-masked" id="apiKeyMasked"></span>
+        </div>
+        <div class="apikeys-field">
+          <label class="apikeys-label">API Key</label>
+          <div class="apikeys-input-row">
+            <input type="password" id="cloudApiKeyInput" class="apikeys-input" placeholder="sk-... or your API key" />
+            <button class="btn btn-small btn-ghost" id="toggleApiKeyVisibility" title="Show/Hide API key">👁️</button>
+          </div>
+          <p class="apikeys-hint">Your API key is stored locally and never shared.</p>
+        </div>
+        <!-- Connection test -->
+        <div class="apikeys-test-row">
+          <button class="btn btn-small btn-ghost" id="testApiKeyBtn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            Test Connection
+          </button>
+          <span class="apikeys-test-result" id="testResult"></span>
+        </div>
+      </div>
+
+      <!-- Usage Limits -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="10"/></svg>
+          Usage Limits
+        </div>
+        <p class="apikeys-desc">Set soft limits for cloud API usage. When approaching the limit, a warning appears in the server log.</p>
+        <div class="apikeys-field">
+          <label class="apikeys-label">Monthly Request Limit</label>
+          <input type="number" id="cloudUsageLimitInput" class="apikeys-input" placeholder="0 = unlimited" min="0" />
+          <p class="apikeys-hint">Maximum cloud API requests per month. Resets on the 1st. Set to 0 for unlimited.</p>
+        </div>
+        <div class="apikeys-field">
+          <label class="apikeys-label">Token Budget (estimated)</label>
+          <input type="number" id="cloudTokenBudgetInput" class="apikeys-input" placeholder="0 = unlimited" min="0" />
+          <p class="apikeys-hint">Estimated token budget for the month. Set to 0 for unlimited.</p>
+        </div>
+        <div class="apikeys-test-row">
+          <button class="btn btn-small btn-ghost" id="resetUsageBtn">
+            🔄 Reset Usage Counters
+          </button>
+          <span class="apikeys-test-result" id="resetUsageResult"></span>
+        </div>
+      </div>
+
+      <!-- Cost Breakdown -->
+      <div class="card" id="costBreakdownCard" style="display:none">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="10"/></svg>
+          Cost Breakdown
+          <span class="cost-total-badge" id="costTotalBadge"></span>
+        </div>
+        <div class="cost-breakdown-list" id="costBreakdownList"></div>
+        <div class="cost-note">
+          <span>💡</span> Cost is estimated from token usage × model pricing. Actual costs may vary.
+        </div>
+      </div>
+
+      <!-- Cloud Endpoint (optional) -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          Ollama Cloud Endpoint
+        </div>
+        <p class="apikeys-desc">Ollama Cloud endpoint for running models on ollama.com hardware.</p>
+        <div class="apikeys-field">
+          <label class="apikeys-label">Endpoint URL</label>
+          <input type="text" id="cloudEndpointInput" class="apikeys-input" placeholder="https://ollama.com" />
+          <p class="apikeys-hint">Default: https://ollama.com — leave empty if using only local models.</p>
+        </div>
+      </div>
     </div>
   </div>
 

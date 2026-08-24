@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { runPipeline } from '../services/pipeline';
 import { addMessage, createConversation, getConversation, updateConversation } from '../services/storage';
-import { resolvePendingQuestion } from '../services/agent';
+import { resolvePendingQuestion, resolvePendingApproval } from '../services/agent';
 import { getMemory } from '../services/memory';
 import { extractMemoryFromTurn } from '../services/extractor';
 import { chat as ollamaChat, streamChat } from '../services/ollama';
@@ -166,6 +166,7 @@ chat.post('/', async (c) => {
             onFileWritten: (write) => send({ type: 'file_written', path: write.path, changeType: write.changeType, originalContent: write.originalContent }),
             onAgentCommand: (cmd) => send({ type: 'agent_command', command: cmd.command, output: cmd.output, failed: cmd.failed }),
             onQuestion: (key, question) => send({ type: 'agent_question', key, question }),
+            onApprovalRequest: (key, tool, args) => send({ type: 'agent_approval_request', key, tool, args }),
             onResumeState: (state) => {
               if (activeConvId) {
                 updateConversation(activeConvId, ownerId, { agentState: state }).catch((e) =>
@@ -305,6 +306,22 @@ chat.post('/answer', async (c) => {
   } catch (e) {
     console.error('[chat] Answer route error:', e);
     return c.json({ error: e instanceof Error ? e.message : 'Failed to answer' }, 500);
+  }
+});
+
+// --- Agent tool approval (Phase 3) ---
+chat.post('/approve', async (c) => {
+  try {
+    const { key, approved } = await c.req.json();
+    if (!key || typeof key !== 'string') {
+      return c.json({ error: 'key is required' }, 400);
+    }
+    const ok = resolvePendingApproval(key, approved === true);
+    if (!ok) return c.json({ error: 'No pending approval for that key' }, 404);
+    return c.json({ success: true });
+  } catch (e) {
+    console.error('[chat] Approve route error:', e);
+    return c.json({ error: e instanceof Error ? e.message : 'Failed' }, 500);
   }
 });
 

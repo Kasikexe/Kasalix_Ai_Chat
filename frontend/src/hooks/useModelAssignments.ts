@@ -16,6 +16,7 @@ export type ModelAssignmentKey = keyof ModelAssignments;
 
 export function useModelAssignments() {
   const [assignments, setAssignments] = useState<ModelAssignments>({ ...DEFAULT_ASSIGNMENTS });
+  const [cloudAssignments, setCloudAssignments] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
@@ -43,6 +44,9 @@ export function useModelAssignments() {
           }
           return merged;
         });
+      }
+      if (settings.cloudModelAssignments) {
+        setCloudAssignments(settings.cloudModelAssignments);
       }
       const authed = await api.isAuthenticated();
       setIsAuthed(authed);
@@ -114,14 +118,27 @@ export function useModelAssignments() {
     [isAuthed]
   );
 
+  // Get the resolved model for a category — picks cloud if a cloud model is configured
+  const getResolvedModel = useCallback(
+    (key: ModelAssignmentKey): { model: string; source: 'local' | 'cloud' } => {
+      const local = assignments[key];
+      const cloud = cloudAssignments[key];
+      if (cloud) return { model: cloud, source: 'cloud' };
+      return { model: local, source: 'local' };
+    },
+    [assignments, cloudAssignments]
+  );
+
   return {
     assignments,
+    cloudAssignments,
     loading,
     saving,
     isAuthed,
     refresh,
     getChatModel,
     getThinkingModel,
+    getResolvedModel,
     updateAssignment,
     saveAll,
   };

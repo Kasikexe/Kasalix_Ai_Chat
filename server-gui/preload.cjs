@@ -79,6 +79,20 @@ contextBridge.exposeInMainWorld('serverAPI', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (payload) => ipcRenderer.invoke('save-settings', payload),
 
+  // ─── API Keys / Cloud Mode ────────────────────────
+  saveApiKeySettings: (payload) => ipcRenderer.invoke('save-api-key-settings', payload),
+  getApiKeySettings: () => ipcRenderer.invoke('get-api-key-settings'),
+  fetchCloudModels: () => ipcRenderer.invoke('fetch-cloud-models'),
+
+  // ─── Cloud Usage ────────────────────────────────────────
+  getCloudUsage: () => ipcRenderer.invoke('cloud-usage-get'),
+  setCloudUsageLimit: (payload) => ipcRenderer.invoke('cloud-usage-set-limit', payload),
+  resetCloudUsage: () => ipcRenderer.invoke('cloud-usage-reset'),
+
+  // ─── Session Logs ────────────────────────────────────────
+  listSessionLogs: () => ipcRenderer.invoke('session-logs-list'),
+  readSessionLog: (runId) => ipcRenderer.invoke('session-logs-read', runId),
+
   // ─── Plugins ────────────────────────────────────────
   getPlugins: () => ipcRenderer.invoke('plugins-list'),
   getPluginCatalog: () => ipcRenderer.invoke('plugins-catalog'),

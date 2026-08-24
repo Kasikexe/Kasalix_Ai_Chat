@@ -16,6 +16,8 @@ import changelogRoutes from './routes/changelog';
 import plannedRoutes from './routes/planned';
 import speedtestRoutes from './routes/speedtest';
 import pluginsRoutes from './routes/plugins';
+import cloudUsageRoutes from './routes/cloud-usage';
+import sessionLogsRoutes from './routes/session-logs';
 import { errorHandler, generateId, getGeneratedImagesDir } from './utils/helpers';
 import { registerAllTools } from './services/tools/register';
 import { getAllTools, executeTool } from './services/tools/index';
@@ -113,6 +115,16 @@ app.use('/api/speedtest/*', async (c, next) => {
   await next();
 });
 app.use('/api/plugins/*', async (c, next) => {
+  const authCookie = c.req.header('Cookie');
+  c.set('auth', { authenticated: authCookie?.includes('settings_auth=1') || false });
+  await next();
+});
+app.use('/api/cloud-usage/*', async (c, next) => {
+  const authCookie = c.req.header('Cookie');
+  c.set('auth', { authenticated: authCookie?.includes('settings_auth=1') || false });
+  await next();
+});
+app.use('/api/session-logs/*', async (c, next) => {
   const authCookie = c.req.header('Cookie');
   c.set('auth', { authenticated: authCookie?.includes('settings_auth=1') || false });
   await next();
@@ -256,6 +268,8 @@ app.route('/api/changelog', changelogRoutes);
 app.route('/api/planned', plannedRoutes);
 app.route('/api/speedtest', speedtestRoutes);
 app.route('/api/plugins', pluginsRoutes);
+app.route('/api/cloud-usage', cloudUsageRoutes);
+app.route('/api/session-logs', sessionLogsRoutes);
 
 // Serve generated images
 const GENERATED_DIR = getGeneratedImagesDir();

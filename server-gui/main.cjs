@@ -831,6 +831,84 @@ function setupIPC() {
     } catch { return { error: 'Failed to save settings' }; }
   });
 
+  // ─── API Keys / Cloud Mode ──────────────────────────
+  /** Save cloud mode and API key to backend settings */
+  ipcMain.handle('save-api-key-settings', async (_event, payload) => {
+    try {
+      return await backendRequest('/api/settings', {
+        method: 'PUT',
+        body: payload,
+        headers: { 'Cookie': 'settings_auth=1' },
+      });
+    } catch { return { error: 'Failed to save API key settings' }; }
+  });
+
+  /** Get cloud mode and API key from backend settings */
+  ipcMain.handle('get-api-key-settings', async () => {
+    try {
+      return await backendRequest('/api/settings');
+    } catch { return null; }
+  });
+
+  /** Fetch available cloud models from the configured cloud API endpoint */
+  ipcMain.handle('fetch-cloud-models', async () => {
+    try {
+      return await backendRequest('/api/settings/cloud-models', {
+        headers: { 'Cookie': 'settings_auth=1' },
+      });
+    } catch { return { models: [], error: 'Failed to fetch cloud models' }; }
+  });
+
+  // ─── Cloud Usage ────────────────────────────────────────
+  /** Get current cloud usage stats */
+  ipcMain.handle('cloud-usage-get', async () => {
+    try {
+      return await backendRequest('/api/cloud-usage', {
+        headers: { 'Cookie': 'settings_auth=1' },
+      });
+    } catch { return null; }
+  });
+
+  /** Update cloud usage limits */
+  ipcMain.handle('cloud-usage-set-limit', async (_event, payload) => {
+    try {
+      return await backendRequest('/api/cloud-usage/limit', {
+        method: 'PUT',
+        body: payload,
+        headers: { 'Cookie': 'settings_auth=1' },
+      });
+    } catch { return { error: 'Failed to update limit' }; }
+  });
+
+  /** Reset cloud usage counters */
+  ipcMain.handle('cloud-usage-reset', async () => {
+    try {
+      return await backendRequest('/api/cloud-usage/reset', {
+        method: 'POST',
+        headers: { 'Cookie': 'settings_auth=1' },
+      });
+    } catch { return { error: 'Failed to reset usage' }; }
+  });
+
+  // ─── Session Logs ────────────────────────────────────
+  /** List all session logs */
+  ipcMain.handle('session-logs-list', async () => {
+    try {
+      return await backendRequest('/api/session-logs', {
+        headers: { 'Cookie': 'settings_auth=1' },
+      });
+    } catch { return { logs: [] }; }
+  });
+
+  /** Read a specific session log */
+  ipcMain.handle('session-logs-read', async (_event, runId) => {
+    try {
+      return await backendRequest(`/api/session-logs/${encodeURIComponent(runId)}`, {
+        headers: { 'Cookie': 'settings_auth=1' },
+      });
+    } catch { return { events: [] }; }
+  });
+
   // ─── Plugins ────────────────────────────────────────
   /** List installed plugins (public read) */
   ipcMain.handle('plugins-list', async () => {

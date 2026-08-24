@@ -7,7 +7,7 @@
 ; Or run: makensis setup.nsi
 
 !define PRODUCT_NAME "Kasalix AI Chat Server"
-!define PRODUCT_VERSION "0.10.15"
+!define PRODUCT_VERSION "0.10.0"
 
 ; Allow override from command line: makensis /DVERSION=x.x.x setup.nsi
 !ifdef VERSION

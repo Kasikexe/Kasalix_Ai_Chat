@@ -8,7 +8,7 @@
  *   Everything before the first "## " heading is the CORE section — it is
  *   injected into EVERY mode (agent, chat).
  *   Then optional per-mode sections:
- *     ## Agent Rules   → injected in agent mode + code generation
+ *     ## Agent Rules   → injected in Koding mode
  *     ## Chat Rules    → injected in plain chat
  *
  * The file is created automatically on first boot with sensible defaults.
