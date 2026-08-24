@@ -54,7 +54,7 @@ const languageExtensions: Record<string, string> = {
 const FILE_PATH_RE = /^(?:\/\/|#|;|%|--|\/\*|<!--)\s*([^\s]+?\.[a-zA-Z]\w*)\s*(?:\*\/|-->)?$/;
 const DELETE_PATH_RE = /^(?:\/\/|#|--)\s*DELETE:\s*([^\s]+)/i;
 const EDIT_PATH_RE = /^(?:\/\/|#|--|;|%|<!--)\s*EDIT:\s*([^\s]+?)(?:\s*-->)?$/i;
-const CODE_BLOCK_RE = /```(?:\w*)\n([\s\S]*?)```/g;
+const CODE_BLOCK_RE = /```(?:\w*)\s*\n([\s\S]*?)```/g;
 
 /**
  * Parse an EDIT code block: first line"// EDIT: path", then OLD: lines,
