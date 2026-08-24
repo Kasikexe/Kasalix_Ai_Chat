@@ -201,12 +201,23 @@ export function estimateTokens(text: string): number {
 
 const MAX_CONTEXT_TOKENS = 16000;
 
-export function pruneToBudget(msgs: { role: string; content: string }[]): { role: string; content: string }[] {
+export interface CompactResult {
+  messages: { role: string; content: string }[];
+  didCompact: boolean;
+  /** How many tokens were removed */
+  tokensSaved: number;
+  /** Original token count before compaction */
+  originalTokens: number;
+}
+
+export function pruneToBudget(msgs: { role: string; content: string }[]): CompactResult {
   const system = msgs.filter((m) => m.role === 'system');
   const rest = msgs.filter((m) => m.role !== 'system');
   let total =
     system.reduce((s, m) => s + estimateTokens(m.content), 0) +
     rest.reduce((s, m) => s + estimateTokens(m.content), 0);
+  const originalTokens = total;
+  let didCompact = false;
 
   // Phase 5.14: Tool-result pruning — shrink verbose tool results before dropping messages
   if (total > MAX_CONTEXT_TOKENS) {
@@ -216,6 +227,7 @@ export function pruneToBudget(msgs: { role: string; content: string }[]): { role
         const truncated = m.content.slice(0, 800) + '\n...[pruned to save context]';
         total -= estimateTokens(m.content) - estimateTokens(truncated);
         rest[i] = { ...m, content: truncated };
+        didCompact = true;
       }
     }
   }
@@ -228,10 +240,11 @@ export function pruneToBudget(msgs: { role: string; content: string }[]): { role
         // Extract tool name and provide a one-line summary
         const toolMatch = m.content.match(/\[TOOL RESULT — (\w+)\]/);
         const toolName = toolMatch ? toolMatch[1] : 'tool';
-        const originalTokens = estimateTokens(m.content);
-        const summary = `[TOOL RESULT — ${toolName}] (summarized from ${originalTokens} tokens) Output received and processed.`;
-        total -= originalTokens - estimateTokens(summary);
+        const originalTokensMsg = estimateTokens(m.content);
+        const summary = `[TOOL RESULT — ${toolName}] (summarized from ${originalTokensMsg} tokens) Output received and processed.`;
+        total -= originalTokensMsg - estimateTokens(summary);
         rest[i] = { ...m, content: summary };
+        didCompact = true;
       }
     }
   }
@@ -240,8 +253,9 @@ export function pruneToBudget(msgs: { role: string; content: string }[]): { role
   while (rest.length > 6 && total > MAX_CONTEXT_TOKENS) {
     const removed = rest.shift()!;
     total -= estimateTokens(removed.content);
+    didCompact = true;
   }
-  return [...system, ...rest];
+  return { messages: [...system, ...rest], didCompact, tokensSaved: originalTokens - total, originalTokens };
 }
 
 // ─── ask_user (mid-task clarification) ───────────────────────────────────
@@ -940,7 +954,7 @@ async function runSubAgent(
   // Run a simplified agent loop (max 10 iterations for sub-agent)
   const subHistory: { role: string; content: string }[] = [...subMessages];
   for (let iter = 0; iter < 10; iter++) {
-    const bounded = pruneToBudget(subHistory);
+    const { messages: bounded } = pruneToBudget(subHistory);
     const chunks: string[] = [];
     try {
       await streamChatWithRetry(
@@ -2101,8 +2115,60 @@ export function extractToolCall(raw: string): ToolCall | null {
         } catch { /* not valid JSON — keep scanning */ }
       }
     }
+  }  return null;
+}
+
+/** Extract ALL tool calls from a model response (for parallel execution).
+ * Returns them in order of appearance. */
+export function extractToolCalls(raw: string): ToolCall[] {
+  const results: ToolCall[] = [];
+  const trimmed = raw.trim();
+  let searchStart = 0;
+
+  while (searchStart < trimmed.length) {
+    const start = trimmed.indexOf('{', searchStart);
+    if (start === -1) break;
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let found = false;
+
+    for (let i = start; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (inString) {
+        if (escaped) { escaped = false; continue; }
+        if (ch === '\\') { escaped = true; continue; }
+        if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') { inString = true; continue; }
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          const candidate = trimmed.slice(start, i + 1);
+          try {
+            const parsed = JSON.parse(candidate);
+            if (
+              parsed &&
+              typeof parsed.tool === 'string' &&
+              parsed.args &&
+              typeof parsed.args === 'object' &&
+              AGENT_TOOL_DEFS.some((t) => t.name === parsed.tool)
+            ) {
+              results.push({ tool: parsed.tool, args: parsed.args as Record<string, unknown> });
+              searchStart = i + 1;
+              found = true;
+              break;
+            }
+          } catch { /* not valid JSON — keep scanning */ }
+        }
+      }
+    }
+    if (!found) searchStart = start + 1;
   }
-  return null;
+  return results;
 }
 
 // ─── The agent loop ─────────────────────────────────────────────────────
@@ -2449,10 +2515,17 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       ? '\n\nYOUR PLAN (update as you complete steps):\n' + planText.split('\n').map((l, i) => `${i + 1}. [ ] ${l}`).join('\n')
       : (completedSteps.length > 0 ? '\n\nCOMPLETED STEPS:\n' + completedSteps.map((s) => `- [x] ${s}`).join('\n') : '');
 
-    const bounded: { role: string; content: string }[] = pruneToBudget([
+    const compactResult = pruneToBudget([
       { role: 'system', content: groundTruthBlock + planBlock },
       ...boundedBase,
     ]);
+    const bounded = compactResult.messages;
+
+    // Notify frontend if context was compacted
+    if (compactResult.didCompact && iter > 0) {
+      logger.info(`[agent] Context compacted: saved ${compactResult.tokensSaved} tokens (${compactResult.originalTokens} → ${compactResult.originalTokens - compactResult.tokensSaved})`);
+      callbacks.onChunk('\n\n_⚙️ Context compacted to save space — older tool results were summarized._\n');
+    }
 
     callbacks.onStage(iter === 0 ? 'agent:thinking' : 'agent:working');
 
@@ -2473,11 +2546,12 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     if (thinkingChunks.length > 0) {
       for (const t of thinkingChunks) callbacks.onThinking?.(t);
     }
-    const toolCall = extractToolCall(raw);
+    const toolCalls = extractToolCalls(raw);
+    const toolCall = toolCalls.length === 1 ? toolCalls[0] : null;
 
     // Phase 2.6 improvement: Send any non-JSON reasoning text that preceded
     // the tool call, so the user sees what the model was thinking before action.
-    if (toolCall) {
+    if (toolCalls.length > 0) {
       const reasoningText = raw.replace(/\{\s*"tool".*$/s, '').trim();
       if (reasoningText && reasoningText.length > 5) {
         callbacks.onChunk(`_🤔 ${reasoningText}_\n\n`);
@@ -2487,7 +2561,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     // Malformed tool attempt recovery: the response contains JSON tool markers
     // ("tool" / "args") but did not parse into a valid call. Give the model up
     // to 2 corrective retries before falling back to the final-answer path.
-    const looksLikeToolAttempt = !toolCall && /"tool"\s*:\s*"[a-z_]+"|\{\s*"args"\s*:/i.test(raw);
+    const looksLikeToolAttempt = toolCalls.length === 0 && /"tool"\s*:\s*"[a-z_]+"|\{\s*"args"\s*:/i.test(raw);
     if (looksLikeToolAttempt && malformedToolCalls < 4) {
       malformedToolCalls++;
       const retryMsg =
@@ -2505,7 +2579,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     // any code-block files the model wrote (the # path / // EDIT: / // DELETE:
     // convention) so the task lands even when the model skipped the JSON tools.
     let appliedNote = '';
-    if (!toolCall && autoApply) {
+    if (toolCalls.length === 0 && autoApply) {
       appliedNote = await applyCodeBlockFiles(root, raw, callbacks.onFileWritten);
       // If no files were applied but the response contains code blocks,
       // the model may have used a format we don't recognize. Log it and
@@ -2532,7 +2606,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     // Lazy assistant detection: the model claims to have done something
     // ("Done!", "I've created", "I've refactored") but did not use any tools
     // and did not output any code blocks. Force a retry.
-    const claimsDone = !toolCall && !appliedNote && autoApply &&
+    const claimsDone = toolCalls.length === 0 && !appliedNote && autoApply &&
       /\b(?:done|i'?ve|finished|completed|created|wrote|refactored|moved|extracted|split)\b/i.test(raw) &&
       !/```/i.test(raw) &&
       raw.length < 500;
@@ -2555,7 +2629,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     // instead of using tools. Redirect it.
     const thinkingText = thinkingChunks.join('');
     const thinkingHasCode = thinkingText.length > 200 && /(import |class |def |function |const |let |var |#include)/.test(thinkingText);
-    const responseHasNoCode = !toolCall && !appliedNote && !/```/.test(raw);
+    const responseHasNoCode = toolCalls.length === 0 && !appliedNote && !/```/.test(raw);
     const responseIsEmptyOrClaimsNothing = raw.length < 500 && /\b(nothing|didn't|did not|no output|no code|no file|no result|pipeline didn't|cut off|cut short|stopped)\b/i.test(raw);
     if (thinkingHasCode && (responseHasNoCode || responseIsEmptyOrClaimsNothing) && autoApply && malformedToolCalls < 4) {
       malformedToolCalls++;
@@ -2572,7 +2646,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
 
     // Tool-refusal detection: the model explicitly says it shouldn't write files
     // or that this is a normal conversation. Force it back on track.
-    const refusesToUseTools = !toolCall && !appliedNote && autoApply &&
+    const refusesToUseTools = toolCalls.length === 0 && !appliedNote && autoApply &&
       /\b(not a coding|shouldn'?t (write|create|use tool)|normal conversation|chatbot|copy (it|the|this)|save (it|the|this)|here is the code)\b/i.test(raw) &&
       raw.length < 2000;
     if (refusesToUseTools && malformedToolCalls < 4) {
@@ -2590,12 +2664,12 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     // If the response still looked like a (broken) tool call after the retries
     // were exhausted, do not hand the user raw JSON garbage as the answer.
     const malformedNote =
-      looksLikeToolAttempt && !toolCall && malformedToolCalls >= 2
+      looksLikeToolAttempt && toolCalls.length === 0 && malformedToolCalls >= 2
         ? '\n\n_(I tried to execute a tool call from your last response but it was not valid JSON, so nothing was executed.)_'
         : '';
 
     // Replay the streamed chunks so the message appears progressively, then return.
-    if (!toolCall) {
+    if (toolCalls.length === 0) {
       await sessionLog.logMessage('assistant', raw);
       await sessionLog.end();
       callbacks.onStage('agent:done');
@@ -2609,24 +2683,28 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       return raw;
     }
 
+    // ── Parallel tool execution ───────────────────────────────────────
+    // When the model outputs multiple tool calls in one response, execute
+    // read-only tools in parallel and mutating tools sequentially.
+    const isSingle = toolCalls.length === 1;
+    const callsToRun = isSingle ? [toolCall!] : toolCalls;
+
     // Loop guard: same call 3 times in a row → stop and answer.
-    const key = `${toolCall.tool}:${JSON.stringify(toolCall.args)}`;
-    seenCalls.set(key, (seenCalls.get(key) || 0) + 1);
-    if (seenCalls.get(key)! >= 3) {
-      const msg = `I'm having trouble completing that step (the "${toolCall.tool}" call kept repeating). Here's where things stand:\n\n${raw}`;
-      callbacks.onStage('agent:done');
-      callbacks.onChunk(msg);
-      return msg;
+    for (const tc of callsToRun) {
+      const k = `${tc.tool}:${JSON.stringify(tc.args)}`;
+      seenCalls.set(k, (seenCalls.get(k) || 0) + 1);
+      if (seenCalls.get(k)! >= 3) {
+        const msg = `I'm having trouble completing that step (the "${tc.tool}" call kept repeating). Here's where things stand:\n\n${raw}`;
+        callbacks.onStage('agent:done');
+        callbacks.onChunk(msg);
+        return msg;
+      }
     }
 
-    callbacks.onToolStart?.(toolCall);
-    callbacks.onStage('agent:tool');
-    await sessionLog.logToolCall(toolCall.tool, toolCall.args);
-    logger.info(`[agent] Tool call: ${toolCall.tool} ${JSON.stringify(toolCall.args).slice(0, 120)}`);
-
     // ask_user pauses the loop until the user answers via the frontend modal.
-    if (toolCall.tool === 'ask_user') {
-      const question = typeof toolCall.args?.question === 'string' ? toolCall.args.question : '';
+    const askUserCall = callsToRun.find((tc) => tc.tool === 'ask_user');
+    if (askUserCall) {
+      const question = typeof askUserCall.args?.question === 'string' ? askUserCall.args.question : '';
       if (!question.trim()) {
         history.push({ role: 'assistant', content: raw });
         history.push({ role: 'user', content: '[ask_user] No question provided — re-read the task and continue.' });
@@ -2639,52 +2717,85 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       continue;
     }
 
-    // ── Phase 3: Approval gate for mutating tools ──────────────────────
-    if (MUTATING_TOOLS.has(toolCall.tool) && opts.toolPermission === 'ask-each') {
-      const approvalKey = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      callbacks.onApprovalRequest?.(approvalKey, toolCall.tool, toolCall.args);
-      callbacks.onStage('agent:waiting');
-      // Wait for user approval via the pending approval map
-      const approved = await waitForApproval(approvalKey, opts.signal);
-      if (!approved) {
-        history.push({ role: 'assistant', content: raw });
-        history.push({ role: 'user', content: `[TOOL DENIED — ${toolCall.tool}] The user denied this tool call. Explain what you were trying to do and suggest an alternative approach.` });
-        await sessionLog.logToolResult(toolCall.tool, 'Denied by user', false);
-        continue;
+    // Approval gate: ask user for EACH mutating tool call
+    for (const tc of callsToRun) {
+      if (MUTATING_TOOLS.has(tc.tool) && opts.toolPermission === 'ask-each') {
+        const approvalKey = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        callbacks.onApprovalRequest?.(approvalKey, tc.tool, tc.args);
+        callbacks.onStage('agent:waiting');
+        const approved = await waitForApproval(approvalKey, opts.signal);
+        if (!approved) {
+          history.push({ role: 'assistant', content: raw });
+          history.push({ role: 'user', content: `[TOOL DENIED — ${tc.tool}] The user denied this tool call. Explain what you were trying to do and suggest an alternative approach.` });
+          await sessionLog.logToolResult(tc.tool, 'Denied by user', false);
+          continue;
+        }
       }
     }
 
-    const result = await executeTool(root, toolCall, autoApply);
-    await sessionLog.logToolResult(toolCall.tool, result.output, result.ok);
-
-    if (toolCall.tool === 'run_command') {
-      const cmd = typeof toolCall.args?.command === 'string' ? toolCall.args.command : '';
-      callbacks.onAgentCommand?.({ command: cmd, output: result.output, failed: !result.ok });
-    }
-
-    if (toolCall.tool === 'list_files' || toolCall.tool === 'read_file' || toolCall.tool === 'search_files' || toolCall.tool === 'read_rules') {
-      maybeFireReading();
-    }
-
-    if (result.fileWrite) {
-      callbacks.onFileWritten?.({
-        path: result.fileWrite.path,
-        changeType: result.fileWrite.changeType,
-        originalContent: result.fileWrite.originalContent,
-      });
-    }
-
+    callbacks.onStage('agent:tool');
     history.push({ role: 'assistant', content: raw });
     await sessionLog.logMessage('assistant', raw);
-    history.push({
-      role: 'user',
-      content: `[TOOL RESULT — ${toolCall.tool}]\n${result.output}`,
-    });
-    await sessionLog.logMessage('user', `[TOOL RESULT — ${toolCall.tool}]\n${result.output}`);
 
-    // Track plan progress — if a file was written/deleted, mark it as done
-    if (result.fileWrite && (toolCall.tool === 'write_file' || toolCall.tool === 'edit_file' || toolCall.tool === 'delete_file')) {
-      const step = `${toolCall.tool}: ${result.fileWrite.path}`;
+    // Execute tool calls — parallel for all-read-only, sequential otherwise
+    const hasMutating = callsToRun.some((tc) => MUTATING_TOOLS.has(tc.tool));
+    const allReadOnly = callsToRun.every((tc) => !MUTATING_TOOLS.has(tc.tool));
+
+    if (allReadOnly && callsToRun.length > 1) {
+      // Parallel execution for read-only tools
+      callbacks.onStage('agent:tool-parallel');
+      const results = await Promise.all(callsToRun.map(async (tc) => {
+        callbacks.onToolStart?.(tc);
+        logger.info(`[agent] Tool call (parallel): ${tc.tool} ${JSON.stringify(tc.args).slice(0, 100)}`);
+        await sessionLog.logToolCall(tc.tool, tc.args);
+        const r = await executeTool(root, tc, autoApply);
+        await sessionLog.logToolResult(tc.tool, r.output, r.ok);
+        return { tc, result: r };
+      }));
+      // Push all results to history
+      const resultParts = results.map(({ tc, result }) => `[TOOL RESULT — ${tc.tool}]\n${result.output}`);
+      history.push({ role: 'user', content: resultParts.join('\n\n') });
+      await sessionLog.logMessage('user', resultParts.join('\n\n'));
+      // Fire callbacks
+      for (const { tc, result } of results) {
+        if (tc.tool === 'run_command') {
+          const cmd = typeof tc.args?.command === 'string' ? tc.args.command : '';
+          callbacks.onAgentCommand?.({ command: cmd, output: result.output, failed: !result.ok });
+        }
+        if (tc.tool === 'list_files' || tc.tool === 'read_file' || tc.tool === 'search_files' || tc.tool === 'read_rules') {
+          maybeFireReading();
+        }
+        if (result.fileWrite) {
+          callbacks.onFileWritten?.({ path: result.fileWrite.path, changeType: result.fileWrite.changeType, originalContent: result.fileWrite.originalContent });
+        }
+      }
+    } else {
+      // Sequential execution (mutating tools or single call)
+      for (const tc of callsToRun) {
+        callbacks.onToolStart?.(tc);
+        logger.info(`[agent] Tool call: ${tc.tool} ${JSON.stringify(tc.args).slice(0, 120)}`);
+        await sessionLog.logToolCall(tc.tool, tc.args);
+        const result = await executeTool(root, tc, autoApply);
+        await sessionLog.logToolResult(tc.tool, result.output, result.ok);
+        if (tc.tool === 'run_command') {
+          const cmd = typeof tc.args?.command === 'string' ? tc.args.command : '';
+          callbacks.onAgentCommand?.({ command: cmd, output: result.output, failed: !result.ok });
+        }
+        if (tc.tool === 'list_files' || tc.tool === 'read_file' || tc.tool === 'search_files' || tc.tool === 'read_rules') {
+          maybeFireReading();
+        }
+        if (result.fileWrite) {
+          callbacks.onFileWritten?.({ path: result.fileWrite.path, changeType: result.fileWrite.changeType, originalContent: result.fileWrite.originalContent });
+        }
+        history.push({ role: 'user', content: `[TOOL RESULT — ${tc.tool}]\n${result.output}` });
+        await sessionLog.logMessage('user', `[TOOL RESULT — ${tc.tool}]\n${result.output}`);
+      }
+    }
+
+    // Track plan progress — if any file was written/deleted, mark it as done
+    const lastToolCalls = callsToRun.filter((tc) => tc.tool === 'write_file' || tc.tool === 'edit_file' || tc.tool === 'delete_file');
+    for (const tc of lastToolCalls) {
+      const step = `${tc.tool}: ${tc.args.path || tc.args.from || 'unknown'}`;
       if (!completedSteps.includes(step)) {
         completedSteps.push(step);
         await sessionLog.logPlanUpdate(`Completed: ${step}`);
@@ -2693,9 +2804,10 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
 
     // Auto-verify after any file mutation: run the project's test/build
     // command and feed the outcome back so the model fixes failures.
-    if (autoApply && MUTATING_TOOLS.has(toolCall.tool) && verify) {
+    const lastMutatingCall = callsToRun.find((tc) => MUTATING_TOOLS.has(tc.tool));
+    if (autoApply && lastMutatingCall && verify) {
       callbacks.onStage('agent:verify');
-      logger.info(`[agent] Verifying after ${toolCall.tool}: ${verify.command}`);
+      logger.info(`[agent] Verifying after ${lastMutatingCall.tool}: ${verify.command}`);
       const VERIFY_CAP = 3000; // failures rarely need more than the tail
       let verifyOut: string;
       try {
