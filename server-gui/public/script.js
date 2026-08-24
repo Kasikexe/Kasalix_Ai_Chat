@@ -902,6 +902,8 @@ const views = {
   speedtest: $('view-speedtest'),
   plugins: $('view-plugins'),
   apikeys: $('view-apikeys'),
+  log: $('view-log'),
+  trajectory: $('view-trajectory'),
 };
 
 function switchView(name) {
@@ -913,6 +915,7 @@ function switchView(name) {
   if (name === 'speedtest') enterSpeedTestView();
   if (name === 'plugins') enterPluginsView();
   if (name === 'apikeys') enterApiKeysView();
+  if (name === 'trajectory') enterTrajectoryView();
 }
 
 tabs.forEach((t) => t.addEventListener('click', () => switchView(t.dataset.view)));
@@ -926,6 +929,7 @@ function refreshAuthedView() {
   if (activeTab.dataset.view === 'speedtest') enterSpeedTestView();
   if (activeTab.dataset.view === 'plugins') enterPluginsView();
   if (activeTab.dataset.view === 'apikeys') enterApiKeysView();
+  if (activeTab.dataset.view === 'trajectory') enterTrajectoryView();
 }
 
 // ══════════════════════════════════════════════════════
@@ -2085,30 +2089,28 @@ async function loadTrajectoryEvents(runId) {
   }
 }
 
-$('toggleTrajectoryBtn')?.addEventListener('click', () => {
-  const panel = $('trajectoryPanel');
-  const card = $('trajectoryCard');
-  if (panel.style.display === 'none') {
-    panel.style.display = 'block';
-    card.classList.remove('log-collapsed');
-    loadTrajectorySessions();
-  } else {
-    panel.style.display = 'none';
-    card.classList.add('log-collapsed');
-  }
-});
+function enterTrajectoryView() {
+  loadTrajectorySessions();
+}
 
 $('trajectorySelect')?.addEventListener('change', (e) => {
   const runId = e.target.value;
   if (runId) loadTrajectoryEvents(runId);
 });
 
+$('refreshTrajectoryBtn')?.addEventListener('click', () => {
+  loadTrajectorySessions();
+});
+
 let trajectoryRefreshInterval = null;
 function startTrajectoryRefresh() {
-  const card = $('trajectoryCard');
-  if (card) card.style.display = 'block';
   loadTrajectorySessions();
-  trajectoryRefreshInterval = setInterval(loadTrajectorySessions, 30000);
+  trajectoryRefreshInterval = setInterval(() => {
+    const activeTab = document.querySelector('.tab.active');
+    if (activeTab && activeTab.dataset.view === 'trajectory') {
+      loadTrajectorySessions();
+    }
+  }, 30000);
 }
 function stopTrajectoryRefresh() {
   if (trajectoryRefreshInterval) { clearInterval(trajectoryRefreshInterval); trajectoryRefreshInterval = null; }

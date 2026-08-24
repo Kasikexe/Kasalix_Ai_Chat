@@ -69,6 +69,14 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
       API Keys
     </button>
+    <button class="tab" data-view="log">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+      Server Log
+    </button>
+    <button class="tab" data-view="trajectory">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Trajectory
+    </button>
   </nav>
 
   <!-- ═══ DASHBOARD VIEW ═══ -->
@@ -305,43 +313,6 @@
         </div>
       </div>
 
-      <!-- Live Log Card -->
-      <div class="card log-card">
-        <div class="card-title log-card-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
-          </svg>
-          Server Log
-          <button class="btn-icon log-expand-btn" id="toggleLogBtn" title="Expand / collapse log">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
-          <button class="btn-icon log-clear-btn" id="clearLogBtn" title="Clear log">🗑</button>
-        </div>
-        <div class="log-panel" id="logPanel">
-          <div class="log-empty">Waiting for server output…</div>
-        </div>
-      </div>
-
-      <!-- Trajectory Panel -->
-      <div class="card" id="trajectoryCard" style="display:none">
-        <div class="card-title log-card-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-          </svg>
-          Agent Trajectory
-          <button class="btn-icon log-expand-btn" id="toggleTrajectoryBtn" title="Expand / collapse">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
-          <select id="trajectorySelect" class="trajectory-select" title="Select a session log">
-            <option value="">No sessions</option>
-          </select>
-        </div>
-        <div class="trajectory-panel" id="trajectoryPanel" style="display:none">
-          <div class="trajectory-events" id="trajectoryEvents">
-            <div class="log-empty">Select a session to view its trajectory.</div>
-          </div>
-        </div>
-      </div>
     </div>
   </div>
   </div>
@@ -386,6 +357,51 @@
     </div>
     <div class="models-grid" id="modelsGrid">
       <div class="models-loading">Loading models…</div>
+    </div>
+  </div>
+
+  <!-- ═══ SERVER LOG VIEW ═══ -->
+  <div class="view" id="view-log" style="display:none">
+    <div class="view-header">
+      <div class="view-title-row">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+        </svg>
+        <div>
+          <h2>Server Log</h2>
+          <p>Real-time server output with timestamps</p>
+        </div>
+      </div>
+      <div class="view-actions">
+        <button class="btn btn-small btn-ghost" id="clearLogBtn" title="Clear log">🗑 Clear</button>
+      </div>
+    </div>
+    <div class="log-view-panel" id="logPanel">
+      <div class="log-empty">Waiting for server output…</div>
+    </div>
+  </div>
+
+  <!-- ═══ TRAJECTORY VIEW ═══ -->
+  <div class="view" id="view-trajectory" style="display:none">
+    <div class="view-header">
+      <div class="view-title-row">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+        </svg>
+        <div>
+          <h2>Agent Trajectory</h2>
+          <p>Session logs showing tool calls, reasoning, and results</p>
+        </div>
+      </div>
+      <div class="view-actions">
+        <select id="trajectorySelect" class="trajectory-select" title="Select a session log">
+          <option value="">No sessions</option>
+        </select>
+        <button class="btn btn-small btn-ghost" id="refreshTrajectoryBtn" title="Refresh">🔄 Refresh</button>
+      </div>
+    </div>
+    <div class="trajectory-view-panel" id="trajectoryEvents">
+      <div class="log-empty">Select a session to view its trajectory.</div>
     </div>
   </div>
 
