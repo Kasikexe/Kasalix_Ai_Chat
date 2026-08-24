@@ -684,8 +684,15 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   if (mode === 'agent' && opts.autoApply === true && !intent.hasImage && !intent.wantsImage) {
     console.log('[pipeline] Koding mode with auto-apply — running autonomous loop');
     const memoryContext = await buildMemoryContext(userId);
+    // Agent mode uses the CODE model for everything — tool calls, thinking,
+    // responses. The code model is better at structured output (JSON tool calls)
+    // and code generation than the chat model.
+    const { model: agentModel } = await getResolvedModel('code');
+    if (agentModel && agentModel !== model) {
+      console.log(`[pipeline] Agent mode: using code model ${agentModel} instead of chat model ${model}`);
+    }
     return await runAgentLoop({
-      model,
+      model: agentModel || model,
       messages,
       workspacePath,
       autoApply: true,
