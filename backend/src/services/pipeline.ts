@@ -49,6 +49,23 @@ async function trackCloudUsage(modelName: string, inputTokens?: number, outputTo
   }
 }
 
+// Cloud routing state — resolved once per pipeline run
+let _cloudEndpoint = '';
+let _cloudApiKey = '';
+
+async function resolveCloudRoute(): Promise<void> {
+  if (_cloudEndpoint) return;
+  try {
+    const cloud = await getCloudSettings();
+    if (cloud.cloudMode !== 'local' && cloud.cloudEndpoint) {
+      _cloudEndpoint = cloud.cloudEndpoint.replace(/\/+$/, '');
+      _cloudApiKey = cloud.cloudApiKey;
+    }
+  } catch {}
+}
+
+function resetCloudRoute() { _cloudEndpoint = ''; _cloudApiKey = ''; }
+
 interface PipelineOptions {
   model: string;
   messages: Message[];
@@ -366,7 +383,8 @@ async function runInternalStage(
   extraOpts: { temperature?: number; top_p?: number; max_tokens?: number } = {},
   onThinking?: (chunk: string) => void
 ): Promise<string> {
-  console.log(`[pipeline] Internal stage "${stageName}" — model: ${model}, think: ${think}`);
+  const isCloud = !!_cloudEndpoint;
+  console.log(`[pipeline] Internal stage "${stageName}" — model: ${model}, think: ${think}${isCloud ? ' (cloud)' : ''}`);
   let output = '';
   try {
     await streamChat(
@@ -375,7 +393,7 @@ async function runInternalStage(
       (chunk) => {
         output += chunk;
       },
-      { signal, think, ...extraOpts, onThinking }
+      { signal, think, ...extraOpts, onThinking, baseUrl: _cloudEndpoint || undefined, apiKey: _cloudApiKey || undefined }
     );
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') {
@@ -399,7 +417,8 @@ async function runVisibleStage(
   extraOpts: { temperature?: number; top_p?: number; max_tokens?: number } = {},
   onThinking?: (chunk: string) => void
 ): Promise<string> {
-  console.log(`[pipeline] Visible stage "${stageName}" — model: ${model}, think: ${think}`);
+  const isCloud = !!_cloudEndpoint;
+  console.log(`[pipeline] Visible stage "${stageName}" — model: ${model}, think: ${think}${isCloud ? ' (cloud)' : ''}`);
   let output = '';
   try {
     await streamChat(
@@ -409,7 +428,7 @@ async function runVisibleStage(
         output += chunk;
         onChunk(chunk);
       },
-      { signal, think, ...extraOpts, onThinking }
+      { signal, think, ...extraOpts, onThinking, baseUrl: _cloudEndpoint || undefined, apiKey: _cloudApiKey || undefined }
     );
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') {
@@ -586,6 +605,9 @@ async function buildMemoryContext(userId?: string): Promise<string | null> {
 }
 
 export async function runPipeline(opts: PipelineOptions): Promise<string> {
+  resetCloudRoute();
+  await resolveCloudRoute();
+
   let model = opts.model;
   const { mode, workspacePath, signal, onStage, onChunk, userId, userName, planningEnabled, temperature, top_p, max_tokens, onThinking } = opts;
   let { messages } = opts;
@@ -688,6 +710,8 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
       top_p,
       max_tokens,
       extraContext: memoryContext || undefined,
+      cloudEndpoint: _cloudEndpoint || undefined,
+      cloudApiKey: _cloudApiKey || undefined,
     });
   }
 
