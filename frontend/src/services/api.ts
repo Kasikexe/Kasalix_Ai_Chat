@@ -597,6 +597,8 @@ streamChat(
     onApprovalRequest?: (q: { key: string; tool: string; args: Record<string, unknown> }) => void;
     /** Fired once with the model that generated the response */
     onModelInfo?: (model: string, source: string) => void;
+    /** Agent mode: fired when the planning phase produces a plan */
+    onPlan?: (plan: string) => void;
   },
   signal?: AbortSignal,
   mode?: ConversationMode,
@@ -660,6 +662,7 @@ streamChat(
             case 'agent_approval_request': callbacks.onApprovalRequest?.({ key: parsed.key, tool: parsed.tool, args: parsed.args || {} }); break;
             case 'thinking': callbacks.onThinking?.(parsed.content); break;
             case 'model_info': callbacks.onModelInfo?.(parsed.model, parsed.source); break;
+            case 'plan': callbacks.onPlan?.(parsed.plan); break;
             case 'done': callbacks.onDone(); return true;
             case 'error': callbacks.onError(parsed.error); return true;
           }

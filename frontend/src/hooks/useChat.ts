@@ -44,6 +44,7 @@ interface StreamHandlers {
   onAgentCommand?: (cmd: { command: string; output: string; failed: boolean }) => void;
   onQuestion?: (q: { key: string; question: string }) => void;
   onApprovalRequest?: (q: { key: string; tool: string; args: Record<string, unknown> }) => void;
+  onPlan?: (plan: string) => void;
 }
 
 interface LiveEntry {
@@ -60,6 +61,7 @@ interface LiveEntry {
   abort: AbortController | null;
   handlers: StreamHandlers;
   listeners: Set<() => void>;
+  currentPlan: string;
 }
 
 const liveStore = new Map<string, LiveEntry>();
@@ -98,6 +100,7 @@ function getOrCreateLiveEntry(
     abort: null,
     handlers,
     listeners: new Set(),
+    currentPlan: '',
   };
   liveStore.set(key, entry);
   return entry;
@@ -152,7 +155,8 @@ export function useChat(
   onAgentCommand?: (cmd: { command: string; output: string; failed: boolean }) => void,
   onQuestion?: (q: { key: string; question: string }) => void,
   onConversationStarted?: (id: string) => void,
-  onApprovalRequest?: (q: { key: string; tool: string; args: Record<string, unknown> }) => void
+  onApprovalRequest?: (q: { key: string; tool: string; args: Record<string, unknown> }) => void,
+  onPlan?: (plan: string) => void
 ) {
   const key = initialConversationId ?? 'new';
   ensureLiveTimer();
@@ -165,6 +169,7 @@ export function useChat(
     onAgentCommand,
     onQuestion,
     onApprovalRequest,
+    onPlan,
   });
 
   // The entry lives in the module store; this ref ALWAYS points at the store
@@ -342,6 +347,18 @@ export function useChat(
           onAgentCommand: (cmd) => e.handlers.onAgentCommand?.(cmd),
           onQuestion: (q) => e.handlers.onQuestion?.(q),
           onApprovalRequest: (q) => e.handlers.onApprovalRequest?.(q),
+          onPlan: (plan) => {
+            e.currentPlan = plan;
+            // Also inject as a visible message in the chat
+            const planLines = plan.split('\n').filter((l) => l.trim());
+            const planContent = '📋 **Plan:**\n' + planLines.map((l, i) => `${i + 1}. ${l.replace(/^\d+\.?\s*/, '').trim()}`).join('\n');
+            e.messages = [...e.messages, {
+              role: 'assistant' as const,
+              content: planContent,
+              timestamp: Date.now(),
+            }];
+            notify(e);
+          },
           onError: (err) => {
             // Store duration even on error if there's partial content
             const duration = Date.now() - e.startTime;
@@ -519,5 +536,6 @@ export function useChat(
     currentStage: e.currentStage,
     stageHistory: e.stageHistory,
     liveDuration: e.liveDuration,
+    currentPlan: e.currentPlan,
   };
 }

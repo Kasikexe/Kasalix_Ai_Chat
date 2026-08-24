@@ -129,7 +129,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     setPendingApproval(null);
   };
 
-  const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, currentStage, stageHistory, liveDuration } = useChat(
+  const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, currentStage, stageHistory, liveDuration, currentPlan } = useChat(
     model,
     conversation?.messages || [],
     conversation?.id,
@@ -150,6 +150,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
   // ─── Layout State ──────────────────────────────────────────
   const [showSetup, setShowSetup] = useState(!offlineWorkspace && !conversation?.workspacePath);
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
+  const [planPanelOpen, setPlanPanelOpen] = useState(false);
   const [leftWidth, setLeftWidth] = useState(224);
   const dragRef = useRef<{ type: 'left'; startX: number; startSize: number } | null>(null);
 
@@ -735,6 +736,14 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
               )}
             </div>
             <div className="flex items-center gap-1">
+              {currentPlan && (
+                <button onClick={() => setPlanPanelOpen(!planPanelOpen)}
+                  className={`p-1 rounded transition-colors ${planPanelOpen ? 'bg-violet-700 text-violet-200' : 'text-gray-500 hover:text-gray-300'}`}
+                  title={planPanelOpen ? 'Hide plan' : 'Show plan'}
+                >
+                  <ClipboardList size={12} />
+                </button>
+              )}
               <button onClick={() => setLeftPanelOpen(!leftPanelOpen)}
                 className={`p-1 rounded transition-colors ${leftPanelOpen ? 'bg-gray-700 text-gray-200' : 'text-gray-500 hover:text-gray-300'}`}
                 title={leftPanelOpen ? 'Hide file tree' : 'Show file tree'}
@@ -743,6 +752,27 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
               </button>
             </div>
           </div>
+
+          {/* Plan panel — collapsible todo list from AI */}
+          {planPanelOpen && currentPlan && (
+            <div className="border-b border-gray-800 bg-gray-900/60 px-3 py-2 max-h-48 overflow-y-auto">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <ClipboardList size={11} className="text-violet-400"/>
+                <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Plan</span>
+              </div>
+              <div className="space-y-1">
+                {currentPlan.split('\n').filter((l) => l.trim()).map((line, i) => {
+                  const clean = line.replace(/^\d+\.?\s*/, '').trim();
+                  return (
+                    <div key={i} className="flex items-start gap-2 text-[11px] text-gray-400">
+                      <span className="text-violet-400 flex-shrink-0 mt-0.5">{i + 1}.</span>
+                      <span>{clean}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Chat messages */}
           <div className="flex-1 min-h-0 flex flex-col">
