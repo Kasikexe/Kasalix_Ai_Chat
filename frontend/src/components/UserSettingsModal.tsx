@@ -4,14 +4,12 @@ import {
  LogOut, Pencil, CheckCircle, Shield, Sun, Moon,
  Database, Plus, Trash2, Edit3, BookOpen, RefreshCw, Quote,
  Thermometer, Gauge, AlignLeft, Sparkles, Sliders,
- ArrowUpCircle, Download, Package, Save, Settings2, Zap,
+ ArrowUpCircle, Download, Package, Settings2,
 } from 'lucide-react';
 import type { UserProfile, MemoryData } from '../types';
 import { useToast } from '../hooks/useToast';
 
 const AUTO_UPDATE_KEY = 'ai-chat:autoUpdate';
-const AUTO_SAVE_KEY = 'ai-chat:agentAutoSave';
-const AGENT_AUTO_APPLY_KEY = 'ai-chat:agentAutoApply';
 
 const COLORS = [
  '#ef4444', '#f97316', '#eab308', '#22c55e',
@@ -98,14 +96,6 @@ export function UserSettingsModal({
  const [maxTokens, setMaxTokens] = useState(() => parseInt(localStorage.getItem('ai-chat:maxTokens') ?? '4096') || 4096);
  const [autoTitle, setAutoTitle] = useState(() => localStorage.getItem('ai-chat:autoTitle') !== 'false');
  const [showAdvanced, setShowAdvanced] = useState(false);
-
- // Koding-mode settings (only apply when using Koding)
- const [agentAutoSave, setAgentAutoSave] = useState(() => {
- try { return localStorage.getItem(AUTO_SAVE_KEY) !== 'false'; } catch { return true; }
- });
- const [agentAutoApply, setAgentAutoApply] = useState(() => {
- try { return localStorage.getItem(AGENT_AUTO_APPLY_KEY) !== 'false'; } catch { return true; }
- });
 
  // App version (Electron only)
  const [appVersion, setAppVersion] = useState<string | null>(null);
@@ -1189,108 +1179,14 @@ export function UserSettingsModal({
 
  {/* ==================== AGENT SECTION ==================== */}
  {section === 'koding' && (
- <div key="section-koding"className="space-y-5 animate-fade-in">
+ <div key="section-koding" className="space-y-5 animate-fade-in">
  <div className="flex items-center gap-2.5">
  <div className="p-2 bg-emerald-600/20 rounded-xl">
  <Bot size={18} className="text-[#4a9988]"/>
  </div>
  <div>
  <p className="text-sm font-medium text-white">Koding</p>
- <p className="text-xs text-gray-500 mt-0.5">Settings that only apply when using Koding</p>
- </div>
- </div>
-
- {/* Auto-save */}
- <div className="space-y-3">
- <label className="flex items-center gap-2 text-sm font-medium text-gray-300">
- <Save size={16} className="text-sky-400"/>
- Auto-Save
- </label>
- <div
- className={`flex items-center justify-between px-4 py-3 rounded-xl cursor-pointer transition-all duration-200 ${
- agentAutoSave
- ? 'bg-sky-900/20 border border-sky-800/40'
- : 'bg-gray-800/50 border border-gray-800 hover:bg-gray-800'
- }`}
- onClick={() => {
- const next = !agentAutoSave;
- setAgentAutoSave(next);
- try { localStorage.setItem(AUTO_SAVE_KEY, String(next)); } catch {}
- }}
- >
- <div className="flex items-center gap-3">
- <div className={`p-1.5 rounded-lg ${agentAutoSave ? 'bg-sky-700/30' : 'bg-gray-700/50'}`}>
- <Save size={18} className={agentAutoSave ? 'text-sky-400' : 'text-gray-400'} />
- </div>
- <div>
- <p className="text-sm font-medium text-white">
- {agentAutoSave ? 'On' : 'Off'}
- </p>
- <p className="text-xs text-gray-500 mt-0.5">
- {agentAutoSave
- ? 'Files in the code editor save automatically as you type'
- : 'Manual saving with the Save button or Ctrl+S'}
- </p>
- </div>
- </div>
- <div
- className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
- agentAutoSave ? 'bg-sky-600' : 'bg-gray-700'
- }`}
- >
- <div
- className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
- agentAutoSave ? 'translate-x-5' : 'translate-x-0'
- }`}
- />
- </div>
- </div>
- </div>
-
- {/* Auto-apply default */}
- <div className="space-y-3">
- <label className="flex items-center gap-2 text-sm font-medium text-gray-300">
- <Zap size={16} className="text-[#b8966a]"/>
- Auto-Apply (default)
- </label>
- <div
- className={`flex items-center justify-between px-4 py-3 rounded-xl cursor-pointer transition-all duration-200 ${
- agentAutoApply
- ? 'bg-[#1a1610] border border-amber-800/40'
- : 'bg-gray-800/50 border border-gray-800 hover:bg-gray-800'
- }`}
- onClick={() => {
- const next = !agentAutoApply;
- setAgentAutoApply(next);
- try { localStorage.setItem(AGENT_AUTO_APPLY_KEY, String(next)); } catch {}
- }}
- >
- <div className="flex items-center gap-3">
- <div className={`p-1.5 rounded-lg ${agentAutoApply ? 'bg-amber-700/30' : 'bg-gray-700/50'}`}>
- <Zap size={18} className={agentAutoApply ? 'text-[#b8966a]' : 'text-gray-400'} />
- </div>
- <div>
- <p className="text-sm font-medium text-white">
- {agentAutoApply ? 'On' : 'Off'}
- </p>
- <p className="text-xs text-gray-500 mt-0.5">
- {agentAutoApply
- ? 'New agent sessions start with auto-apply ON (AI writes files directly)'
- : 'The AI proposes changes and you approve each one'}
- </p>
- </div>
- </div>
- <div
- className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
- agentAutoApply ? 'bg-amber-600' : 'bg-gray-700'
- }`}
- >
- <div
- className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
- agentAutoApply ? 'translate-x-5' : 'translate-x-0'
- }`}
- />
- </div>
+ <p className="text-xs text-gray-500 mt-0.5">AI coding agent — auto-apply is always on</p>
  </div>
  </div>
 
