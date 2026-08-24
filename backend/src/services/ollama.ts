@@ -100,10 +100,6 @@ export interface StreamOptions {
   temperature?: number;
   top_p?: number;
   max_tokens?: number;
-  /** Override the Ollama base URL (e.g. https://ollama.com for cloud models). */
-  baseUrl?: string;
-  /** Bearer token for cloud API requests. */
-  apiKey?: string;
   /**
    * Thinking mode for models that support it (qwen3, deepseek-r1, etc.)
    * - true: enable thinking (slower, more accurate)
@@ -154,19 +150,13 @@ export async function streamChat(
     body.think = think === true; // explicit true or false, never undefined
   }
 
-  const baseUrl = options.baseUrl || OLLAMA_BASE_URL;
   console.log(
-    `[ollama] Model: ${model}, think: ${body.think ?? 'n/a'}, temp: ${temperature ?? 'default'}${options.baseUrl ? ' (cloud)' : ''}`
+    `[ollama] Model: ${model}, think: ${body.think ?? 'n/a'}, temp: ${temperature ?? 'default'}`
   );
 
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (options.apiKey) {
-    headers['Authorization'] = `Bearer ${options.apiKey}`;
-  }
-
-  const res = await fetch(`${baseUrl}/api/chat`, {
+  const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
     method: 'POST',
-    headers,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal,
   });
