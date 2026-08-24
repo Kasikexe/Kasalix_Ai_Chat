@@ -14,6 +14,10 @@ import { findDangerousRequest, DANGEROUS_REPLY } from './content-guard';
 import { getCloudSettings } from '../routes/settings';
 import type { ConversationMode, Message } from '../types';
 
+// ─── Cloud routing state (resolved once per pipeline run) ────────
+let _cloudEndpoint = '';
+let _cloudApiKey = '';
+
 /**
  * Rough token estimate: ~4 characters per token for English text.
  * Used when the actual token count isn't available from the API.
@@ -375,7 +379,7 @@ async function runInternalStage(
       (chunk) => {
         output += chunk;
       },
-      { signal, think, ...extraOpts, onThinking }
+      { signal, think, ...extraOpts, onThinking, baseUrl: _cloudEndpoint || undefined, apiKey: _cloudApiKey || undefined }
     );
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') {
@@ -409,7 +413,7 @@ async function runVisibleStage(
         output += chunk;
         onChunk(chunk);
       },
-      { signal, think, ...extraOpts, onThinking }
+      { signal, think, ...extraOpts, onThinking, baseUrl: _cloudEndpoint || undefined, apiKey: _cloudApiKey || undefined }
     );
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') {
@@ -603,18 +607,24 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   }
 
   // ─── Cloud mode routing ──────────────────────────────────────
-  // Resolve the main chat model using cloud mode settings.
-  // getResolvedModel checks cloudModelAssignments and returns the cloud model
-  // when cloud/auto mode is active and a cloud model is configured for the role.
+  // Resolve cloud endpoint once for all streamChat calls in this run.
+  _cloudEndpoint = '';
+  _cloudApiKey = '';
   try {
     const cloudSettings = await getCloudSettings();
-    const { cloudMode, cloudApiKey } = cloudSettings;
+    const { cloudMode, cloudApiKey, cloudEndpoint } = cloudSettings;
     console.log(`[pipeline] Cloud mode: ${cloudMode}, hasApiKey: ${!!cloudApiKey}`);
 
     if (cloudMode === 'cloud' && !cloudApiKey) {
       // Cloud-only mode but no API key — notify and fall back to local
       console.log('[cloud] Unavailable — no API key configured');
       onStage?.('cloud:unavailable');
+    }
+
+    if (cloudMode !== 'local' && cloudApiKey && cloudEndpoint) {
+      _cloudEndpoint = cloudEndpoint;
+      _cloudApiKey = cloudApiKey;
+      console.log(`[pipeline] Cloud routing enabled: ${cloudEndpoint}`);
     }
 
     // Resolve the main model through getResolvedModel so cloud models are
@@ -672,6 +682,8 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
       askKey: opts.conversationId,
       resumeState: opts.resumeState,
       toolPermission: opts.toolPermission,
+      cloudEndpoint: _cloudEndpoint || undefined,
+      cloudApiKey: _cloudApiKey || undefined,
 
       callbacks: {
         onStage,

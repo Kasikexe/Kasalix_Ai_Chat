@@ -113,6 +113,10 @@ export interface StreamOptions {
    * caller instead of being silently dropped.
    */
   onThinking?: (chunk: string) => void;
+  /** Override the Ollama base URL (for cloud routing). Defaults to localhost:11434. */
+  baseUrl?: string;
+  /** API key for cloud endpoints (sent as Bearer token). */
+  apiKey?: string;
 }
 
 export async function streamChat(
@@ -121,7 +125,7 @@ export async function streamChat(
   onChunk: (chunk: string) => void,
   options: StreamOptions = {}
 ): Promise<void> {
-  const { signal, temperature, think, onThinking } = options;
+  const { signal, temperature, think, onThinking, baseUrl, apiKey } = options;
   const ollamaMessages = convertMessagesForOllama(messages);
 
   const body: any = {
@@ -150,13 +154,17 @@ export async function streamChat(
     body.think = think === true; // explicit true or false, never undefined
   }
 
+  const endpoint = baseUrl || OLLAMA_BASE_URL;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
   console.log(
-    `[ollama] Model: ${model}, think: ${body.think ?? 'n/a'}, temp: ${temperature ?? 'default'}`
+    `[ollama] Model: ${model}, think: ${body.think ?? 'n/a'}, temp: ${temperature ?? 'default'}, endpoint: ${endpoint}`
   );
 
-  const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+  const res = await fetch(`${endpoint}/api/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
     signal,
   });
@@ -243,7 +251,7 @@ export async function streamChatWithTools(
   onChunk: (chunk: string) => void,
   options: StreamOptions = {}
 ): Promise<{ content: string; toolCalls: OllamaToolCall[] }> {
-  const { signal, temperature, think, onThinking } = options;
+  const { signal, temperature, think, onThinking, baseUrl, apiKey } = options;
 
   const body: any = {
     model,
@@ -257,11 +265,15 @@ export async function streamChatWithTools(
   if (options.max_tokens !== undefined) body.options = { ...body.options, num_predict: options.max_tokens };
   if (modelSupportsThinking(model)) body.think = think === true;
 
-  console.log(`[ollama] Tool round — model: ${model}, tools: ${tools.length}, think: ${body.think ?? 'n/a'}`);
+  const endpoint = baseUrl || OLLAMA_BASE_URL;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
-  const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+  console.log(`[ollama] Tool round — model: ${model}, tools: ${tools.length}, think: ${body.think ?? 'n/a'}, endpoint: ${endpoint}`);
+
+  const res = await fetch(`${endpoint}/api/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
     signal,
   });
@@ -356,11 +368,15 @@ export async function chat(
     body.think = options.think === true;
   }
 
-  console.log(`[ollama] Non-streaming — model: ${model}, temp: ${options.temperature ?? 'default'}`);
+  const endpoint = options.baseUrl || OLLAMA_BASE_URL;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (options.apiKey) headers['Authorization'] = `Bearer ${options.apiKey}`;
 
-  const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+  console.log(`[ollama] Non-streaming — model: ${model}, temp: ${options.temperature ?? 'default'}, endpoint: ${endpoint}`);
+
+  const res = await fetch(`${endpoint}/api/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
     signal: options.signal,
   });

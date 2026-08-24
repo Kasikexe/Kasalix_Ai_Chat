@@ -164,6 +164,8 @@ async function streamChatWithRetry(
         max_tokens: opts.max_tokens,
         think: opts.think,
         onThinking: (t) => bufferedThinking.push(t),
+        baseUrl: opts.cloudEndpoint || undefined,
+        apiKey: opts.cloudApiKey || undefined,
       });
       const out = buffered.join('');
       for (const c of buffered) onChunk(c);
@@ -1558,6 +1560,10 @@ export interface AgentLoopOptions {
   askKey?: string;
   /** Resume from a previously stopped run: the exact internal history to seed with */
   resumeState?: { history: { role: string; content: string }[] };
+  /** Cloud endpoint URL (for cloud model routing). */
+  cloudEndpoint?: string;
+  /** Cloud API key (for cloud model routing). */
+  cloudApiKey?: string;
 }
 
 function availableTools(autoApply: boolean): AgentToolDef[] {
