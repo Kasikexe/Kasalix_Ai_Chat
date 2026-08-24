@@ -2,34 +2,22 @@ import type { Message, OllamaModel } from '../types';
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 
-// Models that support thinking mode
-// We force think=false on these when user wants fast mode
-const THINKING_MODELS = ['qwen3', 'deepseek-r1', 'qwq', 'magpie'];
+import { supportsTools, supportsThinking } from './model-capabilities';
 
 /**
- * Whether a model name belongs to a family that supports the `think` flag.
- * Exported so routes can surface this to clients (hide the toggle, warn hosts).
+ * Whether a model supports the `think` flag.
+ * Uses auto-detected capabilities with hardcoded fallback.
  */
-export function modelSupportsThinking(modelName: string): boolean {
-  const lower = modelName.toLowerCase();
-  return THINKING_MODELS.some((m) => lower.includes(m));
+export async function modelSupportsThinking(modelName: string): Promise<boolean> {
+  return supportsThinking(modelName);
 }
 
-// ─── Model-driven tool calling ──────────────────────────────
-// Model families that support native function calling via Ollama's `tools`
-// parameter. Only these get the model-driven tool loop; others fall back to
-// keyword detection (which itself never lets a tool error kill the answer).
-const TOOL_CAPABLE_MODELS = [
-  'qwen3', 'qwen2.5', 'qwen2.5-coder', 'llama3.1', 'llama3.2', 'llama3.3',
-  'mistral', 'mixtral', 'gemma3', 'phi4', 'phi-4', 'gpt-oss',
-  'command-r', 'aya-expanse', 'minicpm-v', 'nemotron', 'molmo',
-  'minimax', 'deepseek', 'glm', 'internlm',
-];
-
-/** Whether a model family supports Ollama's native `tools`/tool_calls. */
-export function modelSupportsTools(modelName: string): boolean {
-  const lower = modelName.toLowerCase();
-  return TOOL_CAPABLE_MODELS.some((m) => lower.includes(m));
+/**
+ * Whether a model supports Ollama's native `tools`/tool_calls.
+ * Uses auto-detected capabilities with hardcoded fallback.
+ */
+export async function modelSupportsTools(modelName: string): Promise<boolean> {
+  return supportsTools(modelName);
 }
 
 /** A message used inside the model-driven tool-calling loop (transient, not persisted). */
@@ -151,7 +139,7 @@ export async function streamChat(
   // If user explicitly chose think=false, honor that
   // If user explicitly chose think=true, honor that
   // If undefined, force false to prevent silent thinking on slow hardware
-  if (modelSupportsThinking(model)) {
+  if (await modelSupportsThinking(model)) {
     body.think = think === true; // explicit true or false, never undefined
   }
 
@@ -264,7 +252,7 @@ export async function streamChatWithTools(
   if (temperature !== undefined) body.options = { ...body.options, temperature };
   if (options.top_p !== undefined) body.options = { ...body.options, top_p: options.top_p };
   if (options.max_tokens !== undefined) body.options = { ...body.options, num_predict: options.max_tokens };
-  if (modelSupportsThinking(model)) body.think = think === true;
+  if (await modelSupportsThinking(model)) body.think = think === true;
 
   const endpoint = baseUrl || OLLAMA_BASE_URL;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -365,7 +353,7 @@ export async function chat(
   if (options.top_p !== undefined) body.options = { ...body.options, top_p: options.top_p };
   if (options.max_tokens !== undefined) body.options = { ...body.options, num_predict: options.max_tokens };
 
-  if (modelSupportsThinking(model)) {
+  if (await modelSupportsThinking(model)) {
     body.think = options.think === true;
   }
 

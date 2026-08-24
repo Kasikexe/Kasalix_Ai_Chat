@@ -655,7 +655,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   const lastUserMsgForThink = [...messages].reverse().find((m) => m.role === 'user');
   const think = thinkingMode === 'off' ? false : needsThinking(lastUserMsgForThink?.content ?? '');
   console.log(`[pipeline] Thinking mode: ${thinkingMode} → think: ${think}`);
-  if (think && !modelSupportsThinking(model)) {
+  if (think && !(await modelSupportsThinking(model))) {
     const resolved = await getResolvedModel('chat_thinking');
     if (resolved.model && resolved.model !== model) {
       console.log(`[pipeline] Auto-thinking: ${model} can't think → using ${resolved.model} (source: ${resolved.source})`);
@@ -766,7 +766,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
 
   // TOOL STAGE (heuristic fallback) — only runs when the chat model can't call
   // tools itself. Tool-capable models use the model-driven loop further down.
-  const chatSupportsTools = mode !== 'agent' && modelSupportsTools(model);
+  const chatSupportsTools = mode !== 'agent' && (await modelSupportsTools(model));
   if (!chatSupportsTools && intent.wantsTool && intent.toolId) {
     onStage('tool:executing');
     const lastMsg = messages[messages.length - 1];

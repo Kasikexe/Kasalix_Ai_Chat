@@ -13,6 +13,7 @@ import settingsRoutes from './routes/settings';
 import filesRoutes from './routes/files';
 import memoryRoutes from './routes/memory';
 import changelogRoutes from './routes/changelog';
+import { probeAllModels } from './services/model-capabilities';
 import plannedRoutes from './routes/planned';
 import speedtestRoutes from './routes/speedtest';
 import pluginsRoutes from './routes/plugins';
@@ -757,6 +758,9 @@ if (httpsServerOptions) {
     appLogger.info(`[server] Backend running on http://0.0.0.0:${info.port}`);
   });
 }
+
+// Probe installed models for tool/thinking capabilities (non-blocking)
+probeAllModels().catch(() => {});
 
 // Graceful shutdown
 process.on('SIGINT', () => {
