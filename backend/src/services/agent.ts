@@ -22,6 +22,21 @@ const backgroundProcesses = new Map<string, {
   done: boolean;
 }>();
 
+/** Get status of all background processes (for dashboard). */
+export function getBackgroundProcesses(): { id: string; output: string; exitCode: number | null; done: boolean; outputPreview: string }[] {
+  const results: { id: string; output: string; exitCode: number | null; done: boolean; outputPreview: string }[] = [];
+  for (const [id, proc] of backgroundProcesses) {
+    results.push({
+      id,
+      output: proc.output,
+      exitCode: proc.exitCode,
+      done: proc.done,
+      outputPreview: proc.output.slice(-500),
+    });
+  }
+  return results;
+}
+
 // ─── Sandbox helpers (same rules as routes/files.ts + /api/terminal) ─────
 function resolveWorkspaceRoot(ws?: string): string | null {
   if (!ws || typeof ws !== 'string') return null;

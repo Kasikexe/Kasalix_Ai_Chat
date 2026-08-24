@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { runPipeline } from '../services/pipeline';
 import { addMessage, createConversation, getConversation, updateConversation } from '../services/storage';
-import { resolvePendingQuestion, resolvePendingApproval } from '../services/agent';
+import { resolvePendingQuestion, resolvePendingApproval, getBackgroundProcesses } from '../services/agent';
 import { getMemory } from '../services/memory';
 import { extractMemoryFromTurn } from '../services/extractor';
 import { chat as ollamaChat, streamChat } from '../services/ollama';
@@ -17,6 +17,12 @@ const chat = new Hono();
 // reliable stop mechanism (client-disconnect detection is flaky in
 // @hono/node-server when the POST body has been read).
 const activeRuns = new Map<string, { controller: AbortController; ownerId: string }>();
+
+// ─── Background processes dashboard ───────────────────────────────────
+chat.get('/background-processes', (c) => {
+  const processes = getBackgroundProcesses();
+  return c.json({ processes });
+});
 
 chat.post('/', async (c) => {
   let convId: string | undefined;
