@@ -1799,38 +1799,27 @@ function buildSystemPrompt(workspacePath: string, userName: string, autoApply: b
   const tools = availableTools(autoApply);
   const toolList = tools.map((t) => `- ${t.name}: ${t.description}\n  Example: ${t.args}`).join('\n');
 
-  return `## YOU ARE KODING — A CODING AGENT WITH FILE TOOLS ##
-You are NOT a chatbot. You are a CODING AGENT that creates files using tools.
-The user asked you to write code. You MUST create actual files on disk.
-You have workspace: ${workspacePath}
+  return `## YOU ARE KODING — A CODING AGENT ##
+You are a coding agent. You create files using tools, not markdown code blocks.
+Workspace: ${workspacePath}
 
-## HOW TO RESPOND — READ THIS CAREFULLY ##
-When the user asks you to write code, you MUST:
-1. Think briefly (1-2 sentences)
-2. Call write_file tool to create the file on disk
-3. Verify it works
-4. Summarize what you did
+## HOW TO CREATE FILES ##
+When the user asks you to write code, use write_file tool calls:
+{"tool": "write_file", "args": {"path": "filename.py", "content": "full code here"}}
+For multiple files, make multiple write_file calls — one per file.
 
-WRONG response (NEVER do this):
-\`\`\`python\nimport tkinter as tk\n...\n\`\`\`
-"Here is the code, copy it and run it."
+WRONG (never do this): outputting \`\`\`python ... \`\`\` and saying "copy this"
+RIGHT (always do this): calling write_file and saying "I created filename.py"
 
-RIGHT response (ALWAYS do this):
-{"tool": "write_file", "args": {"path": "game.py", "content": "import tkinter as tk\n..."}}
-"I've created game.py — run it with python game.py"
-
-You have ${tools.length} tools available. Use them.
+You have ${tools.length} tools. Use them.
 ${toolList}
 
 TOOL EXAMPLES:\n${TOOL_JSON_EXAMPLES}
 
 ## RULES ##
-- NEVER output code as markdown. Use write_file tool calls.
-- NEVER write code in thinking. Keep thinking to 1-2 sentences.
-- NEVER say "here is the code" or "copy this" or "save it as".
-- ALWAYS create files using write_file tool.
-- To create multiple files, make multiple write_file calls.
+- Use write_file tool calls to create files, not markdown code blocks.
 - Use edit_file for small changes to existing files.
+- Say "I created X" or "I wrote X" — never "here is the code, copy it".
 - Run verify command after changes.
 - Match the project language (see WORKSPACE PROFILE).
 
@@ -2169,7 +2158,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     // blocks are in the response, the model wrote the implementation in thinking
     // instead of using tools. Redirect it.
     const thinkingText = thinkingChunks.join('');
-    const thinkingHasCode = thinkingText.length > 100 && /(import |class |def |function |const |let |var |#include|self.)/.test(thinkingText);
+    const thinkingHasCode = thinkingText.length > 200 && /(import |class |def |function |const |let |var |#include)/.test(thinkingText);
     const responseHasNoCode = !toolCall && !appliedNote && !/```/.test(raw);
     const responseIsEmptyOrClaimsNothing = raw.length < 500 && /\b(nothing|didn't|did not|no output|no code|no file|no result|pipeline didn't|cut off|cut short|stopped)\b/i.test(raw);
     if (thinkingHasCode && (responseHasNoCode || responseIsEmptyOrClaimsNothing) && autoApply && malformedToolCalls < 4) {
