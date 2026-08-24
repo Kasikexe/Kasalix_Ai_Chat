@@ -45,6 +45,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
   const [workspacePath, setWorkspacePath] = useState(offlineWorkspace || conversation?.workspacePath || '');
   const [loadedPath, setLoadedPath] = useState(offlineWorkspace || conversation?.workspacePath || '');
   const [planningEnabled, setPlanningEnabled] = useState(false);
+  const [planMode, setPlanMode] = useState<'off' | 'on' | 'auto'>('off');
 
   // Auto-apply is always ON — the AI writes/deletes files directly.
   const autoApply = true;
@@ -144,7 +145,9 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     handleAgentCommand,
     handleQuestion,
     onConversationStarted,
-    handleApprovalRequest
+    handleApprovalRequest,
+    undefined,
+    planMode
   );
 
   // ─── Layout State ──────────────────────────────────────────
@@ -832,6 +835,8 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
             isStreaming={isStreaming}
             planningEnabled={planningEnabled}
             onPlanningToggle={() => setPlanningEnabled(!planningEnabled)}
+            planMode={planMode}
+            onPlanModeChange={setPlanMode}
             draftKey={convKey}
           />
         </div>

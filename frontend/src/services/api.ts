@@ -607,7 +607,8 @@ streamChat(
   top_p?: number,
   max_tokens?: number,
   planningEnabled?: boolean,
-  autoApply?: boolean
+  autoApply?: boolean,
+  planMode?: 'off' | 'on' | 'auto'
 ): Promise<void> {
   return (async () => {
     const profile = loadProfile();
@@ -629,6 +630,7 @@ streamChat(
         userName: profile?.name || 'User',
         planningEnabled: planningEnabled === true,
         autoApply: autoApply === true,
+        planMode: planMode || 'off',
       }),
       signal,
     }));

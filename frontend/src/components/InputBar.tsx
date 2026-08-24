@@ -9,6 +9,8 @@ interface Props {
  disabled?: boolean;
  planningEnabled?: boolean;
  onPlanningToggle?: () => void;
+ planMode?: 'off' | 'on' | 'auto';
+ onPlanModeChange?: (mode: 'off' | 'on' | 'auto') => void;
  /** Key identifying which conversation this draft belongs to (survives remounts). */
  draftKey?: string;
 }
@@ -18,7 +20,7 @@ interface Props {
 // re-attach, etc.) instead of silently wiping it.
 const draftCache = new Map<string, { value: string; image: string | null }>();
 
-export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnabled, onPlanningToggle, draftKey }: Props) {
+export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnabled, onPlanningToggle, planMode, onPlanModeChange, draftKey }: Props) {
  const [value, setValue] = useState(() => (draftKey ? draftCache.get(draftKey)?.value ?? '' : ''));
  const [image, setImage] = useState<string | null>(() => (draftKey ? draftCache.get(draftKey)?.image ?? null : null));
 
@@ -242,20 +244,31 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
  <Paperclip size={18} />
  </button>
 
- {/* Planning toggle — only shown in agent mode */}
- {onPlanningToggle !== undefined && (
+ {/* Plan mode selector — only shown in agent mode */}
+ {onPlanModeChange !== undefined && (
+ <div className="flex-shrink-0 flex items-center gap-1 bg-gray-800 rounded-lg p-0.5">
+ {(['off', 'auto', 'on'] as const).map((m) => (
  <button
- onClick={onPlanningToggle}
+ key={m}
+ onClick={() => onPlanModeChange(m)}
  disabled={disabled || isStreaming}
- className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
- planningEnabled
- ? 'bg-violet-600 text-white hover:bg-violet-700'
- : 'text-gray-400 hover:bg-gray-700'
+ className={`px-2 py-1 text-xs font-medium rounded-md transition-colors ${
+ planMode === m
+ ? m === 'on' ? 'bg-violet-600 text-white'
+ : m === 'auto' ? 'bg-blue-600 text-white'
+ : 'bg-gray-600 text-white'
+ : 'text-gray-400 hover:text-gray-200'
  }`}
- title={planningEnabled ? 'Planning mode: on (AI plans before coding)' : 'Planning mode: off'}
+ title={
+ m === 'off' ? 'Plan: off (fastest)'
+ : m === 'auto' ? 'Plan: auto (complex tasks only)'
+ : 'Plan: always (extra LLM call)'
+ }
  >
- <ClipboardList size={18} />
+ {m === 'off' ? 'Plan Off' : m === 'auto' ? 'Auto' : 'Plan On'}
  </button>
+ ))}
+ </div>
  )}
 
  <button
