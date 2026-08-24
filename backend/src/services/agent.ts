@@ -1561,7 +1561,7 @@ interface CodeBlockFile {
 const BLOCK_FILE_PATH_RE = /^(?:\/\/|#|;|%|--|\/\*|<!--)\s*([^\s]+?\.[a-zA-Z]\w*)\s*(?:\*\/|-->)?$/;
 const BLOCK_DELETE_PATH_RE = /^(?:\/\/|#|--)\s*DELETE:\s*([^\s]+)/i;
 const BLOCK_EDIT_PATH_RE = /^(?:\/\/|#|--|;|%|<!--)\s*EDIT:\s*([^\s]+?)(?:\s*-->)?$/i;
-const BLOCK_CODE_RE = /```(?:\w*)\n([\s\S]*?)```/g;
+const BLOCK_CODE_RE = /```(?:\w*)\s*\n([\s\S]*?)```/g;
 
 /**
  * Try to extract a filename from the text immediately before a code block.
@@ -1605,7 +1605,8 @@ export function parseCodeBlockFiles(content: string): CodeBlockFile[] {
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
     if (!seg.startsWith('```')) continue; // skip text segments
-    const innerMatch = seg.match(/```(?:\w*)\n([\s\S]*?)```/);
+    // Match code block content: ```lang\n...``` or ```\n...``` (allow blank line after lang)
+    const innerMatch = seg.match(/```(?:\w*)\s*\n([\s\S]*?)```/);
     if (!innerMatch) continue;
     const block = innerMatch[1];
     const lines = block.split('\n');
@@ -1646,6 +1647,7 @@ export function parseCodeBlockFiles(content: string): CodeBlockFile[] {
     // Heuristic: guess filename from the text BEFORE this code block
     const prevText = i > 0 ? segments[i - 1] : '';
     const guessedPath = guessFilenameFromContext(prevText);
+    logger.info(`[parseCodeBlocks] Block ${out.length}: firstLine=${first.slice(0, 60)}, guessedPath=${guessedPath}, prevTextLen=${prevText.length}`);
     if (guessedPath) {
       out.push({ type: 'create', path: guessedPath, content: block.trimStart() });
     }
@@ -1660,6 +1662,7 @@ async function applyCodeBlockFiles(
   onFileWritten?: (w: { path: string; changeType: string; originalContent?: string }) => void
 ): Promise<string> {
   const blocks = parseCodeBlockFiles(answer).slice(0, 20);
+  logger.info(`[agent] parseCodeBlockFiles found ${blocks.length} block(s): ${blocks.map((b) => `${b.type}:${b.path}`).join(', ') || 'none'}`);
   if (blocks.length === 0) return '';
   const applied: string[] = [];
   const failed: string[] = [];
