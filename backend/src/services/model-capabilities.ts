@@ -83,7 +83,7 @@ async function saveCache(): Promise<void> {
  * Sends a minimal request with `tools: []` — if the model accepts it,
  * it supports the tools parameter.
  */
-async function probeTools(model: string): Promise<boolean> {
+async function probeTools(model: string): Promise<boolean | null> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
@@ -104,7 +104,8 @@ async function probeTools(model: string): Promise<boolean> {
     // If the response has a valid message structure, tools are supported
     return !!(data.message?.content !== undefined);
   } catch {
-    return false;
+    // Probe failed (timeout, network) — return null so caller can use fallback
+    return null;
   }
 }
 
@@ -114,7 +115,7 @@ async function probeTools(model: string): Promise<boolean> {
  * includes a `thinking` or `reasoning` field, the model supports it.
  * Ollama uses "thinking" for some endpoints and "reasoning" for others.
  */
-async function probeThinking(model: string): Promise<boolean> {
+async function probeThinking(model: string): Promise<boolean | null> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
@@ -136,7 +137,8 @@ async function probeThinking(model: string): Promise<boolean> {
     // field in the message — check both.
     return !!(data.message?.thinking || data.message?.reasoning);
   } catch {
-    return false;
+    // Probe failed (timeout, network) — return null so caller can use fallback
+    return null;
   }
 }
 
@@ -153,7 +155,16 @@ export async function getModelCapabilities(model: string): Promise<{ tools: bool
   }
 
   console.log(`[capabilities] Probing model: ${model}`);
-  const [tools, thinking] = await Promise.all([probeTools(model), probeThinking(model)]);
+  const probeToolsResult = await probeTools(model);
+  const probeThinkingResult = await probeThinking(model);
+  // Use probe results when available, fall back to hardcoded lists on failure.
+  // This prevents caching false permanently when a probe times out.
+  const tools = probeToolsResult !== null
+    ? probeToolsResult
+    : FALLBACK_TOOL_MODELS.some((m) => model.toLowerCase().includes(m));
+  const thinking = probeThinkingResult !== null
+    ? probeThinkingResult
+    : FALLBACK_THINKING_MODELS.some((m) => model.toLowerCase().includes(m));
   console.log(`[capabilities] ${model}: tools=${tools}, thinking=${thinking}`);
 
   capsCache.set(model, { tools, thinking });
