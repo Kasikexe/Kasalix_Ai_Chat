@@ -55,7 +55,7 @@ chat.post('/', async (c) => {
     }
 
     // Create or fetch conversation
-    let resumeState: { history: { role: string; content: string }[] } | undefined;
+    let resumeState: { history: { role: string; content: string }[]; pendingPlan?: string } | undefined;
     if (providedConvId) {
       const existing = await getConversation(providedConvId, ownerId);
       if (!existing) return c.json({ error: 'Conversation not found' }, 404);
@@ -100,6 +100,7 @@ chat.post('/', async (c) => {
       activeRuns.set(activeConvId, { controller: ac, ownerId });
     }
 
+    let lastAgentState: { history: { role: string; content: string }[]; pendingPlan?: string } | null = null;
     let partialSaved = false;
     const savePartial = () => {
       if (partialSaved || !fullResponse || !activeConvId) return;
@@ -179,6 +180,7 @@ chat.post('/', async (c) => {
             onPlan: (plan) => send({ type: 'plan', plan }),
             planMode,
             onResumeState: (state) => {
+              lastAgentState = state;
               if (activeConvId) {
                 updateConversation(activeConvId, ownerId, { agentState: state }).catch((e) =>
                   console.error('[chat] Failed to save agent resume state:', e)
@@ -204,8 +206,12 @@ chat.post('/', async (c) => {
           }
           // The run finished without being stopped — clear any saved resume state
           // so a future message starts fresh instead of re-resuming.
+          // Exception: preserve pendingPlan so the next message can execute it.
           if (activeConvId && !aborted) {
-            updateConversation(activeConvId, ownerId, { agentState: null }).catch(() => {});
+            const finalState = lastAgentState?.pendingPlan
+              ? { history: [], pendingPlan: lastAgentState.pendingPlan }
+              : null;
+            updateConversation(activeConvId, ownerId, { agentState: finalState }).catch(() => {});
           }
           send({ type: 'done', stage: currentStage });
 
@@ -240,6 +246,12 @@ chat.post('/', async (c) => {
           } else {
             const message = e instanceof Error ? e.message : 'Unknown error';
             appLogger.error('[chat] Pipeline error:', message);
+            // Detect cloud-specific errors and fire the cloud:unavailable stage
+            // so the frontend shows a toast notification.
+            const isCloudError = /ollama error|cloud|fetch failed|ECONNREFUSED|ENOTFOUND/i.test(message);
+            if (isCloudError) {
+              send({ type: 'stage', stage: 'cloud:unavailable' });
+            }
             send({ type: 'error', error: message });
             // Non-abort failures end the run — don't leave stale resume state behind.
             if (activeConvId) {

@@ -4,6 +4,9 @@ export type ConversationMode = 'chat' | 'agent';
 /** Serializable agent-loop state saved when a run is stopped/capped, so a later message can resume. */
 export interface AgentResumeState {
   history: { role: string; content: string }[];
+  /** When plan-only mode is active, the plan text is stored here.
+   *  On the next message the agent executes it instead of replanning. */
+  pendingPlan?: string;
 }
 
 export interface Message {

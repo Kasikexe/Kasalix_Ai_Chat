@@ -2294,7 +2294,7 @@ export interface AgentLoopOptions {
   /** Routing key for ask_user answers (usually the conversation id) */
   askKey?: string;
   /** Resume from a previously stopped run: the exact internal history to seed with */
-  resumeState?: { history: { role: string; content: string }[] };
+  resumeState?: { history: { role: string; content: string }[]; pendingPlan?: string };
   /** Cloud endpoint URL (for cloud model routing). */
   cloudEndpoint?: string;
   /** Cloud API key (for cloud model routing). */
@@ -2522,9 +2522,20 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
   // This gives the model a structured approach and reduces drift on multi-step
   // tasks. The plan is injected into the first iteration's context.
   let planText = '';
+  // Text to save in resumeState so next message can execute the plan
+  let pendingPlanText = '';
   const planMode = opts.planMode ?? 'off';
-  // Skip planning if: resume, planMode is 'off', or planMode is 'auto' and message is simple (< 200 chars)
-  const shouldPlan = !opts.resumeState?.history?.length && planMode !== 'off' &&
+
+  // Resume with a saved plan: skip replanning, use the stored plan
+  if (opts.resumeState?.pendingPlan && !opts.resumeState?.history?.length) {
+    planText = opts.resumeState.pendingPlan;
+    pendingPlanText = ''; // consumed — no longer pending
+    logger.info(`[agent] Resuming with saved plan: ${planText.slice(0, 100)}`);
+    callbacks.onPlan?.(planText);
+  }
+
+  // Skip planning if: resume with history, planMode is 'off', or planMode is 'auto' and message is simple (< 200 chars)
+  const shouldPlan = !planText && !opts.resumeState?.history?.length && planMode !== 'off' &&
     (planMode === 'on' || (planMode === 'auto' && lastUserMsg.length > 200));
   if (shouldPlan) {
     try {
@@ -2533,7 +2544,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       const planPrompt = [
         { role: 'system' as const, content: system + '\n\n' + workspaceProfile },
         ...opts.messages,
-        { role: 'user' as const, content: lastUserMsg + '\n\nBefore starting, output a brief plan (2-5 short bullet points) of what you will do and in what order. Start each line with "PLAN:". Each bullet should be ONE SHORT SENTENCE describing the step (e.g. "Create the player class", "Add collision detection"). Do NOT write any code in the plan — only describe what you will do. Then proceed with your first tool call immediately after.' },
+        { role: 'user' as const, content: lastUserMsg + '\n\nBefore starting, output a brief plan (2-5 short bullet points) of what you will do and in what order. Start each line with "PLAN:". Each bullet should be ONE SHORT SENTENCE describing the step (e.g. "Create the player class", "Add collision detection"). Do NOT write any code in the plan — only describe what you will do.' },
       ];
       const planChunks: string[] = [];
       await streamChatWithRetry(opts, planPrompt, (c) => planChunks.push(c), () => {});
@@ -2550,7 +2561,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       // Planning is best-effort — if it fails, continue without a plan
       logger.info(`[agent] Planning phase failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
     }
-  } else {
+  } else if (!planText) {
     logger.info(`[agent] Plan mode: ${planMode} — skipping planning phase`);
   }
 
@@ -2577,11 +2588,25 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     try {
       callbacks.onResumeState?.({
         history: history.slice(-60).map((m) => ({ role: m.role, content: m.content })),
+        ...(pendingPlanText ? { pendingPlan: pendingPlanText } : {}),
       });
     } catch (e) {
       logger.info(`[agent] Failed to save resume state: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
+
+  // Plan-only mode: after planning, save the plan and exit (don't run tool loop)
+  // The user will approve it on the next message, which resumes with the saved plan.
+  if (planMode === 'on' && planText && !opts.resumeState?.history?.length && !opts.resumeState?.pendingPlan) {
+    pendingPlanText = planText;
+    fireResumeState();
+    const planResponse = `\ud83d\udccb **Plan:**\n\n${planText.split('\n').map((l, i) => `${i + 1}. ${l}`).join('\n')}\n\nSay **"execute"** or **"go"** to start implementing.`;
+    await sessionLog.logMessage('assistant', planResponse);
+    await sessionLog.end();
+    callbacks.onStage('agent:done');
+    callbacks.onChunk(planResponse);
+    return planResponse;
+  }
 
   try {
   for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
