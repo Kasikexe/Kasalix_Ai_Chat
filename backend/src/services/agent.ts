@@ -508,8 +508,8 @@ export const AGENT_TOOL_DEFS: AgentToolDef[] = [
   },
   {
     name: 'glob',
-    description: 'Fast file pattern matching. Find files by name pattern (e.g. "**/*.tsx", "src/**/*.ts", "*.json"). Returns matching paths sorted by modification time. Use this instead of list_files when you know the file extension or name pattern.',
-    args: '{"pattern": "**/*.py"} or {"pattern": "src/**/*.ts"}',
+    description: 'Fast file pattern matching. Find files by name/extension pattern (e.g. "**/*.tsx", "src/**/*.ts", "*.json"). Returns matching paths sorted by modification time. ALWAYS use this instead of list_files when searching for files by extension or name pattern — it is much faster.',
+    args: '{"pattern": "**/*.py"}',
     mutating: false,
   },
   {
@@ -2332,6 +2332,7 @@ TOOL EXAMPLES:\n${TOOL_JSON_EXAMPLES}
 ## RULES ##
 - Use write_file tool calls to create files, not markdown code blocks.
 - Use edit_file for small changes to existing files.
+- Use glob (not list_files) when searching for files by extension or name pattern.
 - Say "I created X" or "I wrote X" — never "here is the code, copy it".
 - Run verify command after changes.
 - Match the project language (see WORKSPACE PROFILE).
