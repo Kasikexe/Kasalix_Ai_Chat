@@ -370,8 +370,8 @@ export const AGENT_TOOL_DEFS: AgentToolDef[] = [
   },
   {
     name: 'run_command',
-    description: 'Run a shell command inside the workspace directory (e.g. build, test, install). The command is sandboxed to the workspace. Output is capped.',
-    args: '{"command": "bun run build"}',
+    description: 'Run a shell command inside the workspace directory (e.g. build, test, install). The command is sandboxed to the workspace. Output is capped. For long-running commands (servers, watchers), set background=true to run async and poll with __bg_status:id.',
+    args: '{"command": "bun run build", "background": false}',
     mutating: false,
   },
   {
@@ -526,6 +526,7 @@ const TOOL_JSON_EXAMPLES = `Available tools — to use one, respond with ONLY a 
 {"tool": "read_file", "args": {"path": "src/index.ts"}}
 {"tool": "search_files", "args": {"query": "function render"}}
 {"tool": "run_command", "args": {"command": "bun run build"}}
+{"tool": "run_command", "args": {"command": "npm start", "background": true}} — long-running commands run async; poll with __bg_status:id
 {"tool": "edit_file", "args": {"path": "src/app.ts", "old_string": "const x = 1;", "new_string": "const x = 2;"}}
 {"tool": "write_file", "args": {"path": "src/app.ts", "content": "..."}} — for an EXISTING file only your changed lines are applied; the rest is preserved
 {"tool": "delete_file", "args": {"path": "src/old.ts"}}
