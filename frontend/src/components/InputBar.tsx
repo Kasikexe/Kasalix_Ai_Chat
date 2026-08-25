@@ -8,11 +8,12 @@ interface Props {
  isStreaming: boolean;
  disabled?: boolean;
  planningEnabled?: boolean;
- onPlanningToggle?: () => void;
- planMode?: 'off' | 'on' | 'auto';
- onPlanModeChange?: (mode: 'off' | 'on' | 'auto') => void;
- /** Key identifying which conversation this draft belongs to (survives remounts). */
- draftKey?: string;
+ onPlanningToggle?: () => void;  planMode?: 'off' | 'on' | 'auto';
+  onPlanModeChange?: (mode: 'off' | 'on' | 'auto') => void;
+  toolPermission?: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit';
+  onToolPermissionChange?: (mode: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit') => void;
+  /** Key identifying which conversation this draft belongs to (survives remounts). */
+  draftKey?: string;
 }
 
 // Per-conversation draft cache — keeps the text you were typing (and any
@@ -20,7 +21,7 @@ interface Props {
 // re-attach, etc.) instead of silently wiping it.
 const draftCache = new Map<string, { value: string; image: string | null }>();
 
-export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnabled, onPlanningToggle, planMode, onPlanModeChange, draftKey }: Props) {
+export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnabled, onPlanningToggle, planMode, onPlanModeChange, toolPermission, onToolPermissionChange, draftKey }: Props) {
  const [value, setValue] = useState(() => (draftKey ? draftCache.get(draftKey)?.value ?? '' : ''));
  const [image, setImage] = useState<string | null>(() => (draftKey ? draftCache.get(draftKey)?.image ?? null : null));
 
@@ -266,6 +267,33 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
  }
  >
  {m === 'off' ? 'Plan Off' : m === 'auto' ? 'Auto' : 'Plan On'}
+ </button>
+ ))}
+ </div>
+ )}
+
+ {/* Tool permission selector — only shown in agent mode */}
+ {onToolPermissionChange !== undefined && (
+ <div className="flex-shrink-0 flex items-center gap-1 bg-gray-800 rounded-lg p-0.5">
+ {(['auto', 'ask-each', 'read-only'] as const).map((m) => (
+ <button
+ key={m}
+ onClick={() => onToolPermissionChange(m)}
+ disabled={disabled || isStreaming}
+ className={`px-2 py-1 text-xs font-medium rounded-md transition-colors ${
+ toolPermission === m
+ ? m === 'auto' ? 'bg-green-600 text-white'
+ : m === 'ask-each' ? 'bg-amber-600 text-white'
+ : 'bg-red-600 text-white'
+ : 'text-gray-400 hover:text-gray-200'
+ }`}
+ title={
+ m === 'auto' ? 'Auto: execute all tools without asking'
+ : m === 'ask-each' ? 'Ask: confirm each tool before executing'
+ : 'Read-only: no file changes allowed'
+ }
+ >
+ {m === 'auto' ? 'Auto' : m === 'ask-each' ? 'Ask' : 'Read-only'}
  </button>
  ))}
  </div>

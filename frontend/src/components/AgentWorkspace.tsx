@@ -46,6 +46,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
   const [loadedPath, setLoadedPath] = useState(offlineWorkspace || conversation?.workspacePath || '');
   const [planningEnabled, setPlanningEnabled] = useState(false);
   const [planMode, setPlanMode] = useState<'off' | 'on' | 'auto'>('off');
+  const [toolPermission, setToolPermission] = useState<'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit'>('auto');
 
   // Auto-apply is always ON — the AI writes/deletes files directly.
   const autoApply = true;
@@ -147,7 +148,8 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     onConversationStarted,
     handleApprovalRequest,
     undefined,
-    planMode
+    planMode,
+    toolPermission
   );
 
   // ─── Layout State ──────────────────────────────────────────
@@ -837,6 +839,8 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
             onPlanningToggle={() => setPlanningEnabled(!planningEnabled)}
             planMode={planMode}
             onPlanModeChange={setPlanMode}
+            toolPermission={toolPermission}
+            onToolPermissionChange={setToolPermission}
             draftKey={convKey}
           />
         </div>

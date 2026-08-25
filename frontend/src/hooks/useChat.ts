@@ -157,7 +157,8 @@ export function useChat(
   onConversationStarted?: (id: string) => void,
   onApprovalRequest?: (q: { key: string; tool: string; args: Record<string, unknown> }) => void,
   onPlan?: (plan: string) => void,
-  planMode?: 'off' | 'on' | 'auto'
+  planMode?: 'off' | 'on' | 'auto',
+  toolPermission?: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit'
 ) {
   const key = initialConversationId ?? 'new';
   ensureLiveTimer();
@@ -393,7 +394,8 @@ export function useChat(
         settings.max_tokens,
         planningEnabled,
         autoApply,
-        planMode
+        planMode,
+        toolPermission
       );
       return e.conversationId;
     } catch (err) {
@@ -404,7 +406,7 @@ export function useChat(
       e.abort = null;
       notify(e);
     }
-  }, [model, mode, workspacePath, planningEnabled, autoApply, planMode]);
+  }, [model, mode, workspacePath, planningEnabled, autoApply, planMode, toolPermission]);
 
   const sendMessage = useCallback(
     async (content: string): Promise<string | undefined> => {
