@@ -2731,18 +2731,17 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     }
 
     // Lazy assistant detection: the model claims to have done something
-    // ("Done!", "I've created", "I've refactored") but did not use any tools
+    // ("Done!", "I've created", "Committed", etc.) but did not use any tools
     // and did not output any code blocks. Force a retry.
     const claimsDone = toolCalls.length === 0 && !appliedNote && autoApply &&
-      /\b(?:done|i'?ve|finished|completed|created|wrote|refactored|moved|extracted|split)\b/i.test(raw) &&
+      /\b(?:done|i'?ve|finished|completed|created|wrote|refactored|moved|extracted|split|committed|pushed|deployed|saved|updated|fixed|added|removed|deleted|renamed)\b/i.test(raw) &&
       !/```/i.test(raw) &&
-      raw.length < 500;
+      raw.length < 1000;
     if (claimsDone && malformedToolCalls < 4) {
       malformedToolCalls++;
       const retryMsg =
-        'You said you were done but you did NOT actually create or modify any files. ' +
-        'You must call the write_file, edit_file, or delete_file tool to make changes. ' +
-        'Do NOT just describe what you would do — actually do it using the tools. ' +
+        'You said you were done but you did NOT actually call any tools. ' +
+        'You must use the actual tools (write_file, edit_file, git_commit, etc.) to make changes — do NOT just describe what you did. ' +
         'Respond with a JSON tool call like: {"tool": "write_file", "args": {"path": "filename.py", "content": "..."}}';
       history.push({ role: 'assistant', content: raw });
       history.push({ role: 'user', content: retryMsg });
