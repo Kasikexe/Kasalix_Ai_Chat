@@ -377,6 +377,12 @@ export function useChat(
               (m) => !(m.role === 'assistant' && m.content === '')
             );
             notify(e);
+            // Show toast for cloud errors so the user knows what happened
+            if (/ollama error|cloud|fetch failed|ECONNREFUSED|ENOTFOUND/i.test(err)) {
+              import('./useToast').then(({ useToast }) => {
+                window.dispatchEvent(new CustomEvent('cloud-unavailable'));
+              }).catch(() => {});
+            }
           },
         },
         controller.signal,
