@@ -2668,6 +2668,23 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       }
     }
 
+    // Multiple tool calls in text: the model dumped multiple tool calls as text
+    // in one response (e.g. all 26 tools on one line). Only the first was parsed.
+    // Detect this and ask the model to output ONE tool call at a time.
+    const rawToolJsonCount = (raw.match(/\{\s*"tool"\s*:/g) || []).length;
+    if (rawToolJsonCount > 1 && toolCalls.length >= 1 && malformedToolCalls < 4) {
+      malformedToolCalls++;
+      const retryMsg =
+        'You output ' + rawToolJsonCount + ' tool calls in a single response, but you MUST call only ONE tool at a time. ' +
+        'The other ' + (rawToolJsonCount - 1) + ' were ignored. ' +
+        'Pick the SINGLE most important tool call and respond with ONLY that one JSON object, nothing else. ' +
+        'e.g. {"tool": "write_file", "args": {"path": "filename.py", "content": "..."}}';
+      history.push({ role: 'assistant', content: raw });
+      history.push({ role: 'user', content: retryMsg });
+      callbacks.onStage('agent:working');
+      continue;
+    }
+
     // Malformed tool attempt recovery: the response contains JSON tool markers
     // ("tool" / "args") but did not parse into a valid call. Give the model up
     // to 2 corrective retries before falling back to the final-answer path.
