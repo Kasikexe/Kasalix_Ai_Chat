@@ -49,6 +49,12 @@ chat.post('/', async (c) => {
     const planningEnabled: boolean = body.planningEnabled === true;
     const autoApply: boolean = body.autoApply === true;
     const planMode: 'off' | 'on' | 'auto' = body.planMode === 'on' ? 'on' : body.planMode === 'auto' ? 'auto' : 'off';
+    const toolPermission: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit' =
+      body.toolPermission === 'read-only' ? 'read-only'
+      : body.toolPermission === 'ask-each' ? 'ask-each'
+      : body.toolPermission === 'suggest' ? 'suggest'
+      : body.toolPermission === 'auto-edit' ? 'auto-edit'
+      : 'auto';
 
     if (!model || !Array.isArray(messages) || messages.length === 0) {
       return c.json({ error: 'model and messages are required' }, 400);
@@ -195,6 +201,7 @@ chat.post('/', async (c) => {
             temperature,
             top_p,
             max_tokens,
+            toolPermission,
           });
 
           if (fullResponse && activeConvId && !aborted) {

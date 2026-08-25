@@ -80,7 +80,7 @@ interface PipelineOptions {
   /** Phase 3: fired when the agent wants to execute a mutating tool and needs approval */
   onApprovalRequest?: (key: string, tool: string, args: Record<string, unknown>) => void;
   /** Phase 3: permission level for tool execution */
-  toolPermission?: 'auto' | 'read-only' | 'ask-each';
+  toolPermission?: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit';
   /** Fired with each reasoning chunk from thinking models (qwen3, deepseek-r1, etc.) */
   onThinking?: (chunk: string) => void;
   /** Koding mode: fired when the AI runs a shell command or auto-verify (terminal feed) */
