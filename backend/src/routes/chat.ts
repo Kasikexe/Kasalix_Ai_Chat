@@ -255,7 +255,7 @@ chat.post('/', async (c) => {
             appLogger.error('[chat] Pipeline error:', message);
             // Detect cloud-specific errors and fire the cloud:unavailable stage
             // so the frontend shows a toast notification.
-            const isCloudError = /ollama error|cloud|fetch failed|ECONNREFUSED|ENOTFOUND/i.test(message);
+            const isCloudError = /ollama error|cloud|fetch failed|ECONNREFUSED|ENOTFOUND|exhausted retries/i.test(message);
             if (isCloudError) {
               send({ type: 'stage', stage: 'cloud:unavailable' });
             }

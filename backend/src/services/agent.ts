@@ -177,6 +177,7 @@ async function streamChatWithRetry(
   onThinkingChunk: (c: string) => void
 ): Promise<string> {
   const maxAttempts = 3;
+  let lastErr: unknown = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const buffered: string[] = [];
     const bufferedThinking: string[] = [];
@@ -196,6 +197,7 @@ async function streamChatWithRetry(
       for (const t of bufferedThinking) onThinkingChunk(t);
       return out;
     } catch (e) {
+      lastErr = e;
       if (attempt >= maxAttempts || !isTransientError(e) || opts.signal?.aborted) throw e;
       const delay = [1000, 3000, 7000][attempt - 1] ?? 5000;
       opts.callbacks.onStage('agent:retry');
@@ -203,7 +205,9 @@ async function streamChatWithRetry(
       await new Promise((r) => setTimeout(r, delay));
     }
   }
-  throw new Error('streamChatWithRetry exhausted retries');
+  // Preserve the original error message so the chat route can detect cloud
+  // errors (e.g. 'fetch failed', 'ENOTFOUND') and show the proper toast.
+  throw new Error(`streamChatWithRetry exhausted retries: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 }
 
 // ─── Context budget ──────────────────────────────────────────────────────
@@ -2312,30 +2316,17 @@ function buildSystemPrompt(workspacePath: string, userName: string, autoApply: b
   const tools = availableTools(autoApply);
   const toolList = tools.map((t) => `- ${t.name}: ${t.description}\n  Example: ${t.args}`).join('\n');
 
+  // NOTE: Behavioral rules (how to use tools, git rules, code style) live in
+  // AI_RULES.md and are injected by withAiRules(). This prompt only contains
+  // structural information that changes per-request (workspace, tool catalog).
+
   return `## YOU ARE KODING — A CODING AGENT ##
-You are a coding agent. You create files using tools, not markdown code blocks.
 Workspace: ${workspacePath}
 
-## HOW TO CREATE FILES ##
-When the user asks you to write code, use write_file tool calls:
-{"tool": "write_file", "args": {"path": "filename.py", "content": "full code here"}}
-For multiple files, make multiple write_file calls — one per file.
-
-WRONG (never do this): outputting \`\`\`python ... \`\`\` and saying "copy this"
-RIGHT (always do this): calling write_file and saying "I created filename.py"
-
-You have ${tools.length} tools. Use them.
+You have ${tools.length} tools. Use them — respond with ONLY a single JSON object.
 ${toolList}
 
 TOOL EXAMPLES:\n${TOOL_JSON_EXAMPLES}
-
-## RULES ##
-- Use write_file tool calls to create files, not markdown code blocks.
-- Use edit_file for small changes to existing files.
-- Use glob (not list_files) when searching for files by extension or name pattern.
-- Say "I created X" or "I wrote X" — never "here is the code, copy it".
-- Run verify command after changes.
-- Match the project language (see WORKSPACE PROFILE).
 
 AVAILABILITY: ${autoApply ? 'full (read, write, delete, rename, run, search web)' : 'read-only'}`;
 }
@@ -2372,19 +2363,10 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
   const rulesPath = path.join(root, '.agent-rules.md');
   const memoryPath = path.join(root, '.agent-memory.md');
   try { await fs.access(rulesPath); } catch {
-    // File doesn't exist — create with sensible defaults
-    const defaults = `# Agent Rules\n\n` +
-      `These rules are followed by the AI coding agent (Koding) in this project.\n` +
-      `You can edit this file freely — the AI will never modify it.\n\n` +
-      `## Identity\n` +
-      `- You are Koding, an autonomous coding agent\n` +
-      `- Always use write_file / edit_file tools to create or modify code\n` +
-      `- Never output raw markdown code blocks — use tools instead\n\n` +
-      `## Behavior\n` +
-      `- Prefer editing existing files over creating new ones\n` +
-      `- Run typecheck or tests after non-trivial changes\n` +
-      `- Ask before deleting files or running destructive commands\n` +
-      `- Keep changes minimal and focused\n`;
+    // File doesn't exist — create with a pointer to the global rules.
+    // Project-specific rules go here; global rules live in AI_RULES.md.
+    const defaults = `# Project Rules\n\n` +
+      `Add project-specific instructions below. Global AI rules are in AI_RULES.md.\n`;
     await fs.writeFile(rulesPath, defaults, 'utf-8');
     logger.info(`[agent] Auto-created .agent-rules.md in ${root}`);
   }
@@ -2546,13 +2528,20 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       const planPrompt = [
         { role: 'system' as const, content: system + '\n\n' + workspaceProfile },
         ...opts.messages,
-        { role: 'user' as const, content: lastUserMsg + '\n\nBefore starting, output a brief plan (2-5 short bullet points) of what you will do and in what order. Start each line with "PLAN:". Each bullet should be ONE SHORT SENTENCE describing the step (e.g. "Create the player class", "Add collision detection"). Do NOT write any code in the plan — only describe what you will do.' },
+        { role: 'user' as const, content: lastUserMsg + '\n\nCRITICAL: Output EXACTLY 2-5 lines, each starting with "PLAN:" — nothing else. Example:\nPLAN: Create the player class\nPLAN: Add collision detection\nPLAN: Write the game loop\nDo NOT write code, do NOT write prose, do NOT explain. ONLY output PLAN: lines.' },
       ];
       const planChunks: string[] = [];
       await streamChatWithRetry(opts, planPrompt, (c) => planChunks.push(c), () => {});
       const planRaw = planChunks.join('');
       // Extract lines that start with PLAN:
-      const planLines = planRaw.split('\n').filter((l) => /\bPLAN:/i.test(l));
+      let planLines = planRaw.split('\n').filter((l) => /\bPLAN:/i.test(l));
+      // Fallback: if no PLAN: lines, try to extract numbered steps or bullet points
+      if (planLines.length === 0) {
+        const bulletLines = planRaw.split('\n').filter((l) => /^\s*[\d]+[.)\]]\s+/.test(l.trim()) || /^\s*[-*]\s+/.test(l.trim()));
+        if (bulletLines.length >= 2) {
+          planLines = bulletLines.map((l) => 'PLAN: ' + l.replace(/^\s*[\d]+[.)\]]\s*/, '').replace(/^\s*[-*]\s*/, '').trim());
+        }
+      }
       if (planLines.length > 0) {
         planText = planLines.map((l) => l.replace(/^\s*\d*\.?\s*PLAN:\s*/i, '').trim()).join('\n');
         await sessionLog.logPlan(planText);
@@ -2685,6 +2674,30 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       history.push({ role: 'user', content: retryMsg });
       callbacks.onStage('agent:working');
       continue;
+    }
+
+    // Plain-text tool names: small models sometimes emit tool names as plain text
+    // (e.g. "glob\nrun_command\nlist_files") instead of JSON. Detect this and
+    // try to extract a single tool call from the text.
+    if (toolCalls.length === 0 && malformedToolCalls < 4) {
+      const plainTextToolMatch = raw.match(/\b(list_files|read_file|search_files|run_command|web_search|read_image|read_rules|update_memory|ask_user|git_status|git_diff|git_commit|edit_file|write_file|delete_file|delegate_to_subagent|rename_file|read_url|find_references|refactor_rename|create_directory|file_exists|read_url_image|diff_files|replace_in_file|count_lines|glob|multi_edit)\b/);
+      if (plainTextToolMatch) {
+        const toolName = plainTextToolMatch[1];
+        // Check if there are multiple tool names (multiple plain-text calls)
+        const allToolNames = raw.match(/\b(list_files|read_file|search_files|run_command|web_search|read_image|read_rules|update_memory|ask_user|git_status|git_diff|git_commit|edit_file|write_file|delete_file|delegate_to_subagent|rename_file|read_url|find_references|refactor_rename|create_directory|file_exists|read_url_image|diff_files|replace_in_file|count_lines|glob|multi_edit)\b/g) || [];
+        const uniqueTools = [...new Set(allToolNames)];
+        if (uniqueTools.length > 1) {
+          malformedToolCalls++;
+          const retryMsg =
+            'You output ' + uniqueTools.length + ' tool names as plain text, but you MUST call only ONE tool at a time using valid JSON. ' +
+            'Respond with ONLY a single JSON object like: {"tool": "' + toolName + '", "args": {}} ' +
+            'Choose the SINGLE most important tool and use proper JSON format. No markdown, no extra text.';
+          history.push({ role: 'assistant', content: raw });
+          history.push({ role: 'user', content: retryMsg });
+          callbacks.onStage('agent:working');
+          continue;
+        }
+      }
     }
 
     // Malformed tool attempt recovery: the response contains JSON tool markers

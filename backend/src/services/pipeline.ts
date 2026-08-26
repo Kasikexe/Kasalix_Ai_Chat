@@ -3,7 +3,7 @@ import path from 'path';
 import { streamChat, streamChatWithTools, modelSupportsTools, modelSupportsThinking } from './ollama';
 import type { ToolLoopMessage } from './ollama';
 import { getMemory } from './memory';
-import { getResolvedModel } from './model-assignments';
+import { getResolvedModel, getModelAssignment } from './model-assignments';
 import { getWebContext } from './search';
 import { generateImage } from './image';
 import { executeTool, detectTool, getAllTools, isProbablyMathExpression } from './tools/index';
@@ -625,9 +625,10 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
       // Cloud-only mode but no API key — notify and fall back to local
       console.log('[cloud] Unavailable — no API key configured');
       onStage?.('cloud:unavailable');
-    }
-
-    if (cloudMode !== 'local' && cloudApiKey && cloudEndpoint) {
+      // Fall back: clear cloud settings so downstream uses local model
+      _cloudEndpoint = '';
+      _cloudApiKey = '';
+    } else if (cloudMode !== 'local' && cloudApiKey && cloudEndpoint) {
       _cloudEndpoint = cloudEndpoint;
       _cloudApiKey = cloudApiKey;
       console.log(`[pipeline] Cloud routing enabled: ${cloudEndpoint}`);
@@ -644,10 +645,32 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
     // Use the resolved model as the base for the pipeline
     model = resolvedChat.model;
     if (resolvedChat.source === 'cloud') {
-      // Estimate input tokens from messages
-      const inputText = messages.map(m => m.content).join('\n');
-      const inputTokenEst = estimateTokens(inputText);
-      trackCloudUsage(resolvedChat.model, inputTokenEst);
+      // Probe the cloud endpoint quickly to detect if it's reachable.
+      // If unreachable, fall back to local so the user doesn't wait for
+      // retries that will all fail.
+      try {
+        const probeController = new AbortController();
+        const probeTimer = setTimeout(() => probeController.abort(), 5000);
+        const probeRes = await fetch(cloudEndpoint + '/v1/models', {
+          headers: { Authorization: `Bearer ${cloudApiKey}` },
+          signal: probeController.signal,
+        });
+        clearTimeout(probeTimer);
+        if (!probeRes.ok) throw new Error(`probe ${probeRes.status}`);
+        // Cloud is reachable — use it
+        const inputText = messages.map(m => m.content).join('\n');
+        const inputTokenEst = estimateTokens(inputText);
+        trackCloudUsage(resolvedChat.model, inputTokenEst);
+      } catch (probeErr) {
+        // Cloud unreachable — fall back to local model
+        console.warn(`[pipeline] Cloud unreachable (${probeErr instanceof Error ? probeErr.message : String(probeErr)}) — falling back to local`);
+        onStage?.('cloud:unavailable');
+        _cloudEndpoint = '';
+        _cloudApiKey = '';
+        const localModel = await getModelAssignment('chat');
+        console.log(`[pipeline] Fallback to local model: ${localModel}`);
+        model = localModel;
+      }
     }
   } catch (e) {
     console.error('[pipeline] Failed to resolve chat model:', e);
@@ -664,13 +687,19 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   // heuristic to decide if thinking adds value.
   const isAgentMode = mode === 'agent';
   const think = thinkingMode === 'off' ? false : (isAgentMode ? true : needsThinking(lastUserMsgForThink?.content ?? ''));
-  console.log(`[pipeline] Thinking mode: ${thinkingMode}, agent: ${isAgentMode} → think: ${think}`);
-  if (think && !(await modelSupportsThinking(model))) {
+  console.log(`[pipeline] Thinking mode: ${thinkingMode}, agent: ${isAgentMode} → think: ${think}`);    if (think && !(await modelSupportsThinking(model))) {
     const resolved = await getResolvedModel('chat_thinking');
     if (resolved.model && resolved.model !== model) {
       console.log(`[pipeline] Auto-thinking: ${model} can't think → using ${resolved.model} (source: ${resolved.source})`);
       model = resolved.model;
     }
+  }
+  // Safety: if model is still pointing to a cloud model but cloud is unreachable,
+  // force to local.
+  if (model && _cloudEndpoint === '' && (await getResolvedModel('chat')).source === 'cloud') {
+    const localModel = await getModelAssignment('chat');
+    console.log(`[pipeline] Cloud cleared, forcing local: ${localModel}`);
+    model = localModel;
   }
 
   // ─── Report final model to frontend ─────────────────────────
@@ -827,26 +856,14 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
         ? 'Here are the ACTUAL files in this workspace (read from disk):\n' + fileListing + '\n\nUse this listing to answer questions about files. Do NOT make up files that are not listed here.'
         : 'You cannot read files or list directories directly. If asked about files, say you cannot see them and offer to generate code instead.';
 
+      // NOTE: Behavioral rules live in AI_RULES.md and are injected by
+      // withAiRules(). This prompt only contains structural context.
       const agentSystem = withContext(
         await withAiRules(
           'You are an AI coding agent helping ' + (userName || 'a user') + ' build projects in their workspace.\n' +
           'Your workspace is at: ' + (workspacePath || '(not set)') + '\n\n' +
           fileInfo +
-          '\n\nCRITICAL RULES FOR CODE BLOCKS:\n' +
-          '1) ALWAYS start EVERY code block with a file path comment on the FIRST LINE.\n' +
-          '   Example: `// index.html` then the HTML on the next line.\n' +
-          '   Example: `# main.py` then Python code.\n' +
-          '   Example: `<!-- app.component.html -->` then Angular template.\n' +
-          '2) The file path MUST include a file extension (.html, .py, .ts, .css, etc.).\n' +
-          '3) Use relative paths like src/index.ts, components/Button.tsx, etc.\n' +
-          '4) NEVER output a code block without a file path comment on the first line.\n' +
-          '\n' +
-          'CRITICAL — You MUST output the COMPLETE file content in every code block. NEVER use placeholders like "# rest of the code", "...", "// remaining code unchanged", or similar shortcuts. Every code block must be the ENTIRE file from start to finish.\n' +
-          '\n' +
-          'To DELETE a file, output a code block with the first line as: `// DELETE: path/to/file.ext`\n' +
-          'and NO other content in the code block.\n' +
-          '\n' +
-          'If asked a question, answer conversationally.\n' +
+          '\n\nIf asked a question, answer conversationally.\n' +
           'All file operations are limited to your workspace. Do NOT reference files outside it.',
           'agent'
         )

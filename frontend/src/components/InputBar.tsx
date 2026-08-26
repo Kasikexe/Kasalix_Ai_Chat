@@ -274,18 +274,19 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
 
  {/* Tool permission selector — only shown in agent mode */}
  {onToolPermissionChange !== undefined && (
- <div className="flex-shrink-0 flex items-center gap-1 bg-gray-800 rounded-lg p-0.5">
+ <div className="flex-shrink-0 flex items-center gap-1 bg-gray-800 rounded-lg p-1 border border-gray-700">
+ <span className="text-[10px] text-gray-500 font-medium px-1">Tools:</span>
  {(['auto', 'ask-each', 'read-only'] as const).map((m) => (
  <button
  key={m}
  onClick={() => onToolPermissionChange(m)}
  disabled={disabled || isStreaming}
- className={`px-2 py-1 text-xs font-medium rounded-md transition-colors ${
+ className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
  toolPermission === m
- ? m === 'auto' ? 'bg-green-600 text-white'
- : m === 'ask-each' ? 'bg-amber-600 text-white'
- : 'bg-red-600 text-white'
- : 'text-gray-400 hover:text-gray-200'
+ ? m === 'auto' ? 'bg-green-600 text-white shadow-sm'
+ : m === 'ask-each' ? 'bg-amber-600 text-white shadow-sm'
+ : 'bg-red-600 text-white shadow-sm'
+ : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700'
  }`}
  title={
  m === 'auto' ? 'Auto: execute all tools without asking'
@@ -293,7 +294,7 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
  : 'Read-only: no file changes allowed'
  }
  >
- {m === 'auto' ? 'Auto' : m === 'ask-each' ? 'Ask' : 'Read-only'}
+ {m === 'auto' ? '⚡ Auto' : m === 'ask-each' ? '✋ Ask' : '🔒 Read-only'}
  </button>
  ))}
  </div>

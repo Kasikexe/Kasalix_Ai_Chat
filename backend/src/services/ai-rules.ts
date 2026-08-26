@@ -1,8 +1,9 @@
 /**
  * AI Ruleset service
  *
- * Loads a single user-editable rules file — AI_RULES.md — from the data
+ * Loads a single user-editable rules file — AI_RULES.md — from the rules/
  * directory and injects the relevant rules into every AI-facing system prompt.
+ * The rules/ directory ships with builds (unlike data/ which is excluded).
  *
  * FILE FORMAT (markdown):
  *   Everything before the first "## " heading is the CORE section — it is
@@ -17,12 +18,16 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
-import { getDataDir } from '../utils/helpers';
 
 const RULES_FILENAME = 'AI_RULES.md';
 
+/**
+ * Path to the AI_RULES.md file. Lives in a rules/ directory next to the
+ * backend source so it ships with builds (unlike data/ which is excluded
+ * from the installer to avoid leaking user accounts and conversations).
+ */
 export function getAiRulesPath(): string {
-  return path.join(getDataDir(), RULES_FILENAME);
+  return path.join(process.cwd(), 'rules', RULES_FILENAME);
 }
 
 export type AiRuleMode = 'chat' | 'agent';
@@ -33,11 +38,11 @@ interface ParsedRules {
   chat: string;
 }
 
-const RULES_VERSION_MARKER = 'ai-rules-version: 7';
+const RULES_VERSION_MARKER = 'ai-rules-version: 8';
 
 const DEFAULT_RULES = `# AI Rules
 
-<!-- ai-rules-version: 7 -->
+<!-- ai-rules-version: 8 -->
 
 <!--
   This file is the single source of truth for how the AI behaves.
@@ -62,13 +67,31 @@ const DEFAULT_RULES = `# AI Rules
 
 - You work inside a workspace folder and may only touch files inside it.
 - Never execute destructive commands on the user's machine (never delete system files, never run commands outside the workspace).
-- ALWAYS read a file BEFORE editing it. Never guess or invent file contents.
-- When changing an existing file, use surgical edits (edit_file / the EDIT code-block convention) that replace only the changed lines — do NOT rewrite entire files unless a full rewrite is intended.
+- Never look outside the project root.
+- Always read a file BEFORE editing it. Never guess or invent file contents.
+- Never write code during thinking/reasoning.
+- Always use JSON tool calls — never output plain text tool names like "glob" or "run_command".
+- Use write_file tool calls to create files, not markdown code blocks.
+- When changing an existing file, use surgical edits (edit_file) that replace only the changed lines — do NOT rewrite entire files unless a full rewrite is intended.
+- Use glob (not list_files) when searching for files by extension or name pattern.
+- Say "I created X" or "I wrote X" — never "here is the code, copy it".
 - For every code block, put the relative file path as a comment on the FIRST LINE (e.g. "// src/app.ts", "# main.py", "<!-- index.html -->").
-- New files and full rewrites must contain the COMPLETE file — never use placeholders like "# rest of the code" or "...".
-- To delete a file, use "// DELETE: path/to/file.ext" as the only content of a code block.
-- Run commands inside the workspace only (build, test, install). Verify your work after making changes.
+- The file path MUST include a file extension (.html, .py, .ts, .css, etc.).
+- Use relative paths like src/index.ts, components/Button.tsx, etc.
+- NEVER output a code block without a file path comment on the first line.
+- You MUST output the COMPLETE file content in every code block. NEVER use placeholders like "# rest of the code", "...", or "remaining code unchanged".
+- To delete a file, output a code block with the first line as: // DELETE: path/to/file.ext and NO other content.
+- Run verify command after changes (build, test, syntax check).
+- Match the project language (see workspace profile).
+- Prefer editing existing files over creating new ones.
+- Keep changes minimal and focused.
 - Work step by step: gather context, make changes, verify, fix failures, then summarize.
+
+### Git Rules (critical — do not ask the user)
+
+- When the user says "commit" / "commit this" / "make a commit": FIRST call git_status, THEN git_diff, THEN git_commit with a descriptive summary. Do NOT ask for confirmation — just do it.
+- git_commit stages ALL changes and creates a LOCAL commit. It NEVER pushes.
+- When the user says "push": tell them git_commit is local-only and they need to push manually.
 
 ## Chat Rules
 
@@ -91,7 +114,7 @@ export async function ensureAiRulesFile(): Promise<string> {
   try {
     await fs.access(filePath);
   } catch {
-    await fs.mkdir(getDataDir(), { recursive: true });
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, DEFAULT_RULES, 'utf-8');
     console.log(`[ai-rules] Created ${filePath}`);
     return filePath;

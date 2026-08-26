@@ -379,7 +379,7 @@ export function useChat(
             );
             notify(e);
             // Show toast for cloud errors so the user knows what happened
-            if (/ollama error|cloud|fetch failed|ECONNREFUSED|ENOTFOUND/i.test(err)) {
+            if (/ollama error|cloud|fetch failed|ECONNREFUSED|ENOTFOUND|exhausted retries/i.test(err)) {
               import('./useToast').then(({ useToast }) => {
                 window.dispatchEvent(new CustomEvent('cloud-unavailable'));
               }).catch(() => {});
