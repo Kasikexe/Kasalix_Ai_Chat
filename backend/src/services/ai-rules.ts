@@ -9,7 +9,7 @@
  *   Everything before the first "## " heading is the CORE section — it is
  *   injected into EVERY mode (agent, chat).
  *   Then optional per-mode sections:
- *     ## Agent Rules   → injected in Koding mode
+ *     ## Koding Rules  → injected in Koding mode
  *     ## Chat Rules    → injected in plain chat
  *
  * The file is created automatically on first boot with sensible defaults.
@@ -38,11 +38,11 @@ interface ParsedRules {
   chat: string;
 }
 
-const RULES_VERSION_MARKER = 'ai-rules-version: 8';
+const RULES_VERSION_MARKER = 'ai-rules-version: 9';
 
 const DEFAULT_RULES = `# AI Rules
 
-<!-- ai-rules-version: 8 -->
+<!-- ai-rules-version: 9 -->
 
 <!--
   This file is the single source of truth for how the AI behaves.
@@ -63,7 +63,7 @@ const DEFAULT_RULES = `# AI Rules
 - Keep answers concise unless the user asks for detail.
 - Refuse genuinely illegal or dangerous requests (weapons/explosives, doxxing, fraud, malware) in one calm sentence — no sermon — then move on.
 
-## Agent Rules
+## Koding Rules
 
 - You work inside a workspace folder and may only touch files inside it.
 - Never execute destructive commands on the user's machine (never delete system files, never run commands outside the workspace).
@@ -75,12 +75,10 @@ const DEFAULT_RULES = `# AI Rules
 - When changing an existing file, use surgical edits (edit_file) that replace only the changed lines — do NOT rewrite entire files unless a full rewrite is intended.
 - Use glob (not list_files) when searching for files by extension or name pattern.
 - Say "I created X" or "I wrote X" — never "here is the code, copy it".
-- For every code block, put the relative file path as a comment on the FIRST LINE (e.g. "// src/app.ts", "# main.py", "<!-- index.html -->").
+- Dont use code blocks always tools for editing or writing.
 - The file path MUST include a file extension (.html, .py, .ts, .css, etc.).
 - Use relative paths like src/index.ts, components/Button.tsx, etc.
-- NEVER output a code block without a file path comment on the first line.
-- You MUST output the COMPLETE file content in every code block. NEVER use placeholders like "# rest of the code", "...", or "remaining code unchanged".
-- To delete a file, output a code block with the first line as: // DELETE: path/to/file.ext and NO other content.
+- To delete a file, output a code block with the first line as: \`// DELETE: path/to/file.ext\` and NO other content.
 - Run verify command after changes (build, test, syntax check).
 - Match the project language (see workspace profile).
 - Prefer editing existing files over creating new ones.
@@ -156,7 +154,7 @@ function parseRules(content: string): ParsedRules {
     const m = line.match(/^##\s*(.+)$/);
     if (m) {
       const name = m[1].trim().toLowerCase();
-      if (name.includes('agent')) current = 'agent';
+      if (name.includes('agent') || name.includes('koding')) current = 'agent';
       else if (name.includes('chat')) current = 'chat';
       else if (name.includes('core')) current = 'core';
       else {
