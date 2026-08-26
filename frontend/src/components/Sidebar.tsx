@@ -161,21 +161,20 @@ export function Sidebar({
  return (
  <>
  {isOpen && (
- <div className="fixed inset-0 bg-black/60 z-30 md:hidden"onClick={onClose} />
+ <div className="fixed inset-0 bg-black/60 z-30" onClick={onClose} />
  )}
  <aside
- className={`fixed md:static inset-y-0 left-0 z-40 w-72 bg-gray-900 text-white transform transition-transform duration-300 flex flex-col border-r border-gray-800 ${
- isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+ className={`fixed inset-y-0 left-0 z-40 w-72 bg-gray-900 text-white transform transition-transform duration-300 flex flex-col border-r border-gray-800 ${
+ isOpen ? 'translate-x-0' : '-translate-x-full'
  }`}
  >
  <div className="p-3 flex items-center justify-between border-b border-gray-800">
  <h1 className="text-base font-semibold flex items-center gap-2">
- <Menu size={18} className="md:hidden"/>
  Kasalix AI Chat
  </h1>
  <button
  onClick={onClose}
- className="md:hidden p-1.5 hover:bg-gray-800 rounded"
+ className="p-1.5 hover:bg-gray-800 rounded"
  aria-label="Close sidebar"
  >
  <X size={18} />

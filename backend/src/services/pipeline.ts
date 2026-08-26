@@ -259,9 +259,9 @@ async function detectIntent(messages: Message[], mode?: ConversationMode): Promi
     'generate an image', 'generate a picture', 'generate a photo',
     'create an image', 'create a picture', 'create a photo',
     'make an image', 'make a picture', 'make a photo',
-    'draw', 'paint', 'render an image', 'render a picture',
-    'image of', 'picture of', 'generate me',
-    'create me', 'make me', 'generate art', 'ai image', 'generate image', 'generate picture',
+    'draw me', 'paint me', 'render an image', 'render a picture',
+    'image of', 'picture of',
+    'generate art', 'ai image', 'generate image', 'generate picture',
   ];
   const wantsImage = !content.includes('[image:') && imagePhrases.some((phrase) => content.includes(phrase));
 
@@ -524,53 +524,7 @@ async function runChatToolLoop(
   return final.content;
 }
 
-const DOCS_QUERY_MAP: Record<string, string[]> = {
-  react: ['react', 'reactjs', 'jsx', 'tsx', 'nextjs', 'next.js'],
-  vue: ['vue', 'vuejs', 'nuxt', 'nuxtjs'],
-  angular: ['angular'],
-  python: ['python', 'django', 'flask', 'fastapi', 'pandas', 'numpy'],
-  javascript: ['javascript', 'js', 'node', 'node.js', 'express', 'npm', 'es6'],
-  typescript: ['typescript', 'ts', 'deno', 'bun'],
-  html: ['html', 'html5', 'css', 'css3', 'tailwind', 'bootstrap'],
-  go: ['go', 'golang'],
-  rust: ['rust', 'cargo'],
-  java: ['java', 'spring', 'maven', 'gradle'],
-  sql: ['sql', 'postgresql', 'mysql', 'sqlite', 'database'],
-  // Add more as needed
-};
 
-async function detectLanguageForDocs(userText: string, fileListing: string): Promise<string | null> {
-  const lower = userText.toLowerCase() + ' ' + fileListing.toLowerCase();
-  
-  // Score each language based on keyword mentions
-  const scores: { lang: string; score: number }[] = [];
-  for (const [lang, keywords] of Object.entries(DOCS_QUERY_MAP)) {
-    let score = 0;
-    for (const kw of keywords) {
-      const regex = new RegExp(`\\b${kw.replace(/[.+^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
-      const matches = lower.match(regex);
-      if (matches) score += matches.length * (kw === lang ? 3 : 1);
-    }
-    if (score > 0) scores.push({ lang, score });
-  }
-  
-  scores.sort((a, b) => b.score - a.score);
-  return scores.length > 0 ? scores[0].lang : null;
-}
-
-async function fetchDocsForLanguage(language: string): Promise<string | null> {
-  // Search for documentation about the detected language/framework
-  const query = `${language} documentation best practices 2025 2026`;
-  try {
-    const context = await getWebContext(query);
-    if (context && context.length > 200) {
-      return `[LANGUAGE DOCUMENTATION REFERENCE]\n\nThe user appears to be working with **${language}**. Here is current documentation and best practices retrieved from the web:\n\n${context}`;
-    }
-  } catch (e) {
-    console.error(`[pipeline] Docs lookup failed for ${language}:`, e);
-  }
-  return null;
-}
 
 /**
  * Build a memory context system message to inject personality/memory into the conversation.
@@ -714,7 +668,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   // commands, write and delete files, and iterate until the task is done.
   // Image/vision requests stay on the regular pipeline (they need the
   // vision-analysis and image-generation stages).
-  if (mode === 'agent' && opts.autoApply === true && !intent.hasImage && !intent.wantsImage) {
+  if (mode === 'agent' && opts.autoApply === true && !intent.hasImage) {
     console.log('[pipeline] Koding mode with auto-apply — running autonomous loop');
     const memoryContext = await buildMemoryContext(userId);
     // Agent mode uses the CODE model for everything — tool calls, thinking,
@@ -1066,23 +1020,12 @@ Output ONLY the plan — no introductory text, no conclusion, no code blocks.`,
       .replace(/\[image:data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+\]/g, '')
       .trim();
 
-    // Koding mode docs lookup: detect language and fetch docs before code gen
-    let docsContext = '';
+    // Read referenced files so the model edits REAL contents, not guesses.
+    let refContext = '';
     if (mode === 'agent' && userText) {
-      onStage('search:docs');
-      const detectedLang = await detectLanguageForDocs(userText, fileListing);
-      if (detectedLang) {
-        console.log(`[pipeline] Detected language for docs: ${detectedLang}`);
-        const docs = await fetchDocsForLanguage(detectedLang);
-        if (docs) {
-          docsContext = `\n\n---\n\n${docs}`;
-        }
-      }
-
-      // Read referenced files so the model edits REAL contents, not guesses.
       const refContents = await collectReferencedFiles(userText, workspacePath);
       if (refContents) {
-        docsContext += refContents;
+        refContext = refContents;
       }
     }
 
@@ -1101,8 +1044,7 @@ Your workspace directory is: ${workspacePath || '(not set)'}
 ${fileListing ? `Here are the ACTUAL files already in the workspace:\n${fileListing}\n\nDo NOT recreate files that already exist unless the user asks. Update them instead.` : ''}
 All file paths you generate MUST be relative to this directory.
 
-Generate clean, working code in markdown code blocks.
-${docsContext}
+Generate clean, working code in markdown code blocks.${refContext ? '\n\n' + refContext : ''}
 
 IMPORTANT: Start EVERY code block with a comment on the FIRST LINE showing the relative file path, like:
 // index.html
@@ -1138,10 +1080,7 @@ const y = 20;
 
 CRITICAL: Output ONLY code blocks. No explanations before or after.` + planInstructions
       : `You are an expert developer. Generate clean, working code based on the user's request.
-
-${docsContext}
-
-${codeContext}
+${refContext ? '\n\n' + refContext + '\n\n' : '\n\n'}${codeContext}
 
 Output code in markdown code blocks.
 Start EVERY code block with a comment showing the file path:

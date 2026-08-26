@@ -2815,13 +2815,19 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       await sessionLog.end();
       callbacks.onStage('agent:done');
       for (const t of thinkingChunks) callbacks.onThinking?.(t);
-      for (const c of chunks) callbacks.onChunk(c);
+      // If the model tried to emit a tool call but it was unparseable, strip the
+      // raw JSON from the chunks so the user never sees tool-call garbage.
+      const cleanChunks = looksLikeToolAttempt
+        ? chunks.map((c) => c.replace(/\{"tool"[\s\S]*$/m, '').replace(/\{"tool"[\s\S]*$/s, '').trimEnd())
+            .filter((c) => c.length > 0)
+        : chunks;
+      for (const c of cleanChunks) callbacks.onChunk(c);
       const suffix = (appliedNote ? '\n\n' + appliedNote : '') + malformedNote;
       if (suffix) {
         callbacks.onChunk(suffix);
-        return raw + suffix;
+        return (cleanChunks.join('') || raw.replace(/\{"tool"[\s\S]*$/s, '').trim()) + suffix;
       }
-      return raw;
+      return cleanChunks.join('') || raw.replace(/\{"tool"[\s\S]*$/s, '').trim();
     }
 
     // ── Parallel tool execution ───────────────────────────────────────

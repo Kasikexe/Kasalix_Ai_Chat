@@ -228,20 +228,31 @@ export function useChat(
         {
           onChunk: (chunk) => {
             const msgs = e.messages;
-            const lastIdx = msgs.length - 1;
-            if (lastIdx >= 0) {
+            // Find the last assistant message, not just the last message.
+            // During the agent loop, onAgentTool inserts 'activity' role
+            // messages between tool calls — appending to lastIdx would land
+            // chunks on an activity message instead of the assistant reply.
+            let assistantIdx = -1;
+            for (let i = msgs.length - 1; i >= 0; i--) {
+              if (msgs[i].role === 'assistant') { assistantIdx = i; break; }
+            }
+            if (assistantIdx >= 0) {
               e.messages = msgs.map((m, i) =>
-                i === lastIdx ? { ...m, content: m.content + chunk } : m
+                i === assistantIdx ? { ...m, content: m.content + chunk } : m
               );
             }
             notify(e);
           },
           onThinking: (chunk) => {
             const msgs = e.messages;
-            const lastIdx = msgs.length - 1;
-            if (lastIdx >= 0 && msgs[lastIdx].role === 'assistant') {
+            // Find the last assistant message — same reasoning as onChunk.
+            let assistantIdx = -1;
+            for (let i = msgs.length - 1; i >= 0; i--) {
+              if (msgs[i].role === 'assistant') { assistantIdx = i; break; }
+            }
+            if (assistantIdx >= 0) {
               e.messages = msgs.map((m, i) =>
-                i === lastIdx ? { ...m, thinking: (m.thinking || '') + chunk } : m
+                i === assistantIdx ? { ...m, thinking: (m.thinking || '') + chunk } : m
               );
             }
             notify(e);
@@ -273,10 +284,13 @@ export function useChat(
           },
           onModelInfo: (model, source) => {
             const msgs = e.messages;
-            const lastIdx = msgs.length - 1;
-            if (lastIdx >= 0 && msgs[lastIdx].role === 'assistant') {
+            let assistantIdx = -1;
+            for (let i = msgs.length - 1; i >= 0; i--) {
+              if (msgs[i].role === 'assistant') { assistantIdx = i; break; }
+            }
+            if (assistantIdx >= 0) {
               e.messages = msgs.map((m, i) =>
-                i === lastIdx ? { ...m, generatedBy: model, modelSource: source as 'local' | 'cloud' } : m
+                i === assistantIdx ? { ...m, generatedBy: model, modelSource: source as 'local' | 'cloud' } : m
               );
               notify(e);
             }
@@ -294,10 +308,13 @@ export function useChat(
 
             // Store response duration on the last assistant message
             const duration = Date.now() - e.startTime;
-            const lastIdx = e.messages.length - 1;
-            if (lastIdx >= 0 && e.messages[lastIdx].role === 'assistant') {
+            let durationIdx = -1;
+            for (let i = e.messages.length - 1; i >= 0; i--) {
+              if (e.messages[i].role === 'assistant') { durationIdx = i; break; }
+            }
+            if (durationIdx >= 0) {
               e.messages = e.messages.map((m, i) =>
-                i === lastIdx ? { ...m, durationMs: duration } : m
+                i === durationIdx ? { ...m, durationMs: duration } : m
               );
               notify(e);
             }

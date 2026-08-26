@@ -167,10 +167,12 @@ chat.post('/', async (c) => {
               send({ type: 'stage', stage });
             },
             onChunk: (chunk) => {
+              if (aborted) return;
               fullResponse += chunk;
               send({ type: 'chunk', content: chunk });
             },
             onThinking: (chunk) => {
+              if (aborted) return;
               fullThinking += chunk;
               send({ type: 'thinking', content: chunk });
             },
