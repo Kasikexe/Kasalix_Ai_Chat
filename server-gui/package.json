@@ -70,7 +70,9 @@
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "artifactName": "Kasalix-AI-Chat-Server.exe",
@@ -87,5 +89,8 @@
       "artifactName": "Kasalix-AI-Chat-Server-${version}.exe",
       "runAfterFinish": true
     }
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
   }
 }

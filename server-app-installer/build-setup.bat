@@ -186,8 +186,10 @@ powershell -NoProfile -Command ^
     "Remove-Item -Path (Join-Path $staging 'backend\data') -Recurse -Force -ErrorAction SilentlyContinue;" ^
     "Remove-Item -Path (Join-Path $staging 'backend\generated_images') -Recurse -Force -ErrorAction SilentlyContinue;" ^
     "Remove-Item -Path (Join-Path $staging 'backend\.env') -Force -ErrorAction SilentlyContinue;" ^
+    "Remove-Item -Path (Join-Path $staging 'backend\node_modules') -Recurse -Force -ErrorAction SilentlyContinue;" ^
+    "Remove-Item -Path (Join-Path $staging 'backend\test') -Recurse -Force -ErrorAction SilentlyContinue;" ^
     "Copy-Item -Path (Join-Path (Get-Location) '..\frontend\dist') -Destination (Join-Path $staging 'frontend\dist') -Recurse -Force;" ^
-    "Copy-Item -Path (Join-Path (Get-Location) '..\certs\*') -Destination (Join-Path $staging 'certs') -Force;" ^
+    "Copy-Item -Path (Join-Path (Get-Location) '..\certs\generate-certs.cjs') -Destination (Join-Path $staging 'certs') -Force;" ^
     "Copy-Item -Path (Join-Path (Get-Location) 'run-server.bat') -Destination $staging -Force;" ^
     "Copy-Item -Path (Join-Path (Get-Location) 'stop-server.bat') -Destination $staging -Force;" ^
     "if (Test-Path $zipPath) { Remove-Item $zipPath -Force };" ^

@@ -92,9 +92,9 @@ Section "Server Files" SEC_MAIN
     SetOutPath "$INSTDIR\frontend\dist"
     File /r "..\frontend\dist\*.*"
 
-    ; Copy certificates
+    ; Copy certificate generator (NOT the certs themselves — each install gets unique certs)
     SetOutPath "$INSTDIR\certs"
-    File /nonfatal "..\certs\*.*"
+    File "..\certs\generate-certs.cjs"
 
     ; Create release directory for auto-update files
     SetOutPath "$INSTDIR\release"

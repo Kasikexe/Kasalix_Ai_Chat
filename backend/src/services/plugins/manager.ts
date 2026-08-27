@@ -42,7 +42,7 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-const APP_VERSION = process.env.APP_VERSION || '0.10.15';
+const APP_VERSION = process.env.APP_VERSION || '0.10.0';
 
 // ─── Paths ────────────────────────────────────────────────
 function getPluginsDir(): string {
