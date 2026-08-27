@@ -44,8 +44,10 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
   const convKey = conversation?.id || 'offline';
   const [workspacePath, setWorkspacePath] = useState(offlineWorkspace || conversation?.workspacePath || '');
   const [loadedPath, setLoadedPath] = useState(offlineWorkspace || conversation?.workspacePath || '');
-  const [planningEnabled, setPlanningEnabled] = useState(false);
   const [planMode, setPlanMode] = useState<'off' | 'on' | 'auto'>('off');
+  // planningEnabled is derived from planMode — they must stay in sync
+  const planningEnabled = planMode !== 'off';
+  const setPlanningEnabled = (v: boolean) => setPlanMode(v ? 'auto' : 'off');
   const [toolPermission, setToolPermission] = useState<'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit'>('auto');
 
   // Auto-apply is always ON — the AI writes/deletes files directly.
@@ -496,14 +498,14 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     if (pendingCode && !applied) requestAnimationFrame(() => approveBtnRef.current?.focus());
   }, [pendingCode, applied]);
 
-  // Detect streaming end → plan modal
+  // Detect streaming end → show plan approval bar
   useEffect(() => {
     if (wasStreamingRef.current && !isStreaming) {
-      if (planningEnabled && !planActionTakenRef.current) setPlanPending(true);
+      if ((planningEnabled || planMode !== 'off') && !planActionTakenRef.current) setPlanPending(true);
     }
     wasStreamingRef.current = isStreaming;
     planActionTakenRef.current = false;
-  }, [isStreaming, planningEnabled]);
+  }, [isStreaming, planningEnabled, planMode]);
 
   // ─── Panel Resize Handlers ───────────────────────────────
   const handleDragStart = useCallback((e: React.MouseEvent | React.TouchEvent, type: 'left') => {

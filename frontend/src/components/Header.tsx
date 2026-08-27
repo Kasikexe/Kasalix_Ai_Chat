@@ -166,16 +166,19 @@ export function Header({
  </div>
  )}
 
- {/* Thinking mode toggle — hidden in agent mode or when the chat model has no thinking support */}
- {!hideThinking && thinkingSupported !== false && (
+ {/* Thinking mode toggle — always visible; grayed out when model lacks support */}
+ {!hideThinking && (
  <button
  onClick={onToggleThinking}
+ disabled={thinkingSupported === false}
  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
- thinkingEnabled
+ thinkingSupported === false
+ ? 'bg-gray-800/50 text-gray-600 border border-gray-800 cursor-not-allowed opacity-50'
+ : thinkingEnabled
  ? 'bg-purple-900/40 text-[#9bb8d6] border border-purple-700'
  : 'bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700'
  }`}
- title={thinkingEnabled ? 'Thinking: Auto — activates only when a question needs reasoning' : 'Thinking: Off — always direct answers'}
+ title={thinkingSupported === false ? 'This model does not support thinking mode' : thinkingEnabled ? 'Thinking: Auto — activates only when a question needs reasoning' : 'Thinking: Off — always direct answers'}
  >
  <Brain size={14} />
  <span className="hidden sm:inline">

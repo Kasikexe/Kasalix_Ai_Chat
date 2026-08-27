@@ -525,20 +525,22 @@ export function UserSettingsModal({
  </div>
  )}
 
- {/* Thinking mode — hidden when the chat model can't do thinking */}
- {thinkingSupported !== false && (
- <div className="space-y-3">
+ {/* Thinking mode — always visible; grayed out when model lacks support */}
+ <div className={`space-y-3 ${thinkingSupported === false ? 'opacity-50' : ''}`}>
  <label className="flex items-center gap-2 text-sm font-medium text-gray-300">
  <Brain size={16} className="text-[#7b9fc6]"/>
  Thinking Mode
+ {thinkingSupported === false && <span className="text-[10px] text-gray-600 ml-1">(not supported by model)</span>}
  </label>
  <div
- className={`flex items-center justify-between px-4 py-3 rounded-xl cursor-pointer transition-all duration-200 ${
- thinkingEnabled
- ? 'bg-purple-900/20 border border-purple-800/40'
- : 'bg-gray-800/50 border border-gray-800 hover:bg-gray-800'
+ className={`flex items-center justify-between px-4 py-3 rounded-xl transition-all duration-200 ${
+ thinkingSupported === false
+ ? 'bg-gray-800/30 border border-gray-900 cursor-not-allowed'
+ : thinkingEnabled
+ ? 'bg-purple-900/20 border border-purple-800/40 cursor-pointer'
+ : 'bg-gray-800/50 border border-gray-800 hover:bg-gray-800 cursor-pointer'
  }`}
- onClick={onToggleThinking}
+ onClick={thinkingSupported !== false ? onToggleThinking : undefined}
  >
  <div className="flex items-center gap-3">
  <div className={`p-1.5 rounded-lg ${thinkingEnabled ? 'bg-purple-700/30' : 'bg-gray-700/50'}`}>
@@ -549,7 +551,9 @@ export function UserSettingsModal({
  {thinkingEnabled ? 'Auto' : 'Off'}
  </p>
  <p className="text-xs text-gray-500 mt-0.5">
- {thinkingEnabled
+ {thinkingSupported === false
+ ? 'This model does not support thinking mode'
+ : thinkingEnabled
  ? 'Automatically thinks only when a question needs reasoning — math, logic, analysis'
  : 'Never thinks — always fast, direct answers'}
  </p>
@@ -568,7 +572,6 @@ export function UserSettingsModal({
  </div>
  </div>
  </div>
- )}
 
  {/* Auto-title toggle */}
  <div className="space-y-3">

@@ -163,13 +163,10 @@ export async function getModelCapabilities(model: string): Promise<{ tools: bool
     ? probeToolsResult
     : FALLBACK_TOOL_MODELS.some((m) => model.toLowerCase().includes(m));
   const fallbackThinking = FALLBACK_THINKING_MODELS.some((m) => model.toLowerCase().includes(m));
-  // If the probe says "no thinking" but the model name matches a known
-  // thinking-capable pattern (qwen3, deepseek, etc.), prefer the fallback.
-  // Some models return thinking via `<think>` tags rather than a `thinking`
-  // field, so the probe misses them but we know they support it.
-  const thinking = probeThinkingResult === true
-    ? true
-    : fallbackThinking;
+  // Trust the name-based fallback over the probe for known thinking models.
+  // Probes can miss thinking that comes via <think> tags instead of a thinking field.
+  const thinking = probeThinkingResult === true || fallbackThinking;
+
   console.log(`[capabilities] ${model}: tools=${tools}, thinking=${thinking}`);
 
   capsCache.set(model, { tools, thinking });

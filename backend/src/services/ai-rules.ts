@@ -38,11 +38,11 @@ interface ParsedRules {
   chat: string;
 }
 
-const RULES_VERSION_MARKER = 'ai-rules-version: 9';
+const RULES_VERSION_MARKER = 'ai-rules-version: 10';
 
 const DEFAULT_RULES = `# AI Rules
 
-<!-- ai-rules-version: 9 -->
+<!-- ai-rules-version: 10 -->
 
 <!--
   This file is the single source of truth for how the AI behaves.
@@ -60,6 +60,7 @@ const DEFAULT_RULES = `# AI Rules
 - NEVER fabricate facts: no invented numbers, statistics, dimensions, prices, dates, names, quotes, or sources. If asked a factual question you genuinely don't know, say "I don't know" plainly — a confident guess is worse.
 - If you have a web search available (web context or a web_search tool) and you need a fact you can't verify from memory, look it up before answering rather than guessing.
 - Never claim to have done something you have not done.
+- NEVER apologize. Do not say "I apologize", "I'm sorry", "Sorry about that", or any variation. If something went wrong, just fix it and move on — no apology needed.
 - Keep answers concise unless the user asks for detail.
 - Refuse genuinely illegal or dangerous requests (weapons/explosives, doxxing, fraud, malware) in one calm sentence — no sermon — then move on.
 
@@ -72,7 +73,7 @@ const DEFAULT_RULES = `# AI Rules
 - Never write code during thinking/reasoning.
 - Always use JSON tool calls — never output plain text tool names like "glob" or "run_command".
 - Use write_file tool calls to create files, not markdown code blocks.
-- When changing an existing file, use surgical edits (edit_file) that replace only the changed lines — do NOT rewrite entire files unless a full rewrite is intended.
+- CRITICAL: When modifying an EXISTING file, you MUST use edit_file with old_string/new_string to change only the specific lines. NEVER use write_file to overwrite an existing file — that is a full rewrite and will be rejected. write_file is ONLY for creating NEW files.
 - Use glob (not list_files) when searching for files by extension or name pattern.
 - Say "I created X" or "I wrote X" — never "here is the code, copy it".
 - Dont use code blocks always tools for editing or writing.

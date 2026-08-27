@@ -360,7 +360,11 @@ export function useChat(
               : typeof call.args?.query === 'string'
               ? call.args.query
               : '';
-            const assistantIdx = e.messages.findIndex((m) => m.role === 'assistant');
+            // Search backwards for the LAST assistant message (not the first)
+            let assistantIdx = -1;
+            for (let i = e.messages.length - 1; i >= 0; i--) {
+              if (e.messages[i].role === 'assistant') { assistantIdx = i; break; }
+            }
             if (assistantIdx >= 0) {
               const msg = e.messages[assistantIdx];
               const timeline = [...(msg.timeline || [])];
