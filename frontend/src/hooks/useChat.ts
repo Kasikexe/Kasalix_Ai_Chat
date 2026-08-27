@@ -247,20 +247,9 @@ export function useChat(
             notify(e);
           },
           onThinking: (chunk) => {
-            const msgs = e.messages;
-            // Find the last assistant message — same reasoning as onChunk.
-            let assistantIdx = -1;
-            for (let i = msgs.length - 1; i >= 0; i--) {
-              if (msgs[i].role === 'assistant') { assistantIdx = i; break; }
-            }
-            if (assistantIdx >= 0) {
-              // Accumulate in the thinking buffer for timeline batching
-              e.thinkingBuffer += chunk;
-              // Also store full thinking on the message for backward compat
-              e.messages = msgs.map((m, i) =>
-                i === assistantIdx ? { ...m, thinking: (m.thinking || '') + chunk } : m
-              );
-            }
+            // Accumulate in the thinking buffer for timeline batching.
+            // Thinking is rendered via timeline events, not the old message.thinking field.
+            e.thinkingBuffer += chunk;
             notify(e);
           },
           onConversationId: (id) => {

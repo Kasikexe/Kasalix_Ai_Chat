@@ -2641,21 +2641,36 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     await streamChatWithRetry(opts, bounded, (c) => chunks.push(c), (t) => thinkingChunks.push(t));
     const raw = chunks.join('');
 
-    // Phase 2.6 improvement: Send thinking/reasoning to frontend even for
-    // tool call iterations, so the user sees what the model was thinking
-    // before each action. Previously this was only shown for the final answer.
-    if (thinkingChunks.length > 0) {
-      for (const t of thinkingChunks) callbacks.onThinking?.(t);
-    }
     const toolCalls = extractToolCalls(raw);
     const toolCall = toolCalls.length === 1 ? toolCalls[0] : null;
 
-    // Phase 2.6 improvement: Send any non-JSON reasoning text that preceded
-    // the tool call, so the user sees what the model was thinking before action.
+    // Phase 2.6: Send thinking to frontend for tool-call iterations so the user
+    // sees what the model was thinking before each action. Only send ONCE here;
+    // the final-answer path also sends thinking, so we skip it there.
+    const isToolCallIteration = toolCalls.length > 0;
+    if (isToolCallIteration && thinkingChunks.length > 0) {
+      for (const t of thinkingChunks) callbacks.onThinking?.(t);
+    }
+
+    // Send any non-JSON reasoning text that preceded the tool call.
+    // Use extractToolCalls result to find where JSON starts instead of a fragile regex.
     if (toolCalls.length > 0) {
-      const reasoningText = raw.replace(/\{\s*"tool".*$/s, '').trim();
+      // Find the raw string positions of tool JSON by searching for the tool name
+      // in the raw text — this avoids the fragile regex that could miss malformed JSON.
+      let reasoningEnd = raw.length;
+      for (const tc of toolCalls) {
+        const toolIdx = raw.indexOf('"' + tc.tool + '"', raw.indexOf('{'));
+        if (toolIdx > 0) {
+          // Walk backward from toolIdx to find the opening brace of this tool call
+          let braceStart = toolIdx;
+          while (braceStart > 0 && raw[braceStart] !== '{') braceStart--;
+          if (braceStart < reasoningEnd) reasoningEnd = braceStart;
+        }
+      }
+      const reasoningText = raw.slice(0, reasoningEnd).trim();
       if (reasoningText && reasoningText.length > 5) {
-        callbacks.onChunk(`_🤔 ${reasoningText}_\n\n`);
+        // Route to thinking so it appears in the timeline, not in message content
+        callbacks.onThinking?.(`_🤔 ${reasoningText}_\n\n`);
       }
     }
 
@@ -2663,7 +2678,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     // in one response (e.g. all 26 tools on one line). Only the first was parsed.
     // Detect this and ask the model to output ONE tool call at a time.
     const rawToolJsonCount = (raw.match(/\{\s*"tool"\s*:/g) || []).length;
-    if (rawToolJsonCount > 1 && toolCalls.length >= 1 && malformedToolCalls < 4) {
+    if (rawToolJsonCount > 1 && malformedToolCalls < 4) {
       malformedToolCalls++;
       const retryMsg =
         'You output ' + rawToolJsonCount + ' tool calls in a single response, but you MUST call only ONE tool at a time. ' +
@@ -2755,7 +2770,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     const claimsDone = toolCalls.length === 0 && !appliedNote && autoApply &&
       /\b(?:done|i'?ve|finished|completed|created|wrote|refactored|moved|extracted|split|committed|pushed|deployed|saved|updated|fixed|added|removed|deleted|renamed)\b/i.test(raw) &&
       !/```/i.test(raw) &&
-      raw.length < 1000;
+      raw.length < 3000;
     if (claimsDone && malformedToolCalls < 4) {
       malformedToolCalls++;
       const retryMsg =
@@ -2774,9 +2789,10 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     // instead of using tools. Redirect it.
     const thinkingText = thinkingChunks.join('');
     const thinkingHasCode = thinkingText.length > 200 && /(import |class |def |function |const |let |var |#include)/.test(thinkingText);
-    const responseHasNoCode = toolCalls.length === 0 && !appliedNote && !/```/.test(raw);
     const responseIsEmptyOrClaimsNothing = raw.length < 500 && /\b(nothing|didn't|did not|no output|no code|no file|no result|pipeline didn't|cut off|cut short|stopped)\b/i.test(raw);
-    if (thinkingHasCode && (responseHasNoCode || responseIsEmptyOrClaimsNothing) && autoApply && malformedToolCalls < 4) {
+    // Fire if: thinking has code AND (no tools called OR response is empty/claims nothing)
+    // Catches models that write full implementations in thinking instead of using tools.
+    if (thinkingHasCode && (toolCalls.length === 0 || responseIsEmptyOrClaimsNothing) && autoApply && malformedToolCalls < 4) {
       malformedToolCalls++;
       const retryMsg =
         'You wrote code in your thinking/reasoning but you must use the tools to actually create files. ' +
@@ -2818,23 +2834,55 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       await sessionLog.logMessage('assistant', raw);
       await sessionLog.end();
       callbacks.onStage('agent:done');
-      for (const t of thinkingChunks) callbacks.onThinking?.(t);
+      // Send thinking ONLY if we didn't already send it for a tool-call iteration.
+      // (isToolCallIteration is false here — this is the final answer path.)
+      if (thinkingChunks.length > 0) {
+        for (const t of thinkingChunks) callbacks.onThinking?.(t);
+      }
       // If the model tried to emit a tool call but it was unparseable, strip
       // tool-call JSON from the chunks so the user never sees raw tool garbage.
-      // Broad regex: catches full JSON tool calls, truncated ones missing braces,
-      // and fragments like '"args": {"path": ...}' or ': "read_file", "args": ...'
-      const TOOL_STRIP_RE = /(?:^|\n)\s*\{?\s*(?:"?tool"?\s*:\s*"[a-z_]+"|"args"\s*:\s*\{|:\s*"[a-z_]+"\s*,\s*"args")[\s\S]*$/im;
-      const cleanChunks = looksLikeToolAttempt
-        ? chunks.map((c) => c.replace(TOOL_STRIP_RE, '').trimEnd())
-            .filter((c) => c.length > 0)
+      // Precise tool-JSON stripping: find the start of the first tool-like JSON
+      // object and strip from there to end-of-string. This avoids the greedy regex
+      // that could accidentally strip legitimate text that happens to follow.
+      const toolJsonStartRe = /(?:^|\n)\s*\{\s*"tool"\s*:/im;
+      const toolFragRe = /(?:^|\n)\s*\{?\s*(?:"?tool"?\s*:\s*"[a-z_]+"|"args"\s*:\s*\{|:\s*"[a-z_]+"\s*,\s*"args")/im;
+      const stripStart = looksLikeToolAttempt
+        ? (() => {
+            const m1 = toolJsonStartRe.exec(raw);
+            const m2 = toolFragRe.exec(raw);
+            const candidates = [m1?.index, m2?.index].filter((i) => i !== undefined) as number[];
+            return candidates.length > 0 ? Math.min(...candidates) : -1;
+          })()
+        : -1;
+      const cleanRaw = stripStart >= 0 ? raw.slice(0, stripStart).trim() : raw;
+      const cleanChunks = looksLikeToolAttempt && stripStart >= 0
+        ? (() => {
+            // Rebuild clean chunks by removing the tool JSON portion
+            let remaining = raw.length - stripStart;
+            const result: string[] = [];
+            let pos = 0;
+            for (const c of chunks) {
+              if (pos + c.length <= stripStart) {
+                result.push(c); // entirely before tool JSON — keep it
+              } else if (pos >= stripStart) {
+                break; // entirely after tool JSON — drop it
+              } else {
+                // straddles the boundary — keep the part before
+                const before = c.slice(0, stripStart - pos);
+                if (before.trimEnd()) result.push(before.trimEnd());
+              }
+              pos += c.length;
+            }
+            return result;
+          })()
         : chunks;
       for (const c of cleanChunks) callbacks.onChunk(c);
       const suffix = (appliedNote ? '\n\n' + appliedNote : '') + malformedNote;
       if (suffix) {
         callbacks.onChunk(suffix);
-        return (cleanChunks.join('') || raw.replace(TOOL_STRIP_RE, '').trim()) + suffix;
+        return (cleanChunks.join('') || cleanRaw) + suffix;
       }
-      return cleanChunks.join('') || raw.replace(TOOL_STRIP_RE, '').trim();
+      return cleanChunks.join('') || cleanRaw;
     }
 
     // ── Parallel tool execution ───────────────────────────────────────
