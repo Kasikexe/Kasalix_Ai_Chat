@@ -129,7 +129,7 @@ export function Header({
  <div className="flex items-center justify-between px-3 md:px-4 py-3 gap-2">
  <button
  onClick={onMenuClick}
- className="md:hidden p-1.5 hover:bg-gray-800 rounded-lg text-gray-300"
+ className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-300"
  aria-label="Open menu"
  >
  <Menu size={20} />

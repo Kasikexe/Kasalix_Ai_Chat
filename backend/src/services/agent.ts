@@ -2703,7 +2703,11 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
     // Malformed tool attempt recovery: the response contains JSON tool markers
     // ("tool" / "args") but did not parse into a valid call. Give the model up
     // to 2 corrective retries before falling back to the final-answer path.
-    const looksLikeToolAttempt = toolCalls.length === 0 && /"tool"\s*:\s*"[a-z_]+"|\{\s*"args"\s*:/i.test(raw);
+    const looksLikeToolAttempt = toolCalls.length === 0 && (
+      /(?:\{"|"|(?<![\w]))tool"\s*:\s*"[a-z_]+"|\{\s*"?args"?\s*:/i.test(raw) ||
+      // Broader: catch truncated/malformed tool calls missing the opening brace
+      /"args"\s*:\s*\{\s*"(?:path|command|query|content|from|to|pattern)"/i.test(raw)
+    );
     if (looksLikeToolAttempt && malformedToolCalls < 4) {
       malformedToolCalls++;
       const retryMsg =
@@ -2815,19 +2819,22 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<string> {
       await sessionLog.end();
       callbacks.onStage('agent:done');
       for (const t of thinkingChunks) callbacks.onThinking?.(t);
-      // If the model tried to emit a tool call but it was unparseable, strip the
-      // raw JSON from the chunks so the user never sees tool-call garbage.
+      // If the model tried to emit a tool call but it was unparseable, strip
+      // tool-call JSON from the chunks so the user never sees raw tool garbage.
+      // Broad regex: catches full JSON tool calls, truncated ones missing braces,
+      // and fragments like '"args": {"path": ...}' or ': "read_file", "args": ...'
+      const TOOL_STRIP_RE = /(?:^|\n)\s*\{?\s*(?:"?tool"?\s*:\s*"[a-z_]+"|"args"\s*:\s*\{|:\s*"[a-z_]+"\s*,\s*"args")[\s\S]*$/im;
       const cleanChunks = looksLikeToolAttempt
-        ? chunks.map((c) => c.replace(/\{"tool"[\s\S]*$/m, '').replace(/\{"tool"[\s\S]*$/s, '').trimEnd())
+        ? chunks.map((c) => c.replace(TOOL_STRIP_RE, '').trimEnd())
             .filter((c) => c.length > 0)
         : chunks;
       for (const c of cleanChunks) callbacks.onChunk(c);
       const suffix = (appliedNote ? '\n\n' + appliedNote : '') + malformedNote;
       if (suffix) {
         callbacks.onChunk(suffix);
-        return (cleanChunks.join('') || raw.replace(/\{"tool"[\s\S]*$/s, '').trim()) + suffix;
+        return (cleanChunks.join('') || raw.replace(TOOL_STRIP_RE, '').trim()) + suffix;
       }
-      return cleanChunks.join('') || raw.replace(/\{"tool"[\s\S]*$/s, '').trim();
+      return cleanChunks.join('') || raw.replace(TOOL_STRIP_RE, '').trim();
     }
 
     // ── Parallel tool execution ───────────────────────────────────────

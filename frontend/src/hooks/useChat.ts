@@ -62,6 +62,8 @@ interface LiveEntry {
   handlers: StreamHandlers;
   listeners: Set<() => void>;
   currentPlan: string;
+  /** Accumulated thinking text since the last tool call (flushed to timeline on tool/finish) */
+  thinkingBuffer: string;
 }
 
 const liveStore = new Map<string, LiveEntry>();
@@ -101,6 +103,7 @@ function getOrCreateLiveEntry(
     handlers,
     listeners: new Set(),
     currentPlan: '',
+    thinkingBuffer: '',
   };
   liveStore.set(key, entry);
   return entry;
@@ -251,6 +254,9 @@ export function useChat(
               if (msgs[i].role === 'assistant') { assistantIdx = i; break; }
             }
             if (assistantIdx >= 0) {
+              // Accumulate in the thinking buffer for timeline batching
+              e.thinkingBuffer += chunk;
+              // Also store full thinking on the message for backward compat
               e.messages = msgs.map((m, i) =>
                 i === assistantIdx ? { ...m, thinking: (m.thinking || '') + chunk } : m
               );
@@ -296,6 +302,20 @@ export function useChat(
             }
           },
           onDone: async () => {
+            // Flush any remaining thinking buffer to the timeline
+            if (e.thinkingBuffer.trim()) {
+              const msgs = e.messages;
+              let assistantIdx = -1;
+              for (let i = msgs.length - 1; i >= 0; i--) {
+                if (msgs[i].role === 'assistant') { assistantIdx = i; break; }
+              }
+              if (assistantIdx >= 0) {
+                const msg = msgs[assistantIdx];
+                const timeline = [...(msg.timeline || []), { type: 'thinking' as const, content: e.thinkingBuffer }];
+                e.messages = msgs.map((m, i) => i === assistantIdx ? { ...m, timeline } : m);
+              }
+              e.thinkingBuffer = '';
+            }
             // IMPORTANT: clear the streaming state FIRST — the auto-title call
             // below makes network requests that can hang (slow Ollama model
             // load, backend busy). If we cleared the state after it, the UI
@@ -343,7 +363,7 @@ export function useChat(
           },
           onAgentTool: (call) => {
             e.handlers.onAgentTool?.(call);
-            // Also inject as a visible activity message in the chat
+            // Append a tool event to the assistant message's timeline
             const argPreview = typeof call.args?.path === 'string'
               ? call.args.path
               : typeof call.args?.command === 'string'
@@ -351,15 +371,29 @@ export function useChat(
               : typeof call.args?.query === 'string'
               ? call.args.query
               : '';
-            e.messages = [...e.messages, {
-              role: 'activity' as const,
-              content: `${call.tool}${argPreview ? ': ' + argPreview : ''}`,
-              activityTool: call.tool,
-              activityArgs: argPreview,
-              activityStatus: 'done' as const,
-              activityMs: 0,
-              timestamp: Date.now(),
-            }];
+            const assistantIdx = e.messages.findIndex((m) => m.role === 'assistant');
+            if (assistantIdx >= 0) {
+              const msg = e.messages[assistantIdx];
+              const timeline = [...(msg.timeline || [])];
+              // Flush accumulated thinking buffer as a timeline event before this tool call
+              if (e.thinkingBuffer.trim()) {
+                timeline.push({ type: 'thinking', content: e.thinkingBuffer });
+                e.thinkingBuffer = '';
+              }
+              timeline.push({ type: 'tool', tool: call.tool, args: argPreview, status: 'done' as const });
+              e.messages = e.messages.map((m, i) => i === assistantIdx ? { ...m, timeline } : m);
+            } else {
+              // Fallback: create activity message if no assistant message exists yet
+              e.messages = [...e.messages, {
+                role: 'activity' as const,
+                content: `${call.tool}${argPreview ? ': ' + argPreview : ''}`,
+                activityTool: call.tool,
+                activityArgs: argPreview,
+                activityStatus: 'done' as const,
+                activityMs: 0,
+                timestamp: Date.now(),
+              }];
+            }
             notify(e);
           },
           onFileWritten: (write) => e.handlers.onFileWritten?.(write),

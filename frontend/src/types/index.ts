@@ -1,6 +1,11 @@
 export type Role = 'user' | 'assistant' | 'system' | 'activity';
 export type ConversationMode = 'chat' | 'agent';
 
+/** A single event in the agent's execution timeline (thinking, tool call, etc.) */
+export type TimelineEvent =
+  | { type: 'thinking'; content: string }
+  | { type: 'tool'; tool: string; args: string; status?: 'running' | 'done' | 'error' };
+
 export interface Message {
   role: Role;
   content: string;
@@ -8,6 +13,8 @@ export interface Message {
   durationMs?: number;
   /** Reasoning/thinking text from models like qwen3, deepseek-r1 (collapsible in UI) */
   thinking?: string;
+  /** Ordered timeline of thinking + tool events during agent execution */
+  timeline?: TimelineEvent[];
   /** Which model generated this response */
   generatedBy?: string;
   /** Whether the model is local or cloud */

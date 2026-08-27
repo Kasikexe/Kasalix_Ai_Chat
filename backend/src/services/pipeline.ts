@@ -374,26 +374,44 @@ async function runInternalStage(
   think: boolean,
   signal?: AbortSignal,
   extraOpts: { temperature?: number; top_p?: number; max_tokens?: number } = {},
-  onThinking?: (chunk: string) => void
+  onThinking?: (chunk: string) => void,
+  onStage?: (stage: string) => void
 ): Promise<string> {
   console.log(`[pipeline] Internal stage "${stageName}" — model: ${model}, think: ${think}`);
   let output = '';
+  let firstChunk = false;
+  // Show a "warming up" indicator for cloud models after 15s of silence
+  let warmingTimer: ReturnType<typeof setTimeout> | undefined;
+  if (_cloudEndpoint) {
+    warmingTimer = setTimeout(() => {
+      if (!firstChunk) {
+        console.log(`[pipeline] Cloud model still warming up after 15s (${model})...`);
+        onStage?.('cloud:warming');
+      }
+    }, 15_000);
+  }
   try {
     await streamChat(
       model,
       messages,
       (chunk) => {
+        if (!firstChunk) {
+          firstChunk = true;
+          if (warmingTimer) clearTimeout(warmingTimer);
+        }
         output += chunk;
       },
       { signal, think, ...extraOpts, onThinking, baseUrl: _cloudEndpoint || undefined, apiKey: _cloudApiKey || undefined }
     );
   } catch (e) {
+    if (warmingTimer) clearTimeout(warmingTimer);
     if (e instanceof Error && e.name === 'AbortError') {
       console.log(`[pipeline] Stage "${stageName}" aborted`);
       throw e;
     }
     throw e;
   }
+  if (warmingTimer) clearTimeout(warmingTimer);
   console.log(`[pipeline] Stage "${stageName}" done. Length: ${output.length}`);
   return output;
 }
@@ -911,7 +929,7 @@ Rules:
       // Vision model doesn't need thinking mode (it's factual description)
       const { model: visionModel, source: visionSource } = await getResolvedModel('vision');
       console.log(`[pipeline] Vision model: ${visionModel} (source: ${visionSource})`);
-      imageDescription = await runInternalStage('vision', visionModel, visionMessages, false, signal, { temperature, top_p, max_tokens });
+      imageDescription = await runInternalStage('vision', visionModel, visionMessages, false, signal, { temperature, top_p, max_tokens }, undefined, onStage);
       if (visionSource === 'cloud') {
         const inputTokenEst = estimateTokens(visionMessages.map(m => m.content).join('\n'));
         const outputTokenEst = estimateTokens(imageDescription);
@@ -1099,7 +1117,7 @@ Output ONLY code blocks. No explanations before or after.`;
     try {
       const { model: codeModel, source: codeSource } = await getResolvedModel('code');
       console.log(`[pipeline] Code model: ${codeModel} (source: ${codeSource})`);
-      codeOutput = await runInternalStage('code', codeModel, codeMessages, think, signal, { temperature, top_p, max_tokens }, onThinking);
+      codeOutput = await runInternalStage('code', codeModel, codeMessages, think, signal, { temperature, top_p, max_tokens }, onThinking, onStage);
       console.log(`[pipeline] Code done. Length: ${codeOutput.length}`);
       if (codeSource === 'cloud') {
         const inputTokenEst = estimateTokens(codeMessages.map(m => m.content).join('\n'));

@@ -152,11 +152,19 @@ export async function streamChat(
     `[ollama] Model: ${model}, think: ${body.think ?? 'n/a'}, temp: ${temperature ?? 'default'}, endpoint: ${endpoint}`
   );
 
+  // Cloud endpoints may queue requests or cold-start models for minutes.
+  // Add a 120s timeout so the user gets feedback instead of an indefinite hang.
+  const isCloud = !!apiKey;
+  const cloudTimeout = isCloud ? AbortSignal.timeout(120_000) : undefined;
+  const combinedSignal = cloudTimeout && signal
+    ? AbortSignal.any([signal, cloudTimeout])
+    : cloudTimeout || signal;
+
   const res = await fetch(`${endpoint}/api/chat`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
-    signal,
+    signal: combinedSignal,
   });
 
   if (!res.ok) {
@@ -261,11 +269,18 @@ export async function streamChatWithTools(
 
   console.log(`[ollama] Tool round — model: ${model}, tools: ${tools.length}, think: ${body.think ?? 'n/a'}, endpoint: ${endpoint}`);
 
+  // Cloud endpoints may queue requests or cold-start models for minutes.
+  const isCloudTools = !!apiKey;
+  const cloudTimeoutTools = isCloudTools ? AbortSignal.timeout(120_000) : undefined;
+  const combinedSignalTools = cloudTimeoutTools && signal
+    ? AbortSignal.any([signal, cloudTimeoutTools])
+    : cloudTimeoutTools || signal;
+
   const res = await fetch(`${endpoint}/api/chat`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
-    signal,
+    signal: combinedSignalTools,
   });
 
   if (!res.ok) {
@@ -364,11 +379,18 @@ export async function chat(
 
   console.log(`[ollama] Non-streaming — model: ${model}, temp: ${options.temperature ?? 'default'}, endpoint: ${endpoint}`);
 
+  // Cloud endpoints may queue requests or cold-start models for minutes.
+  const isCloudChat = !!options.apiKey;
+  const cloudTimeoutChat = isCloudChat ? AbortSignal.timeout(120_000) : undefined;
+  const combinedSignalChat = cloudTimeoutChat && options.signal
+    ? AbortSignal.any([options.signal, cloudTimeoutChat])
+    : cloudTimeoutChat || options.signal;
+
   const res = await fetch(`${endpoint}/api/chat`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
-    signal: options.signal,
+    signal: combinedSignalChat,
   });
 
   if (!res.ok) {

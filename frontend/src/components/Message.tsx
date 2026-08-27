@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
 import { Check, Copy, Download, User, Bot, FileCode, RefreshCw, Pencil, X, Save, FilePlus2, Trash2, GitBranch, Code2, FileText, Layers, ImageIcon, ZoomIn, Brain, ChevronDown } from 'lucide-react';
-import type { Message as MessageType } from '../types';
+import type { Message as MessageType, TimelineEvent } from '../types';
 
 const languageExtensions: Record<string, string> = {
  javascript: '.js',
@@ -413,8 +413,9 @@ const stageLabels: Record<string, string> = {
  'planning:evaluating': '📋 Evaluating the plan',
  'image:generating': '🎨 Generating image',
  'code:generating': '💻 Writing code',
- 'writing:files': '✏️ Writing files',
- 'summary:writing': '✨ Polishing response',
+ 'writing:files': '✏️ Writing files',  'summary:writing': '✨ Polishing response',
+  'cloud:warming': '☁️ Cloud model warming up (this may take a few minutes)...',
+  'cloud:unavailable': '☁️ Cloud unavailable — using local model',
  // Fallbacks for legacy / unknown namespaced stages
  'agent': '🤖 Working',
  'reading': '📂 Reading workspace',
@@ -439,6 +440,53 @@ function getStageLabel(stage?: string): string | null {
  }
  }
  return best ? stageLabels[best] : '⚙️ Processing';
+}
+
+/** Compact inline row for a single timeline event (thinking or tool call) */
+function TimelineRow({ event, isStreaming, isLast }: { event: TimelineEvent; isStreaming?: boolean; isLast: boolean }) {
+ const [open, setOpen] = useState(false);
+
+ if (event.type === 'thinking') {
+   // Collapsible thinking section — closed by default, opens on click
+   return (
+     <div className="rounded-md border border-gray-800/60 bg-gray-950/40 overflow-hidden">
+       <button
+         onClick={() => setOpen(!open)}
+         className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-gray-900/40 transition-colors"
+       >
+         <Brain size={10} className="text-[#7b9fc6] flex-shrink-0"/>
+         <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">Thinking</span>
+         <ChevronDown size={10} className={`ml-auto text-gray-600 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}/>
+       </button>
+       {open && (
+         <div className="px-2.5 pb-2 text-[11px] text-gray-500 leading-relaxed whitespace-pre-wrap border-t border-gray-800/40 pt-1.5 font-mono max-h-40 overflow-y-auto">
+           {event.content}
+         </div>
+       )}
+     </div>
+   );
+ }
+
+ // Tool call row — compact inline with icon + tool name + args
+ const toolIcons: Record<string, string> = {
+   read_file: '📖', write_file: '✏️', edit_file: '✂️', delete_file: '🗑️',
+   run_command: '▶', list_files: '📂', search_files: '🔍', web_search: '🌐',
+   read_rules: '📋', update_memory: '🧠', git_status: '📊', git_diff: '📊',
+   git_commit: '💾', ask_user: '❓', rename_file: '📝', create_directory: '📁',
+   file_exists: '📄', read_url: '🔗', diff_files: '📊', replace_in_file: '✂️',
+   count_lines: '📏', glob: '🔍', multi_edit: '✂️', delegate_to_subagent: '🤖',
+   read_image: '👁️', find_references: '🔍', refactor_rename: '📝',
+ };
+ const icon = toolIcons[event.tool] || '🔧';
+ const isRunning = isStreaming && isLast && event.status === 'done';
+ return (
+   <div className="flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-gray-800/30 transition-colors text-[11px] font-mono">
+     <span className="text-gray-600 flex-shrink-0">{icon}</span>
+     <span className="text-[#4a9988] flex-shrink-0 font-medium">{event.tool}</span>
+     {event.args && <span className="truncate text-gray-500 min-w-0">{event.args}</span>}
+     {event.status === 'error' && <span className="ml-auto text-[#c44] text-[10px]">failed</span>}
+   </div>
+ );
 }
 
 export const Message = memo(function Message({ message, isStreaming, stage, liveDuration, index, onEdit, onDelete, onRegenerate, isLastAssistant, onApplyCode, onApplyEdit, onDeleteFile, onApplyAll, selected, onToggleSelect, selectable, onFork }: Props) {
@@ -716,6 +764,21 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  </div>
  );
  })()}
+
+ {/* Interleaved timeline — thinking + tool events shown inline (Koding mode) */}
+ {!isUser && message.timeline && message.timeline.length > 0 && (
+ <div className="mb-3 space-y-0.5">
+ {message.timeline.map((event, ti) => (
+ <TimelineRow key={ti} event={event} isStreaming={isStreaming} isLast={ti === message.timeline!.length - 1} />
+ ))}
+ {isStreaming && (
+ <div className="flex items-center gap-2 px-2 py-1 text-[11px] text-gray-500">
+ <span className="w-1 h-1 bg-[#7b9fc6] rounded-full animate-pulse"/>
+ <span>working...</span>
+ </div>
+ )}
+ </div>
+ )}
 
  {/* Show image attachment for user messages */}
  {isUser && (message.content.includes('[image:data:image') || message.content.includes('[image]')) && (
