@@ -1,0 +1,579 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "name": "qwen3:0.6b",
+      "family": "Qwen 3",
+      "params": "0.6B",
+      "tools": true,
+      "thinking": true,
+      "vision": false,
+      "description": "Ultra-lightweight Qwen 3 model with tool calling and thinking support."
+    },
+    {
+      "name": "qwen3:1.7b",
+      "family": "Qwen 3",
+      "params": "1.7B",
+      "tools": true,
+      "thinking": true,
+      "vision": false,
+      "description": "Lightweight Qwen 3 model good for fast inference with reasoning."
+    },
+    {
+      "name": "qwen3:4b",
+      "family": "Qwen 3",
+      "params": "4B",
+      "tools": true,
+      "thinking": true,
+      "vision": false,
+      "description": "Balanced Qwen 3 model with strong tool calling and thinking."
+    },
+    {
+      "name": "qwen3:8b",
+      "family": "Qwen 3",
+      "params": "8B",
+      "tools": true,
+      "thinking": true,
+      "vision": false,
+      "description": "Popular mid-size Qwen 3 with excellent reasoning and tool use."
+    },
+    {
+      "name": "qwen3:14b",
+      "family": "Qwen 3",
+      "params": "14B",
+      "tools": true,
+      "thinking": true,
+      "vision": false,
+      "description": "Large Qwen 3 model with strong multilingual capabilities."
+    },
+    {
+      "name": "qwen3:32b",
+      "family": "Qwen 3",
+      "params": "32B",
+      "tools": true,
+      "thinking": true,
+      "vision": false,
+      "description": "High-capability Qwen 3 for complex reasoning tasks."
+    },
+    {
+      "name": "qwen3:235b",
+      "family": "Qwen 3",
+      "params": "235B",
+      "tools": true,
+      "thinking": true,
+      "vision": false,
+      "description": "Flagship Qwen 3 MoE model, top-tier performance."
+    },
+    {
+      "name": "qwen3-vl:4b",
+      "family": "Qwen 3 VL",
+      "params": "4B",
+      "tools": true,
+      "thinking": true,
+      "vision": true,
+      "description": "Compact vision-language model for image understanding."
+    },
+    {
+      "name": "qwen3-vl:8b",
+      "family": "Qwen 3 VL",
+      "params": "8B",
+      "tools": true,
+      "thinking": true,
+      "vision": true,
+      "description": "Mid-size vision model with strong image reasoning."
+    },
+    {
+      "name": "qwen2.5:0.5b",
+      "family": "Qwen 2.5",
+      "params": "0.5B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Tiny Qwen 2.5 for edge deployment."
+    },
+    {
+      "name": "qwen2.5:1.5b",
+      "family": "Qwen 2.5",
+      "params": "1.5B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Small Qwen 2.5 model for quick responses."
+    },
+    {
+      "name": "qwen2.5:3b",
+      "family": "Qwen 2.5",
+      "params": "3B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Compact Qwen 2.5 with solid performance."
+    },
+    {
+      "name": "qwen2.5:7b",
+      "family": "Qwen 2.5",
+      "params": "7B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Popular Qwen 2.5 size for general use."
+    },
+    {
+      "name": "qwen2.5:14b",
+      "family": "Qwen 2.5",
+      "params": "14B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Strong Qwen 2.5 for coding and analysis."
+    },
+    {
+      "name": "qwen2.5:32b",
+      "family": "Qwen 2.5",
+      "params": "32B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Large Qwen 2.5 for complex tasks."
+    },
+    {
+      "name": "qwen2.5-coder:1.5b",
+      "family": "Qwen 2.5 Coder",
+      "params": "1.5B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Code-focused small model."
+    },
+    {
+      "name": "qwen2.5-coder:7b",
+      "family": "Qwen 2.5 Coder",
+      "params": "7B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Code-focused 7B with strong programming skills."
+    },
+    {
+      "name": "qwen2.5-coder:14b",
+      "family": "Qwen 2.5 Coder",
+      "params": "14B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Large code-focused model for complex programming."
+    },
+    {
+      "name": "qwen2.5-coder:32b",
+      "family": "Qwen 2.5 Coder",
+      "params": "32B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Flagship code model rivaling GPT-4 on coding tasks."
+    },
+    {
+      "name": "llama4-scout:17b",
+      "family": "Llama 4",
+      "params": "17B",
+      "tools": true,
+      "thinking": false,
+      "vision": true,
+      "description": "Meta Llama 4 Scout — 17B with vision support."
+    },
+    {
+      "name": "llama4-maverick:17b",
+      "family": "Llama 4",
+      "params": "17B",
+      "tools": true,
+      "thinking": false,
+      "vision": true,
+      "description": "Meta Llama 4 Maverick — optimized for speed."
+    },
+    {
+      "name": "llama3.3:8b",
+      "family": "Llama 3.3",
+      "params": "8B",
+      "tools": true,
+      "thinking": false,
+      "vision": false,
+      "description": "Meta Llama 3.3 8B — solid general-purpose model."
+    },
+    {
+      "name": "llama3.3:70b",
+      "family": "Llama 3.3",
+      "params": "70B",
+      "tools": true,
+      "thinking": false,
+      "vision": false,
+      "description": "Meta Llama 3.3 70B — top-tier open model."
+    },
+    {
+      "name": "llama3.2:1b",
+      "family": "Llama 3.2",
+      "params": "1B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Ultra-light Llama for edge devices."
+    },
+    {
+      "name": "llama3.2:3b",
+      "family": "Llama 3.2",
+      "params": "3B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Compact Llama 3.2 for fast inference."
+    },
+    {
+      "name": "llama3.2-vision:11b",
+      "family": "Llama 3.2 Vision",
+      "params": "11B",
+      "tools": false,
+      "thinking": false,
+      "vision": true,
+      "description": "Vision-language model for image understanding."
+    },
+    {
+      "name": "llama3.1:8b",
+      "family": "Llama 3.1",
+      "params": "8B",
+      "tools": true,
+      "thinking": false,
+      "vision": false,
+      "description": "Widely-used 8B model with 128K context."
+    },
+    {
+      "name": "llama3.1:70b",
+      "family": "Llama 3.1",
+      "params": "70B",
+      "tools": true,
+      "thinking": false,
+      "vision": false,
+      "description": "Large Llama 3.1 for complex reasoning."
+    },
+    {
+      "name": "llama3.1:405b",
+      "family": "Llama 3.1",
+      "params": "405B",
+      "tools": true,
+      "thinking": false,
+      "vision": false,
+      "description": "Flagship open model from Meta."
+    },
+    {
+      "name": "gemma3:1b",
+      "family": "Gemma 3",
+      "params": "1B",
+      "tools": false,
+      "thinking": false,
+      "vision": true,
+      "description": "Google Gemma 3 — tiny with vision support."
+    },
+    {
+      "name": "gemma3:4b",
+      "family": "Gemma 3",
+      "params": "4B",
+      "tools": false,
+      "thinking": false,
+      "vision": true,
+      "description": "Compact Google model with multimodal support."
+    },
+    {
+      "name": "gemma3:12b",
+      "family": "Gemma 3",
+      "params": "12B",
+      "tools": false,
+      "thinking": false,
+      "vision": true,
+      "description": "Mid-size Gemma 3 with strong vision capabilities."
+    },
+    {
+      "name": "gemma3:27b",
+      "family": "Gemma 3",
+      "params": "27B",
+      "tools": false,
+      "thinking": false,
+      "vision": true,
+      "description": "Large Gemma 3 with excellent multimodal performance."
+    },
+    {
+      "name": "gemma4:12b",
+      "family": "Gemma 4",
+      "params": "12B",
+      "tools": true,
+      "thinking": true,
+      "vision": true,
+      "description": "Google Gemma 4 — supports tools, thinking, and vision."
+    },
+    {
+      "name": "gemma4:26b",
+      "family": "Gemma 4",
+      "params": "26B",
+      "tools": true,
+      "thinking": true,
+      "vision": true,
+      "description": "Large Gemma 4 with top-tier capabilities."
+    },
+    {
+      "name": "gemma4:31b",
+      "family": "Gemma 4",
+      "params": "31B",
+      "tools": true,
+      "thinking": true,
+      "vision": true,
+      "description": "Flagship Gemma 4 model with full feature support."
+    },
+    {
+      "name": "phi4:3.8b",
+      "family": "Phi 4",
+      "params": "3.8B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Microsoft Phi 4 — efficient reasoning model."
+    },
+    {
+      "name": "phi4-mini:3.8b",
+      "family": "Phi 4 Mini",
+      "params": "3.8B",
+      "tools": true,
+      "thinking": false,
+      "vision": false,
+      "description": "Compact Phi 4 with tool calling support."
+    },
+    {
+      "name": "phi4-reasoning:14b",
+      "family": "Phi 4 Reasoning",
+      "params": "14B",
+      "tools": false,
+      "thinking": true,
+      "vision": false,
+      "description": "Phi 4 optimized for mathematical reasoning."
+    },
+    {
+      "name": "deepseek-r1:1.5b",
+      "family": "DeepSeek R1",
+      "params": "1.5B",
+      "tools": false,
+      "thinking": true,
+      "vision": false,
+      "description": "DeepSeek R1 distilled — chain-of-thought reasoning."
+    },
+    {
+      "name": "deepseek-r1:7b",
+      "family": "DeepSeek R1",
+      "params": "7B",
+      "tools": false,
+      "thinking": true,
+      "vision": false,
+      "description": "DeepSeek R1 7B — strong reasoning for its size."
+    },
+    {
+      "name": "deepseek-r1:14b",
+      "family": "DeepSeek R1",
+      "params": "14B",
+      "tools": false,
+      "thinking": true,
+      "vision": false,
+      "description": "DeepSeek R1 14B — excellent math and code reasoning."
+    },
+    {
+      "name": "deepseek-r1:32b",
+      "family": "DeepSeek R1",
+      "params": "32B",
+      "tools": false,
+      "thinking": true,
+      "vision": false,
+      "description": "DeepSeek R1 32B — top reasoning model."
+    },
+    {
+      "name": "deepseek-r1:70b",
+      "family": "DeepSeek R1",
+      "params": "70B",
+      "tools": false,
+      "thinking": true,
+      "vision": false,
+      "description": "DeepSeek R1 flagship — rivals o1 on reasoning."
+    },
+    {
+      "name": "mistral:7b",
+      "family": "Mistral",
+      "params": "7B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Classic Mistral 7B — fast and efficient."
+    },
+    {
+      "name": "mistral-large:123b",
+      "family": "Mistral Large",
+      "params": "123B",
+      "tools": true,
+      "thinking": false,
+      "vision": false,
+      "description": "Mistral's flagship model."
+    },
+    {
+      "name": "codestral:22b",
+      "family": "Codestral",
+      "params": "22B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Mistral's code-specialized model."
+    },
+    {
+      "name": "command-r:35b",
+      "family": "Command R",
+      "params": "35B",
+      "tools": true,
+      "thinking": false,
+      "vision": false,
+      "description": "Cohere Command R — RAG and tool-use focused."
+    },
+    {
+      "name": "codellama:7b",
+      "family": "Code Llama",
+      "params": "7B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Meta code-focused Llama."
+    },
+    {
+      "name": "codellama:13b",
+      "family": "Code Llama",
+      "params": "13B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Larger Code Llama for complex programming."
+    },
+    {
+      "name": "codellama:34b",
+      "family": "Code Llama",
+      "params": "34B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Large Code Llama for serious coding tasks."
+    },
+    {
+      "name": "starcoder2:3b",
+      "family": "StarCoder 2",
+      "params": "3B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Small code generation model."
+    },
+    {
+      "name": "starcoder2:7b",
+      "family": "StarCoder 2",
+      "params": "7B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Mid-size code model supporting 619 languages."
+    },
+    {
+      "name": "starcoder2:15b",
+      "family": "StarCoder 2",
+      "params": "15B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "description": "Large code model from BigCode."
+    },
+    {
+      "name": "huihui/qwen3-abliterated:1.7b",
+      "family": "Qwen 3",
+      "params": "1.7B",
+      "tools": true,
+      "thinking": true,
+      "vision": false,
+      "uncensored": true,
+      "description": "Uncensored Qwen 3 1.7B — no content restrictions."
+    },
+    {
+      "name": "huihui/qwen3-abliterated:4b",
+      "family": "Qwen 3",
+      "params": "4B",
+      "tools": true,
+      "thinking": true,
+      "vision": false,
+      "uncensored": true,
+      "description": "Uncensored Qwen 3 4B — unrestricted responses."
+    },
+    {
+      "name": "huihui/qwen3-abliterated:8b",
+      "family": "Qwen 3",
+      "params": "8B",
+      "tools": true,
+      "thinking": true,
+      "vision": false,
+      "uncensored": true,
+      "description": "Uncensored Qwen 3 8B — full capability, no guardrails."
+    },
+    {
+      "name": "huihui/qwen3-abliterated:14b",
+      "family": "Qwen 3",
+      "params": "14B",
+      "tools": true,
+      "thinking": true,
+      "vision": false,
+      "uncensored": true,
+      "description": "Uncensored Qwen 3 14B."
+    },
+    {
+      "name": "huihui/qwen3-abliterated:32b",
+      "family": "Qwen 3",
+      "params": "32B",
+      "tools": true,
+      "thinking": true,
+      "vision": false,
+      "uncensored": true,
+      "description": "Uncensored Qwen 3 32B — large uncensored model."
+    },
+    {
+      "name": "dolphin-mistral:7b",
+      "family": "Dolphin",
+      "params": "7B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "uncensored": true,
+      "description": "Uncensored Dolphin based on Mistral 7B."
+    },
+    {
+      "name": "dolphin-llama3:8b",
+      "family": "Dolphin",
+      "params": "8B",
+      "tools": false,
+      "thinking": false,
+      "vision": false,
+      "uncensored": true,
+      "description": "Uncensored Dolphin based on Llama 3."
+    },
+    {
+      "name": "gemma3n:e2b",
+      "family": "Gemma 3n",
+      "params": "~3B",
+      "tools": false,
+      "thinking": false,
+      "vision": true,
+      "description": "Google Gemma 3n — efficient Nano model with vision."
+    },
+    {
+      "name": "gemma3n:e4b",
+      "family": "Gemma 3n",
+      "params": "~5B",
+      "tools": false,
+      "thinking": false,
+      "vision": true,
+      "description": "Google Gemma 3n — larger efficient model."
+    }
+  ]
+}

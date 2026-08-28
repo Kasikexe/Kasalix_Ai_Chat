@@ -15,6 +15,7 @@ import memoryRoutes from './routes/memory';
 import changelogRoutes from './routes/changelog';
 import { probeAllModels } from './services/model-capabilities';
 import plannedRoutes from './routes/planned';
+import ollamaRoutes, { detectOllamaOwnership } from './routes/ollama';
 import speedtestRoutes from './routes/speedtest';
 import pluginsRoutes from './routes/plugins';
 import cloudUsageRoutes from './routes/cloud-usage';
@@ -126,6 +127,11 @@ app.use('/api/cloud-usage/*', async (c, next) => {
   await next();
 });
 app.use('/api/session-logs/*', async (c, next) => {
+  const authCookie = c.req.header('Cookie');
+  c.set('auth', { authenticated: authCookie?.includes('settings_auth=1') || false });
+  await next();
+});
+app.use('/api/ollama/*', async (c, next) => {
   const authCookie = c.req.header('Cookie');
   c.set('auth', { authenticated: authCookie?.includes('settings_auth=1') || false });
   await next();
@@ -267,6 +273,7 @@ app.route('/api/files', filesRoutes);
 app.route('/api/memory', memoryRoutes);
 app.route('/api/changelog', changelogRoutes);
 app.route('/api/planned', plannedRoutes);
+app.route('/api/ollama', ollamaRoutes);
 app.route('/api/speedtest', speedtestRoutes);
 app.route('/api/plugins', pluginsRoutes);
 app.route('/api/cloud-usage', cloudUsageRoutes);
@@ -480,7 +487,7 @@ app.get('/download', async (c) => {
     }
   } catch {}
 
-  const version = process.env.APP_VERSION || '0.10.0';
+  const version = process.env.APP_VERSION || '0.11.0';
   const html = `
 <!DOCTYPE html>
 <html lang="en" class="dark">
@@ -761,6 +768,9 @@ if (httpsServerOptions) {
 
 // Probe installed models for tool/thinking capabilities (non-blocking)
 probeAllModels().catch(() => {});
+
+// Detect if Ollama is already running (for ownership tracking)
+detectOllamaOwnership().catch(() => {});
 
 // Graceful shutdown
 process.on('SIGINT', () => {

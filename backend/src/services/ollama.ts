@@ -1,8 +1,35 @@
 import type { Message, OllamaModel } from '../types';
+import { promises as fs } from 'fs';
+import path from 'path';
+import { getDataDir } from '../utils/helpers';
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 
 import { supportsTools, supportsThinking } from './model-capabilities';
+
+// ─── Default num_ctx from settings ───────────────────────────
+let _defaultNumCtx: number | null = null;
+let _numCtxLoaded = false;
+
+async function getDefaultNumCtx(): Promise<number> {
+  if (_numCtxLoaded) return _defaultNumCtx ?? 0;
+  _numCtxLoaded = true;
+  try {
+    const settingsFile = path.join(getDataDir(), 'settings.json');
+    const data = await fs.readFile(settingsFile, 'utf-8');
+    const parsed = JSON.parse(data);
+    _defaultNumCtx = parsed.defaultNumCtx || 0;
+  } catch {
+    _defaultNumCtx = 0;
+  }
+  return _defaultNumCtx ?? 0;
+}
+
+/** Call to invalidate cache when settings change */
+export function invalidateNumCtxCache(): void {
+  _numCtxLoaded = false;
+  _defaultNumCtx = null;
+}
 
 /**
  * Whether a model supports the `think` flag.
@@ -136,6 +163,12 @@ export async function streamChat(
     body.options = { ...body.options, num_predict: options.max_tokens };
   }
 
+  // Inject default num_ctx from settings (unless already set)
+  const numCtx = await getDefaultNumCtx();
+  if (numCtx > 0 && !body.options?.num_ctx) {
+    body.options = { ...body.options, num_ctx: numCtx };
+  }
+
   // ALWAYS set think for models that support it
   // If user explicitly chose think=false, honor that
   // If user explicitly chose think=true, honor that
@@ -261,6 +294,13 @@ export async function streamChatWithTools(
   if (temperature !== undefined) body.options = { ...body.options, temperature };
   if (options.top_p !== undefined) body.options = { ...body.options, top_p: options.top_p };
   if (options.max_tokens !== undefined) body.options = { ...body.options, num_predict: options.max_tokens };
+
+  // Inject default num_ctx from settings
+  const numCtxTools = await getDefaultNumCtx();
+  if (numCtxTools > 0 && !body.options?.num_ctx) {
+    body.options = { ...body.options, num_ctx: numCtxTools };
+  }
+
   if (await modelSupportsThinking(model)) body.think = think === true;
 
   const endpoint = baseUrl || OLLAMA_BASE_URL;
@@ -368,6 +408,12 @@ export async function chat(
   if (options.temperature !== undefined) body.options = { ...body.options, temperature: options.temperature };
   if (options.top_p !== undefined) body.options = { ...body.options, top_p: options.top_p };
   if (options.max_tokens !== undefined) body.options = { ...body.options, num_predict: options.max_tokens };
+
+  // Inject default num_ctx from settings
+  const numCtxChat = await getDefaultNumCtx();
+  if (numCtxChat > 0 && !body.options?.num_ctx) {
+    body.options = { ...body.options, num_ctx: numCtxChat };
+  }
 
   if (await modelSupportsThinking(model)) {
     body.think = options.think === true;

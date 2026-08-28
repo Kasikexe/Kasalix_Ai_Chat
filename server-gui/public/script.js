@@ -130,21 +130,34 @@ async function ensureBun() {
 }
 
 async function ensureOllama() {
+  // 1. Check if Ollama is already running
   const check = await API.checkOllama();
   if (check.available) return true;
+
+  // 2. Not running — try to start it (it may be installed but not started)
+  log('Ollama not responding — trying to start it...');
+  try {
+    const startRes = await API.startOllama();
+    if (startRes.success) {
+      log('Ollama started ✓');
+      return true;
+    }
+  } catch (e) {
+    // startOllama failed — Ollama probably not installed
+  }
+
+  // 3. Still not available — prompt to install
   const yes = await promptInstall('ollama');
   if (!yes) return false;
   showInstallProgress('Installing Ollama...', 'Downloading Ollama (~1.5 GB) and installing it. This may take a few minutes depending on your connection.');
   const res = await API.installOllama();
   if (res.success) {
-    // Wait for the Ollama service to come up (it auto-starts after install)
     for (let i = 0; i < 20; i++) {
       await new Promise((r) => setTimeout(r, 1000));
       const again = await API.checkOllama();
       if (again.available) { hideInstallProgress(); return true; }
     }
     hideInstallProgress();
-    // Installed successfully even if the service hasn't come up yet
     return true;
   }
   showInstallError('Ollama install failed', res.error || 'Ollama could not be installed. Please download it manually from https://ollama.com/download');
@@ -183,10 +196,15 @@ async function runStartup() {
     log('Bun not found — server cannot start without it. Install from https://bun.sh');
   }
 
-  // Step 2: Check Ollama (auto-install if missing, after asking)
+  // Step 2: Check Ollama (non-blocking — server starts either way)
   mark('check-deps', 'active');
   log('Checking if Ollama is available...');
-  const ollamaOk = await ensureOllama();
+  let ollamaOk = false;
+  try {
+    ollamaOk = await ensureOllama();
+  } catch (e) {
+    log('Ollama check failed: ' + e.message);
+  }
   if (ollamaOk) {
     mark('check-deps', 'done');
     updateOllamaBadge(true);
@@ -196,7 +214,6 @@ async function runStartup() {
     updateOllamaBadge(false);
     log('Ollama not found — AI features will be unavailable');
   }
-
 
   // Step 3: Backend dependencies
   mark('check-ollama', 'active');
@@ -902,9 +919,17 @@ const views = {
   speedtest: $('view-speedtest'),
   plugins: $('view-plugins'),
   apikeys: $('view-apikeys'),
+  ollama: $('view-ollama'),
 };
 
 function switchView(name) {
+  // Guard: check for unsaved Ollama settings changes
+  if (name !== 'ollama' && hasOllamaUnsavedChanges()) {
+    pendingOllamaTargetView = name;
+    showOllamaUnsavedModal();
+    return;
+  }
+  pendingOllamaTargetView = null;
   Object.entries(views).forEach(([key, el]) => {
     if (el) el.style.display = key === name ? 'block' : 'none';
   });
@@ -913,6 +938,7 @@ function switchView(name) {
   if (name === 'speedtest') enterSpeedTestView();
   if (name === 'plugins') enterPluginsView();
   if (name === 'apikeys') enterApiKeysView();
+  if (name === 'ollama') enterOllamaView();
 }
 
 tabs.forEach((t) => t.addEventListener('click', () => switchView(t.dataset.view)));
@@ -926,6 +952,7 @@ function refreshAuthedView() {
   if (activeTab.dataset.view === 'speedtest') enterSpeedTestView();
   if (activeTab.dataset.view === 'plugins') enterPluginsView();
   if (activeTab.dataset.view === 'apikeys') enterApiKeysView();
+  if (activeTab.dataset.view === 'ollama') enterOllamaView();
 }
 
 // ══════════════════════════════════════════════════════
@@ -1710,11 +1737,34 @@ if (pluginsRefreshBtn) {
 
 // Check GitHub release version on init
 async function checkLatestRelease() {
-  const release = await API.checkGitHubRelease();
-  if (release && release.version) {
+  try {
+    const [release, appInfo] = await Promise.all([
+      API.checkGitHubRelease(),
+      API.getAppInfo(),
+    ]);
+    if (!release || !release.version || !appInfo?.version) return;
+
+    const latest = release.version.replace(/^v/i, '');
+    const current = appInfo.version.replace(/^v/i, '');
+
+    // Always show badge
     const badge = $('releaseVersion');
-    if (badge) badge.textContent = 'v' + release.version.replace(/^v/i, '') + ' available';
-  }
+    if (badge) badge.textContent = 'v' + latest + ' available';
+
+    // Compare versions — skip if same or if dismissed this session
+    if (latest === current) return;
+    if (sessionStorage.getItem('updateDismissed') === latest) return;
+
+    // Show banner
+    const banner = $('updateBanner');
+    const versionEl = $('updateBannerVersion');
+    const descEl = $('updateBannerDesc');
+    if (banner && versionEl) {
+      versionEl.textContent = 'Update available: v' + latest + ' (you have v' + current + ')';
+      if (descEl && release.name) descEl.textContent = release.name;
+      banner.style.display = 'block';
+    }
+  } catch {}
 }
 
 // ─── Init ────────────────────────────────────────────────────────
@@ -1759,6 +1809,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Check for latest GitHub release
   checkLatestRelease();
+
+// Dismiss update banner
+$('updateBannerDismiss')?.addEventListener('click', () => {
+  const banner = $('updateBanner');
+  if (banner) banner.style.display = 'none';
+  // Remember dismissal for this session
+  const versionEl = $('updateBannerVersion');
+  if (versionEl) {
+    const match = versionEl.textContent.match(/v([\d.]+)/);
+    if (match) sessionStorage.setItem('updateDismissed', match[1]);
+  }
+});
 
   // Run startup sequence
   runStartup();
@@ -2113,3 +2175,884 @@ function startTrajectoryRefresh() {
 function stopTrajectoryRefresh() {
   if (trajectoryRefreshInterval) { clearInterval(trajectoryRefreshInterval); trajectoryRefreshInterval = null; }
 }
+
+// ══════════════════════════════════════════════════════
+// Ollama Settings View
+// ══════════════════════════════════════════════════════
+let ollamaSettings = { kvCacheOffload: true, kvCacheType: 'f16', defaultNumCtx: 0 };
+let ollamaSettingsLoaded = false;
+let ollamaGpuInfo = null; // { memTotal, memUsed, name }
+let ollamaRamInfo = null; // { total, used, free, usagePercent }
+let ollamaSettingsSnapshot = null; // snapshot when settings were loaded
+let pendingOllamaTargetView = null; // view to switch to after discard/save
+
+// VRAM estimates for a 7B model as baseline (in MB)
+const BASELINE_KV_VRAM_MB = {
+  f32: 2048,
+  f16: 1024,
+  q8_0: 512,
+  q4_0: 256,
+};
+const BASELINE_MODEL_VRAM_MB = 4096; // model weights for 7B Q4
+
+async function enterOllamaView() {
+  // Load current settings
+  if (!ollamaSettingsLoaded) {
+    try {
+      const settings = await API.getSettings();
+      if (settings) {
+        ollamaSettings.kvCacheOffload = settings.kvCacheOffload !== false;
+        ollamaSettings.kvCacheType = settings.kvCacheType || 'f16';
+        ollamaSettings.defaultNumCtx = settings.defaultNumCtx || 0;
+      }
+    } catch {}
+    ollamaSettingsLoaded = true;
+    // Save snapshot for unsaved-changes detection
+    ollamaSettingsSnapshot = { ...ollamaSettings };
+  }
+
+  // Get GPU + RAM info for estimates
+  try {
+    const stats = await API.getStats();
+    ollamaGpuInfo = stats?.gpu || null;
+    ollamaRamInfo = stats?.ram || null;
+  } catch {}
+  updateHardwareInfo();
+
+  // Apply to GPU/RAM buttons
+  updateKvOffloadCards();
+
+  // Apply KV cache type cards
+  updateQuantCards();
+
+  // Apply context length
+  const numCtxSlider = $('numCtxSlider');
+  const numCtxValue = $('numCtxValue');
+  if (numCtxSlider) {
+    numCtxSlider.value = ollamaSettings.defaultNumCtx;
+    if (numCtxValue) numCtxValue.textContent = ollamaSettings.defaultNumCtx === 0 ? 'Auto' : formatNumCtx(ollamaSettings.defaultNumCtx);
+  }
+  updateCtxPresets();
+  updateCtxMemoryEstimate();
+
+  // Load Ollama status
+  refreshOllamaStatus();
+
+  // Load model catalog
+  loadModelCatalog();
+
+  // Update save button state
+  updateOllamaSaveBtn();
+}
+
+function updateOllamaSaveBtn() {
+  const btn = $('ollamaSaveBtn');
+  if (!btn) return;
+  btn.disabled = false;
+}
+
+function hasOllamaUnsavedChanges() {
+  if (!ollamaSettingsSnapshot) return false;
+  return ollamaSettings.kvCacheOffload !== ollamaSettingsSnapshot.kvCacheOffload
+    || ollamaSettings.kvCacheType !== ollamaSettingsSnapshot.kvCacheType
+    || ollamaSettings.defaultNumCtx !== ollamaSettingsSnapshot.defaultNumCtx;
+}
+
+async function refreshOllamaStatus() {
+  const runningEl = $('ollamaRunningStatus');
+  const ownershipEl = $('ollamaOwnershipStatus');
+  const loadedEl = $('ollamaLoadedModels');
+  const statusText = $('ollamaStatusText');
+
+  try {
+    const status = await API.getOllamaStatus();
+    if (runningEl) runningEl.textContent = status.running ? '✅ Running' : '❌ Stopped';
+    if (ownershipEl) ownershipEl.textContent = status.ownedByUs ? 'Yes (app started)' : 'No (external)';
+    if (loadedEl) {
+      const models = status.loadedModels || [];
+      loadedEl.textContent = models.length > 0
+        ? models.map(m => m.name || m.model).join(', ')
+        : 'None loaded';
+    }
+    if (statusText) statusText.textContent = status.running ? 'Connected' : 'Disconnected';
+  } catch {
+    if (runningEl) runningEl.textContent = '❌ Unreachable';
+    if (statusText) statusText.textContent = 'Unreachable';
+  }
+}
+
+// ─── Model Database ──────────────────────────────────
+const MODEL_DATABASE_FALLBACK = [
+  // Qwen 3 family
+  { name: 'qwen3:0.6b', family: 'Qwen 3', params: '0.6B', tools: true, thinking: true, vision: false, description: 'Ultra-lightweight Qwen 3 model with tool calling and thinking support.' },
+  { name: 'qwen3:1.7b', family: 'Qwen 3', params: '1.7B', tools: true, thinking: true, vision: false, description: 'Lightweight Qwen 3 model good for fast inference with reasoning.' },
+  { name: 'qwen3:4b', family: 'Qwen 3', params: '4B', tools: true, thinking: true, vision: false, description: 'Balanced Qwen 3 model with strong tool calling and thinking.' },
+  { name: 'qwen3:8b', family: 'Qwen 3', params: '8B', tools: true, thinking: true, vision: false, description: 'Popular mid-size Qwen 3 with excellent reasoning and tool use.' },
+  { name: 'qwen3:14b', family: 'Qwen 3', params: '14B', tools: true, thinking: true, vision: false, description: 'Large Qwen 3 model with strong multilingual capabilities.' },
+  { name: 'qwen3:32b', family: 'Qwen 3', params: '32B', tools: true, thinking: true, vision: false, description: 'High-capability Qwen 3 for complex reasoning tasks.' },
+  { name: 'qwen3:235b', family: 'Qwen 3', params: '235B', tools: true, thinking: true, vision: false, description: 'Flagship Qwen 3 MoE model, top-tier performance.' },
+  // Qwen 3 VL (Vision)
+  { name: 'qwen3-vl:4b', family: 'Qwen 3 VL', params: '4B', tools: true, thinking: true, vision: true, description: 'Compact vision-language model for image understanding.' },
+  { name: 'qwen3-vl:8b', family: 'Qwen 3 VL', params: '8B', tools: true, thinking: true, vision: true, description: 'Mid-size vision model with strong image reasoning.' },
+  // Qwen 2.5 family
+  { name: 'qwen2.5:0.5b', family: 'Qwen 2.5', params: '0.5B', tools: false, thinking: false, vision: false, description: 'Tiny Qwen 2.5 for edge deployment.' },
+  { name: 'qwen2.5:1.5b', family: 'Qwen 2.5', params: '1.5B', tools: false, thinking: false, vision: false, description: 'Small Qwen 2.5 model for quick responses.' },
+  { name: 'qwen2.5:3b', family: 'Qwen 2.5', params: '3B', tools: false, thinking: false, vision: false, description: 'Compact Qwen 2.5 with solid performance.' },
+  { name: 'qwen2.5:7b', family: 'Qwen 2.5', params: '7B', tools: false, thinking: false, vision: false, description: 'Popular Qwen 2.5 size for general use.' },
+  { name: 'qwen2.5:14b', family: 'Qwen 2.5', params: '14B', tools: false, thinking: false, vision: false, description: 'Strong Qwen 2.5 for coding and analysis.' },
+  { name: 'qwen2.5:32b', family: 'Qwen 2.5', params: '32B', tools: false, thinking: false, vision: false, description: 'Large Qwen 2.5 for complex tasks.' },
+  { name: 'qwen2.5-coder:1.5b', family: 'Qwen 2.5 Coder', params: '1.5B', tools: false, thinking: false, vision: false, description: 'Code-focused small model.' },
+  { name: 'qwen2.5-coder:7b', family: 'Qwen 2.5 Coder', params: '7B', tools: false, thinking: false, vision: false, description: 'Code-focused 7B with strong programming skills.' },
+  { name: 'qwen2.5-coder:14b', family: 'Qwen 2.5 Coder', params: '14B', tools: false, thinking: false, vision: false, description: 'Large code-focused model for complex programming.' },
+  { name: 'qwen2.5-coder:32b', family: 'Qwen 2.5 Coder', params: '32B', tools: false, thinking: false, vision: false, description: 'Flagship code model rivaling GPT-4 on coding tasks.' },
+  // Llama 4 family
+  { name: 'llama4-scout:17b', family: 'Llama 4', params: '17B', tools: true, thinking: false, vision: true, description: 'Meta Llama 4 Scout — 17B with vision support.' },
+  { name: 'llama4-maverick:17b', family: 'Llama 4', params: '17B', tools: true, thinking: false, vision: true, description: 'Meta Llama 4 Maverick — optimized for speed.' },
+  // Llama 3.3
+  { name: 'llama3.3:8b', family: 'Llama 3.3', params: '8B', tools: true, thinking: false, vision: false, description: 'Meta Llama 3.3 8B — solid general-purpose model.' },
+  { name: 'llama3.3:70b', family: 'Llama 3.3', params: '70B', tools: true, thinking: false, vision: false, description: 'Meta Llama 3.3 70B — top-tier open model.' },
+  // Llama 3.2
+  { name: 'llama3.2:1b', family: 'Llama 3.2', params: '1B', tools: false, thinking: false, vision: false, description: 'Ultra-light Llama for edge devices.' },
+  { name: 'llama3.2:3b', family: 'Llama 3.2', params: '3B', tools: false, thinking: false, vision: false, description: 'Compact Llama 3.2 for fast inference.' },
+  { name: 'llama3.2-vision:11b', family: 'Llama 3.2 Vision', params: '11B', tools: false, thinking: false, vision: true, description: 'Vision-language model for image understanding.' },
+  // Llama 3.1
+  { name: 'llama3.1:8b', family: 'Llama 3.1', params: '8B', tools: true, thinking: false, vision: false, description: 'Widely-used 8B model with 128K context.' },
+  { name: 'llama3.1:70b', family: 'Llama 3.1', params: '70B', tools: true, thinking: false, vision: false, description: 'Large Llama 3.1 for complex reasoning.' },
+  { name: 'llama3.1:405b', family: 'Llama 3.1', params: '405B', tools: true, thinking: false, vision: false, description: 'Flagship open model from Meta.' },
+  // Gemma 3
+  { name: 'gemma3:1b', family: 'Gemma 3', params: '1B', tools: false, thinking: false, vision: true, description: 'Google Gemma 3 — tiny with vision support.' },
+  { name: 'gemma3:4b', family: 'Gemma 3', params: '4B', tools: false, thinking: false, vision: true, description: 'Compact Google model with multimodal support.' },
+  { name: 'gemma3:12b', family: 'Gemma 3', params: '12B', tools: false, thinking: false, vision: true, description: 'Mid-size Gemma 3 with strong vision capabilities.' },
+  { name: 'gemma3:27b', family: 'Gemma 3', params: '27B', tools: false, thinking: false, vision: true, description: 'Large Gemma 3 with excellent multimodal performance.' },
+  // Gemma 4
+  { name: 'gemma4:12b', family: 'Gemma 4', params: '12B', tools: true, thinking: true, vision: true, description: 'Google Gemma 4 — supports tools, thinking, and vision.' },
+  { name: 'gemma4:26b', family: 'Gemma 4', params: '26B', tools: true, thinking: true, vision: true, description: 'Large Gemma 4 with top-tier capabilities.' },
+  { name: 'gemma4:31b', family: 'Gemma 4', params: '31B', tools: true, thinking: true, vision: true, description: 'Flagship Gemma 4 model with full feature support.' },
+  // Phi family
+  { name: 'phi4:3.8b', family: 'Phi 4', params: '3.8B', tools: false, thinking: false, vision: false, description: 'Microsoft Phi 4 — efficient reasoning model.' },
+  { name: 'phi4-mini:3.8b', family: 'Phi 4 Mini', params: '3.8B', tools: true, thinking: false, vision: false, description: 'Compact Phi 4 with tool calling support.' },
+  { name: 'phi4-reasoning:14b', family: 'Phi 4 Reasoning', params: '14B', tools: false, thinking: true, vision: false, description: 'Phi 4 optimized for mathematical reasoning.' },
+  // DeepSeek
+  { name: 'deepseek-r1:1.5b', family: 'DeepSeek R1', params: '1.5B', tools: false, thinking: true, vision: false, description: 'DeepSeek R1 distilled — chain-of-thought reasoning.' },
+  { name: 'deepseek-r1:7b', family: 'DeepSeek R1', params: '7B', tools: false, thinking: true, vision: false, description: 'DeepSeek R1 7B — strong reasoning for its size.' },
+  { name: 'deepseek-r1:14b', family: 'DeepSeek R1', params: '14B', tools: false, thinking: true, vision: false, description: 'DeepSeek R1 14B — excellent math and code reasoning.' },
+  { name: 'deepseek-r1:32b', family: 'DeepSeek R1', params: '32B', tools: false, thinking: true, vision: false, description: 'DeepSeek R1 32B — top reasoning model.' },
+  { name: 'deepseek-r1:70b', family: 'DeepSeek R1', params: '70B', tools: false, thinking: true, vision: false, description: 'DeepSeek R1 flagship — rivals o1 on reasoning.' },
+  // Mistral
+  { name: 'mistral:7b', family: 'Mistral', params: '7B', tools: false, thinking: false, vision: false, description: 'Classic Mistral 7B — fast and efficient.' },
+  { name: 'mistral-large:123b', family: 'Mistral Large', params: '123B', tools: true, thinking: false, vision: false, description: 'Mistral\'s flagship model.' },
+  { name: 'codestral:22b', family: 'Codestral', params: '22B', tools: false, thinking: false, vision: false, description: 'Mistral\'s code-specialized model.' },
+  // Command R
+  { name: 'command-r:35b', family: 'Command R', params: '35B', tools: true, thinking: false, vision: false, description: 'Cohere Command R — RAG and tool-use focused.' },
+  // Code models
+  { name: 'codellama:7b', family: 'Code Llama', params: '7B', tools: false, thinking: false, vision: false, description: 'Meta code-focused Llama.' },
+  { name: 'codellama:13b', family: 'Code Llama', params: '13B', tools: false, thinking: false, vision: false, description: 'Larger Code Llama for complex programming.' },
+  { name: 'codellama:34b', family: 'Code Llama', params: '34B', tools: false, thinking: false, vision: false, description: 'Large Code Llama for serious coding tasks.' },
+  // StarCoder
+  { name: 'starcoder2:3b', family: 'StarCoder 2', params: '3B', tools: false, thinking: false, vision: false, description: 'Small code generation model.' },
+  { name: 'starcoder2:7b', family: 'StarCoder 2', params: '7B', tools: false, thinking: false, vision: false, description: 'Mid-size code model supporting 619 languages.' },
+  { name: 'starcoder2:15b', family: 'StarCoder 2', params: '15B', tools: false, thinking: false, vision: false, description: 'Large code model from BigCode.' },
+  // Uncensored variants (common community models)
+  { name: 'huihui/qwen3-abliterated:1.7b', family: 'Qwen 3', params: '1.7B', tools: true, thinking: true, vision: false, uncensored: true, description: 'Uncensored Qwen 3 1.7B — no content restrictions.' },
+  { name: 'huihui/qwen3-abliterated:4b', family: 'Qwen 3', params: '4B', tools: true, thinking: true, vision: false, uncensored: true, description: 'Uncensored Qwen 3 4B — unrestricted responses.' },
+  { name: 'huihui/qwen3-abliterated:8b', family: 'Qwen 3', params: '8B', tools: true, thinking: true, vision: false, uncensored: true, description: 'Uncensored Qwen 3 8B — full capability, no guardrails.' },
+  { name: 'huihui/qwen3-abliterated:14b', family: 'Qwen 3', params: '14B', tools: true, thinking: true, vision: false, uncensored: true, description: 'Uncensored Qwen 3 14B.' },
+  { name: 'huihui/qwen3-abliterated:32b', family: 'Qwen 3', params: '32B', tools: true, thinking: true, vision: false, uncensored: true, description: 'Uncensored Qwen 3 32B — large uncensored model.' },
+  { name: 'dolphin-mistral:7b', family: 'Dolphin', params: '7B', tools: false, thinking: false, vision: false, uncensored: true, description: 'Uncensored Dolphin based on Mistral 7B.' },
+  { name: 'dolphin-llama3:8b', family: 'Dolphin', params: '8B', tools: false, thinking: false, vision: false, uncensored: true, description: 'Uncensored Dolphin based on Llama 3.' },
+  // Gemma 3n
+  { name: 'gemma3n:e2b', family: 'Gemma 3n', params: '~3B', tools: false, thinking: false, vision: true, description: 'Google Gemma 3n — efficient Nano model with vision.' },
+  { name: 'gemma3n:e4b', family: 'Gemma 3n', params: '~5B', tools: false, thinking: false, vision: true, description: 'Google Gemma 3n — larger efficient model.' },
+];
+
+// ─── Model Catalog (fetched from GitHub, fallback to hardcoded) ──
+let MODEL_DATABASE = [...MODEL_DATABASE_FALLBACK];
+let catalogDbVersion = 'local';
+let catalogDbSource = 'local';
+const CATALOG_URL = 'https://raw.githubusercontent.com/Kasikexe/Kasalix/main/model-catalog.json';
+const CATALOG_CACHE_KEY = 'kasalix_model_catalog';
+const CATALOG_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+function updateCatalogDbBadge() {
+  const badge = document.getElementById('catalogDbSource');
+  if (!badge) return;
+  const v = catalogDbVersion === 'local' ? 'v1' : 'v' + catalogDbVersion;
+  if (catalogDbSource === 'remote') {
+    badge.textContent = '📡 ' + v + ' (remote)';
+    badge.className = 'catalog-db-badge catalog-db-remote';
+  } else {
+    badge.textContent = '💾 ' + v + ' (local)';
+    badge.className = 'catalog-db-badge catalog-db-local';
+  }
+}
+
+async function fetchModelCatalog() {
+  try {
+    // Check cache first
+    const cached = localStorage.getItem(CATALOG_CACHE_KEY);
+    if (cached) {
+      const { timestamp, data } = JSON.parse(cached);
+      if (Date.now() - timestamp < CATALOG_CACHE_TTL && data?.models?.length) {
+        MODEL_DATABASE = data.models;
+        catalogDbVersion = data.version || 'local';
+        catalogDbSource = 'remote';
+        updateCatalogDbBadge();
+        return;
+      }
+    }
+  } catch {}
+
+  try {
+    const res = await fetch(CATALOG_URL);
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.models?.length) {
+        MODEL_DATABASE = data.models;
+        catalogDbVersion = data.version || 'local';
+        catalogDbSource = 'remote';
+        // Cache for next time
+        localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data }));
+      }
+    }
+  } catch {
+    // Offline or failed — keep using fallback/last cached version
+  }
+  updateCatalogDbBadge();
+}
+
+// Fetch catalog on load (non-blocking)
+fetchModelCatalog();
+
+// ─── Installed models cache ──────────────────────────
+let installedModelNames = [];
+
+// ─── Model Catalog Functions ──────────────────────────
+async function loadModelCatalog() {
+  const installedList = $('catalogInstalledList');
+  const browseList = $('catalogBrowseList');
+
+  // Load installed models
+  if (installedList) {
+    installedList.innerHTML = '<div class="catalog-loading">Loading installed models...</div>';
+    try {
+      const models = await API.getInstalledModels();
+      const modelList = models?.models || [];
+      installedModelNames = modelList.map(m => m.name || m.model || '');
+
+      if (modelList.length === 0) {
+        installedList.innerHTML = '<div class="catalog-loading">No models installed yet. Search above to find and pull models.</div>';
+      } else {
+        installedList.innerHTML = modelList.map(m => {
+          const name = m.name || m.model || '';
+          const size = m.size ? formatBytes(m.size) : '';
+          const family = m.details?.family || '';
+          const quant = m.details?.quantization_level || '';
+          const paramSize = m.details?.parameter_size || '';
+          const meta = [family, paramSize, quant].filter(Boolean).join(' · ');
+          const dbEntry = MODEL_DATABASE.find(d => name.includes(d.name.split(':')[0]));
+          const badges = [];
+          if (dbEntry) {
+            if (dbEntry.tools) badges.push('<span class="catalog-badge catalog-badge-tools">🔧 Tools</span>');
+            if (dbEntry.thinking) badges.push('<span class="catalog-badge catalog-badge-think">🧠 Thinking</span>');
+            if (dbEntry.vision) badges.push('<span class="catalog-badge catalog-badge-vision">👁 Vision</span>');
+          }
+          return `<div class="catalog-model-card catalog-installed" onclick="showModelDetail('${esc(name)}')" title="Click for details">
+            <div class="catalog-model-icon">🧠</div>
+            <div class="catalog-model-info">
+              <div class="catalog-model-name">${esc(name)}</div>
+              <div class="catalog-model-meta">${esc(meta)}</div>
+              <div class="catalog-model-badges">${badges.join('')}<span class="catalog-badge catalog-badge-installed">✓ Installed</span>${size ? '<span class="catalog-badge catalog-badge-size">' + esc(size) + '</span>' : ''}</div>
+            </div>
+          </div>`;
+        }).join('');
+      }
+    } catch (e) {
+      installedList.innerHTML = `<div class="catalog-loading">Failed to load: ${esc(String(e))}</div>`;
+    }
+  }
+
+  // Also populate browse if there's a search
+  const searchVal = $('catalogSearchInput')?.value?.trim() || '';
+  if (searchVal) {
+    filterBrowseModels(searchVal);
+  } else {
+    if (browseList) browseList.innerHTML = '<div class="catalog-loading">Type to search models...</div>';
+    const countEl = $('catalogBrowseCount');
+    if (countEl) countEl.textContent = '';
+  }
+}
+
+function filterBrowseModels(query) {
+  const browseList = $('catalogBrowseList');
+  const countEl = $('catalogBrowseCount');
+  if (!browseList) return;
+
+  const q = query.toLowerCase();
+  const results = MODEL_DATABASE.filter(m => {
+    return m.name.toLowerCase().includes(q)
+      || m.family.toLowerCase().includes(q)
+      || (m.description || '').toLowerCase().includes(q)
+      || (m.uncensored && 'uncensored abliterated'.includes(q))
+      || (m.tools && 'tools tool calling'.includes(q))
+      || (m.thinking && 'thinking reasoning'.includes(q))
+      || (m.vision && 'vision image multimodal'.includes(q));
+  });
+
+  if (countEl) countEl.textContent = results.length + ' model' + (results.length !== 1 ? 's' : '');
+
+  if (results.length === 0) {
+    browseList.innerHTML = `<div class="catalog-loading">No models found for "${esc(query)}". Try different keywords.</div>`;
+    return;
+  }
+
+  browseList.innerHTML = results.map(m => {
+    const isInstalled = installedModelNames.some(n => n.startsWith(m.name.split(':')[0]));
+    const badges = [];
+    if (m.tools) badges.push('<span class="catalog-badge catalog-badge-tools">🔧 Tools</span>');
+    if (m.thinking) badges.push('<span class="catalog-badge catalog-badge-think">🧠 Thinking</span>');
+    if (m.vision) badges.push('<span class="catalog-badge catalog-badge-vision">👁 Vision</span>');
+    if (m.uncensored) badges.push('<span class="catalog-badge" style="background:rgba(239,68,68,0.12);color:#f87171;">🔓 Uncensored</span>');
+
+    return `<div class="catalog-model-card" onclick="showModelDetail('${esc(m.name)}')" title="Click for details">
+      <div class="catalog-model-icon">${m.uncensored ? '🔓' : '🧠'}</div>
+      <div class="catalog-model-info">
+        <div class="catalog-model-name">${esc(m.name)}</div>
+        <div class="catalog-model-meta">${esc(m.family)} · ${esc(m.params)}</div>
+        <div class="catalog-model-badges">${badges.join('')}</div>
+      </div>
+      <button class="catalog-model-pull-btn ${isInstalled ? 'catalog-pull-installed' : ''}"
+        onclick="event.stopPropagation(); ${isInstalled ? '' : `pullModelFromCatalog('${esc(m.name)}')`}"
+        ${isInstalled ? 'disabled' : ''}>${isInstalled ? '✓ Installed' : '📥 Pull'}</button>
+    </div>`;
+  }).join('');
+}
+
+function showModelDetail(modelName) {
+  const modal = $('modelDetailModal');
+  if (!modal) return;
+
+  // Find in database
+  const dbEntry = MODEL_DATABASE.find(m => m.name === modelName);
+  // Find in installed
+  const isInstalled = installedModelNames.some(n => n === modelName || n.startsWith(modelName.split(':')[0]));
+
+  const nameEl = $('detailModalName');
+  const familyEl = $('detailModalFamily');
+  const iconEl = $('detailModalIcon');
+  const capEl = $('detailCapabilities');
+  const descEl = $('detailDescription');
+  const quantEl = $('detailQuantizations');
+  const variantEl = $('detailVariants');
+  const sizeEl = $('detailSizes');
+  const pullBtn = $('detailPullBtn');
+  const pullStatus = $('detailPullStatus');
+  const pullStatusText = $('detailPullStatusText');
+
+  if (nameEl) nameEl.textContent = modelName;
+  if (iconEl) iconEl.textContent = dbEntry?.uncensored ? '🔓' : '🧠';
+
+  if (familyEl) {
+    if (dbEntry) {
+      familyEl.textContent = dbEntry.family + ' · ' + dbEntry.params;
+    } else {
+      familyEl.textContent = 'Community model';
+    }
+  }
+
+  // Capabilities
+  if (capEl) {
+    if (dbEntry) {
+      capEl.innerHTML = `
+        <div class="detail-cap-badge ${dbEntry.tools ? 'cap-yes' : 'cap-no'}">🔧 Tools: ${dbEntry.tools ? 'Yes' : 'No'}</div>
+        <div class="detail-cap-badge ${dbEntry.thinking ? 'cap-yes' : 'cap-no'}">🧠 Thinking: ${dbEntry.thinking ? 'Yes' : 'No'}</div>
+        <div class="detail-cap-badge ${dbEntry.vision ? 'cap-yes' : 'cap-no'}">👁 Vision: ${dbEntry.vision ? 'Yes' : 'No'}</div>
+        ${dbEntry.uncensored ? '<div class="detail-cap-badge cap-no" style="border:1px solid rgba(239,68,68,0.3);">🔓 Uncensored</div>' : ''}
+      `;
+    } else {
+      capEl.innerHTML = '<div class="detail-cap-badge cap-no">⚠️ Unknown capabilities — not in built-in database</div>';
+    }
+  }
+
+  // Description
+  if (descEl) {
+    descEl.innerHTML = dbEntry
+      ? `<div class="detail-section-title">About</div><p style="font-size:13px;color:var(--text);line-height:1.5;margin:0;">${esc(dbEntry.description)}</p>`
+      : '';
+  }
+
+  // Quantizations
+  if (quantEl) {
+    const quants = dbEntry?.quantizations || ['Q4_K_M', 'Q8_0', 'FP16'];
+    const defQuant = dbEntry?.defaultQuant || 'Q4_K_M';
+    const installedQuants = installedModelNames.filter(n => n.startsWith(modelName.split(':')[0]));
+    quantEl.innerHTML = `<div class="detail-section-title">Available Quantizations</div>
+      <div class="detail-quant-grid">${quants.map(q => {
+        const isDef = q === defQuant;
+        const isInst = installedQuants.some(n => n.toLowerCase().includes(q.toLowerCase()));
+        return `<div class="detail-quant-chip ${isInst ? 'detail-quant-installed' : ''}">${q}${isDef ? ' \u2605' : ''}${isInst ? ' \u2713' : ''}</div>`;
+      }).join('')}</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px;">\u2605 = default \xb7 \u2713 = installed</div>`;
+  }
+
+  // Variants (uncensored, coder, etc.)
+  if (variantEl) {
+    const baseName = modelName.split(':')[0].replace(/^huihui\//, '');
+    const variants = MODEL_DATABASE.filter(m => {
+      const mName = m.name.split(':')[0].replace(/^huihui\//, '');
+      return mName === baseName && m.name !== modelName;
+    });
+    if (variants.length > 0) {
+      variantEl.innerHTML = `<div class="detail-section-title">Similar Models & Variants</div>
+        <div class="detail-variant-list">${variants.map(v => {
+          const isInst = installedModelNames.some(n => n === v.name);
+          return `<div class="detail-variant-item" onclick="showModelDetail('${esc(v.name)}')">
+            <span>${esc(v.name)} — ${v.params}${v.uncensored ? ' 🔓' : ''}</span>
+            <span>${isInst ? '<span class="detail-variant-tag" style="color:#4ade80;">Installed</span>' : '<span class="detail-variant-tag">' + (v.tools ? '🔧' : '') + (v.thinking ? '🧠' : '') + (v.vision ? '👁' : '') + '</span>'}</span>
+          </div>`;
+        }).join('')}</div>`;
+    } else {
+      variantEl.innerHTML = '';
+    }
+  }
+
+  // Sizes
+  if (sizeEl) {
+    const sizes = ['0.5B', '1B', '1.7B', '3B', '4B', '7B', '8B', '11B', '12B', '14B', '26B', '27B', '31B', '32B', '35B', '70B', '123B', '235B'];
+    const baseName = modelName.split(':')[0];
+    const familyModels = MODEL_DATABASE.filter(m => {
+      const mName = m.name.split(':')[0];
+      return mName === baseName || (dbEntry && m.family === dbEntry.family);
+    });
+    if (familyModels.length > 1) {
+      sizeEl.innerHTML = `<div class="detail-section-title">Available Sizes</div>
+        <div class="detail-variant-list">${familyModels.map(m => {
+          const isCur = m.name === modelName;
+          const isInst = installedModelNames.some(n => n === m.name);
+          return `<div class="detail-variant-item ${isCur ? 'detail-quant-installed' : ''}" onclick="showModelDetail('${esc(m.name)}')">
+            <span>${esc(m.name)}</span>
+            <span style="display:flex;gap:4px;">${isCur ? '<span class="detail-variant-tag" style="color:#60a5fa;">Current</span>' : ''}${isInst ? '<span class="detail-variant-tag" style="color:#4ade80;">Installed</span>' : '<span class="detail-variant-tag">' + m.params + '</span>'}</span>
+          </div>`;
+        }).join('')}</div>`;
+    } else {
+      sizeEl.innerHTML = '';
+    }
+  }
+
+  // Pull button
+  if (pullBtn) {
+    if (isInstalled) {
+      pullBtn.textContent = '✓ Already Installed';
+      pullBtn.disabled = true;
+      pullBtn.style.opacity = '0.5';
+    } else {
+      pullBtn.textContent = '📥 Pull ' + modelName;
+      pullBtn.disabled = false;
+      pullBtn.style.opacity = '1';
+      pullBtn.onclick = () => pullModelFromCatalog(modelName);
+    }
+  }
+  if (pullStatus) pullStatus.style.display = 'none';
+
+  modal.style.display = 'flex';
+}
+
+function closeModelDetail() {
+  const modal = $('modelDetailModal');
+  if (modal) modal.style.display = 'none';
+}
+
+// ─── Pull Model ──────────────────────────────────────
+let pullInProgress = false;
+
+async function pullModelFromCatalog(modelName) {
+  if (pullInProgress) return;
+  pullInProgress = true;
+
+  const status = $('pullModelStatus');
+  const statusText = $('pullModelStatusText');
+  const bar = $('pullModelBar');
+
+  if (status) status.style.display = 'block';
+  if (statusText) statusText.textContent = 'Downloading ' + modelName + '... This may take a while for large models.';
+  if (bar) { bar.style.width = '30%'; bar.style.background = ''; }
+
+  try {
+    const result = await API.pullModel(modelName);
+    if (result.error) {
+      if (statusText) statusText.textContent = '❌ Failed: ' + result.error;
+      if (bar) bar.style.width = '0%';
+    } else {
+      if (statusText) statusText.textContent = '✅ ' + modelName + ' pulled successfully!';
+      if (bar) { bar.style.width = '100%'; bar.style.background = '#22c55e'; }
+      loadModelCatalog(); // Refresh lists
+      // Refresh detail modal if open
+      const modal = $('modelDetailModal');
+      if (modal && modal.style.display !== 'none') {
+        showModelDetail(modelName);
+      }
+    }
+  } catch (e) {
+    if (statusText) statusText.textContent = '❌ Failed: ' + e.message;
+    if (bar) bar.style.width = '0%';
+  }
+
+  pullInProgress = false;
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '';
+  const gb = bytes / (1024 * 1024 * 1024);
+  if (gb >= 1) return gb.toFixed(1) + ' GB';
+  const mb = bytes / (1024 * 1024);
+  return mb.toFixed(0) + ' MB';
+}
+
+// ─── Catalog Event Listeners ──────────────────────────
+$('catalogSearchInput')?.addEventListener('input', (e) => {
+  const query = e.target.value.trim();
+  if (query) {
+    filterBrowseModels(query);
+  } else {
+    const browseList = $('catalogBrowseList');
+    if (browseList) browseList.innerHTML = '<div class="catalog-loading">Type to search models...</div>';
+    const countEl = $('catalogBrowseCount');
+    if (countEl) countEl.textContent = '';
+  }
+});
+
+$('catalogRefreshBtn')?.addEventListener('click', loadModelCatalog);
+
+$('detailModalClose')?.addEventListener('click', closeModelDetail);
+$('detailModalCancelBtn')?.addEventListener('click', closeModelDetail);
+$('modelDetailModal')?.addEventListener('click', (e) => {
+  if (e.target === $('modelDetailModal')) closeModelDetail();
+});
+
+// KV Cache GPU/RAM button clicks
+$('kvOptionGpu')?.addEventListener('click', () => {
+  ollamaSettings.kvCacheOffload = true;
+  updateKvOffloadCards();
+  updateOllamaSaveBtn();
+});
+
+$('kvOptionRam')?.addEventListener('click', () => {
+  ollamaSettings.kvCacheOffload = false;
+  updateKvOffloadCards();
+  updateOllamaSaveBtn();
+});
+
+function updateKvOffloadCards() {
+  const gpuCard = $('kvOptionGpu');
+  const ramCard = $('kvOptionRam');
+  if (gpuCard) gpuCard.classList.toggle('ollama-option-active', ollamaSettings.kvCacheOffload);
+  if (ramCard) ramCard.classList.toggle('ollama-option-active', !ollamaSettings.kvCacheOffload);
+  // Update all dependent UI instantly
+  updateKvVramEstimate();
+  updateQuantCards();
+  updateCtxMemoryEstimate();
+}
+
+function updateKvVramEstimate() {
+  const bar = $('kvVramEstimateBar');
+  const text = $('kvVramEstimateText');
+  const maxText = $('kvVramEstimateMax');
+  if (!bar || !text) return;
+  const isGpu = ollamaSettings.kvCacheOffload;
+  const storageLabel = isGpu ? 'VRAM' : 'RAM';
+  // When in RAM mode, use system RAM total; when GPU, use VRAM
+  const totalMb = isGpu ? (ollamaGpuInfo?.memTotal || 8192) : (ollamaRamInfo?.total ? Math.round(ollamaRamInfo.total / (1024 * 1024)) : 32768);
+  const kvMb = isGpu ? (BASELINE_KV_VRAM_MB[ollamaSettings.kvCacheType] || 1024) : (BASELINE_KV_VRAM_MB[ollamaSettings.kvCacheType] || 1024);
+  const pct = Math.min(100, (kvMb / totalMb) * 100);
+  bar.style.width = pct + '%';
+  if (isGpu) bar.style.background = '';
+  else bar.style.background = 'var(--accent)';
+  text.textContent = '~' + (kvMb >= 1024 ? (kvMb / 1024).toFixed(1) + ' GB' : kvMb + ' MB');
+  if (maxText) maxText.textContent = 'of ' + (totalMb >= 1024 ? (totalMb / 1024).toFixed(0) + ' GB' : totalMb + ' MB') + ' ' + storageLabel;
+  const label = $('kvEstimateLabel');
+  if (label) label.textContent = 'Estimated ' + storageLabel + ' for context cache (' + ollamaSettings.kvCacheType + '):';
+}
+document.querySelectorAll('.ollama-quant-card').forEach(card => {
+  card.addEventListener('click', () => {
+    ollamaSettings.kvCacheType = card.dataset.quant;
+    updateQuantCards();
+    updateKvVramEstimate();
+    updateCtxMemoryEstimate();
+    updateOllamaSaveBtn();
+  });
+});
+
+function updateQuantCards() {
+  const isGpu = ollamaSettings.kvCacheOffload;
+  const storageLabel = isGpu ? 'VRAM' : 'RAM';
+  document.querySelectorAll('.ollama-quant-card').forEach(card => {
+    card.classList.toggle('ollama-quant-selected', card.dataset.quant === ollamaSettings.kvCacheType);
+    // Update per-card storage labels
+    const metaSpans = card.querySelectorAll('.ollama-quant-meta span');
+    if (metaSpans.length >= 2) {
+      const quantName = card.dataset.quant;
+      const ratio = (BASELINE_KV_VRAM_MB[quantName] || 1024) / BASELINE_KV_VRAM_MB.f32;
+      metaSpans[1].textContent = storageLabel + ': ' + ratio.toFixed(2) + 'x baseline';
+    }
+  });
+  // Update description text to match storage mode
+  const desc = $('kvQuantDesc');
+  if (desc) desc.textContent = 'How precisely the conversation context is stored. Lower precision = less ' + storageLabel + ' used, but slightly lower quality on very long conversations.';
+  const label = $('kvQuantLabel');
+  const bar = $('kvQuantBar');
+  const savings = $('kvQuantSavingsText');
+  const free = $('kvQuantFreeText');
+  if (label) label.textContent = ollamaSettings.kvCacheType;
+  const ratio = (BASELINE_KV_VRAM_MB[ollamaSettings.kvCacheType] || 1024) / BASELINE_KV_VRAM_MB.f32;
+  if (bar) bar.style.width = (ratio * 100) + '%';
+  if (savings) savings.textContent = Math.round(ratio * 100) + '% of f32';
+  if (free) {
+    const saved = BASELINE_KV_VRAM_MB.f32 - (BASELINE_KV_VRAM_MB[ollamaSettings.kvCacheType] || 1024);
+    free.textContent = saved > 0 ? 'Saves ~' + (saved >= 1024 ? (saved / 1024).toFixed(1) + ' GB' : saved + ' MB') + ' ' + storageLabel : 'No savings';
+  }
+}
+
+// Context presets
+document.querySelectorAll('.ollama-ctx-preset').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const val = parseInt(btn.dataset.val);
+    ollamaSettings.defaultNumCtx = val;
+    $('numCtxSlider').value = val;
+    $('numCtxValue').textContent = val === 0 ? 'Auto' : formatNumCtx(val);
+    updateCtxPresets();
+    updateCtxMemoryEstimate();
+    updateOllamaSaveBtn();
+  });
+});
+
+// Context slider
+$('numCtxSlider')?.addEventListener('input', (e) => {
+  const val = parseInt(e.target.value);
+  ollamaSettings.defaultNumCtx = val;
+  $('numCtxValue').textContent = val === 0 ? 'Auto' : formatNumCtx(val);
+  updateCtxPresets();
+  updateCtxMemoryEstimate();
+  updateOllamaSaveBtn();
+});
+
+function formatNumCtx(tokens) {
+  if (tokens >= 1024) return (tokens / 1024) + 'K';
+  return tokens.toString();
+}
+
+function updateCtxPresets() {
+  document.querySelectorAll('.ollama-ctx-preset').forEach(btn => {
+    btn.classList.toggle('ollama-ctx-active', parseInt(btn.dataset.val) === ollamaSettings.defaultNumCtx);
+  });
+}
+
+function updateCtxMemoryEstimate() {
+  const bar = $('ctxMemBar');
+  const text = $('ctxMemText');
+  const max = $('ctxMemMax');
+  if (!bar) return;
+  const isGpu = ollamaSettings.kvCacheOffload;
+  const storageLabel = isGpu ? 'VRAM' : 'RAM';
+  const ctx = ollamaSettings.defaultNumCtx;
+  // Rough estimate: 1K tokens ≈ 0.5 MB KV cache with f16
+  const kvMb = ctx === 0 ? 0 : Math.round(ctx * 0.5 * (BASELINE_KV_VRAM_MB[ollamaSettings.kvCacheType] || 1024) / 1024);
+  if (isGpu) {
+    // GPU mode: show model weights + KV cache in VRAM
+    const totalMb = kvMb + BASELINE_MODEL_VRAM_MB;
+    const vramTotal = ollamaGpuInfo?.memTotal || 8192;
+    const pct = Math.min(100, (totalMb / vramTotal) * 100);
+    bar.style.width = pct + '%';
+    bar.style.background = '';
+    if (text) text.textContent = ctx === 0 ? 'Auto (model default)' : formatNumCtx(ctx) + ' context (' + ollamaSettings.kvCacheType + ') — ~' + (totalMb >= 1024 ? (totalMb / 1024).toFixed(1) + ' GB' : totalMb + ' MB');
+    if (max) max.textContent = 'of ' + (vramTotal / 1024).toFixed(0) + ' GB VRAM (model + context)';
+  } else {
+    // RAM mode: KV cache in RAM, model weights stay in VRAM (not counted here)
+    const ramTotalMb = ollamaRamInfo?.total ? Math.round(ollamaRamInfo.total / (1024 * 1024)) : 32768;
+    const ramUsedMb = ollamaRamInfo?.used ? Math.round(ollamaRamInfo.used / (1024 * 1024)) : 16384;
+    const pct = Math.min(100, (kvMb / ramTotalMb) * 100);
+    bar.style.width = pct + '%';
+    bar.style.background = 'var(--accent)';
+    if (text) text.textContent = ctx === 0 ? 'Auto (model default)' : formatNumCtx(ctx) + ' context (' + ollamaSettings.kvCacheType + ') — ~' + (kvMb >= 1024 ? (kvMb / 1024).toFixed(1) + ' GB' : kvMb + ' MB');
+    if (max) max.textContent = 'of ' + (ramTotalMb / 1024).toFixed(0) + ' GB RAM';
+  }
+}
+
+function updateHardwareInfo() {
+  const gpuName = $('hwGpuName');
+  const vramBar = $('hwVramBar');
+  const vramText = $('hwVramText');
+  const ramBar = $('hwRamBar');
+  const ramText = $('hwRamText');
+  const rec = $('hwRecommendation');
+  if (ollamaGpuInfo) {
+    if (gpuName) gpuName.textContent = ollamaGpuInfo.name || 'NVIDIA GPU';
+    if (vramBar) vramBar.style.width = Math.round((ollamaGpuInfo.memUsed / ollamaGpuInfo.memTotal) * 100) + '%';
+    if (vramText) vramText.textContent = ollamaGpuInfo.memUsed + ' / ' + ollamaGpuInfo.memTotal + ' MB';
+    if (rec) {
+      const freeVram = ollamaGpuInfo.memTotal - ollamaGpuInfo.memUsed;
+      if (freeVram < 2048) rec.textContent = '⚠️ Low VRAM free (' + (freeVram / 1024).toFixed(1) + ' GB). Consider disabling GPU offloading to free VRAM for model weights.';
+      else if (freeVram < 4096) rec.textContent = '💡 Moderate VRAM available. f16 context cache recommended. Consider q8_0 if context feels tight.';
+      else rec.textContent = '✅ Plenty of VRAM free (' + (freeVram / 1024).toFixed(1) + ' GB). GPU offloading with f16 is ideal.';
+    }
+  } else {
+    if (gpuName) gpuName.textContent = 'No NVIDIA GPU detected';
+    if (vramText) vramText.textContent = '—';
+    if (rec) rec.textContent = '💡 No GPU detected. Context cache will run on RAM. Set context length to match your available system RAM.';
+  }
+  // RAM
+  if (ollamaRamInfo) {
+    if (ramBar) ramBar.style.width = ollamaRamInfo.usagePercent + '%';
+    if (ramText) ramText.textContent = (ollamaRamInfo.used / (1024 * 1024 * 1024)).toFixed(1) + ' / ' + (ollamaRamInfo.total / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+  }
+}
+
+// Refresh status button
+$('ollamaRefreshBtn')?.addEventListener('click', refreshOllamaStatus);
+
+// Ollama sub-tabs
+document.querySelectorAll('.ollama-subtab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tab = btn.dataset.ollamaTab;
+    document.querySelectorAll('.ollama-subtab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.ollama-tab-content').forEach(c => c.style.display = 'none');
+    const target = document.getElementById('ollama-tab-' + tab);
+    if (target) target.style.display = '';
+  });
+});
+
+// Save & Restart button
+$('ollamaSaveBtn')?.addEventListener('click', async () => {
+  const btn = $('ollamaSaveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+
+  // First save to backend settings
+  try {
+    await API.saveSettings({
+      kvCacheOffload: ollamaSettings.kvCacheOffload,
+      kvCacheType: ollamaSettings.kvCacheType,
+      defaultNumCtx: ollamaSettings.defaultNumCtx,
+    });
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Save & Restart';
+    alert('Failed to save settings: ' + e.message);
+    return;
+  }
+
+  // Now check if restart is needed
+  const status = await API.getOllamaStatus();
+  const modelsInterrupted = status.loadedModels && status.loadedModels.length > 0;
+
+  if (modelsInterrupted) {
+    // Show confirmation dialog
+    const modal = $('ollamaRestartModal');
+    const msg = $('ollamaRestartMsg');
+    const hint = $('ollamaRestartHint');
+    msg.textContent = `Model(s) currently loaded: ${status.loadedModels.map(m => m.name || m.model).join(', ')}. Restarting will interrupt any in-progress generation.`;
+    hint.textContent = status.ownedByUs
+      ? 'Ollama was started by this app and will be restarted automatically.'
+      : 'Ollama was started externally. It will be killed and restarted with new settings.';
+    modal.style.display = 'flex';
+
+    // Wire up confirm button
+    $('ollamaRestartConfirmBtn').onclick = async () => {
+      modal.style.display = 'none';
+      await doOllamaRestart(true);
+    };
+  } else {
+    // No models loaded — restart directly
+    await doOllamaRestart(false);
+  }
+});
+
+async function doOllamaRestart(confirm) {
+  const btn = $('ollamaSaveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Restarting Ollama...';
+
+  try {
+    const result = await API.applyOllamaSettings({
+      kvCacheOffload: ollamaSettings.kvCacheOffload,
+      kvCacheType: ollamaSettings.kvCacheType,
+      confirm,
+    });
+
+    if (result.success) {
+      btn.textContent = '✓ Restarted!';
+      // Update snapshot so unsaved-changes flag resets
+      ollamaSettingsSnapshot = { ...ollamaSettings };
+      setTimeout(() => {
+        btn.textContent = 'Save & Restart';
+        btn.disabled = false;
+        refreshOllamaStatus();
+      }, 2000);
+    } else if (result.modelsInterrupted && !confirm) {
+      // Need confirmation — shouldn't happen since we checked above
+      btn.textContent = 'Save & Restart';
+      btn.disabled = false;
+    } else {
+      btn.textContent = 'Restart Failed';
+      alert('Ollama restart failed: ' + (result.error || 'Unknown error'));
+      setTimeout(() => {
+        btn.textContent = 'Save & Restart';
+        btn.disabled = false;
+      }, 2000);
+    }
+  } catch (e) {
+    btn.textContent = 'Restart Failed';
+    alert('Ollama restart failed: ' + e.message);
+    setTimeout(() => {
+      btn.textContent = 'Save & Restart';
+      btn.disabled = false;
+    }, 2000);
+  }
+}
+
+// ═══ Ollama Unsaved Changes Modal ═══
+function showOllamaUnsavedModal() {
+  const modal = $('ollamaUnsavedModal');
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeOllamaUnsavedModal() {
+  const modal = $('ollamaUnsavedModal');
+  if (modal) modal.style.display = 'none';
+  pendingOllamaTargetView = null;
+}
+
+// Discard button — discard changes and switch to the pending view
+$('ollamaUnsavedDiscardBtn')?.addEventListener('click', () => {
+  // Restore snapshot
+  if (ollamaSettingsSnapshot) {
+    ollamaSettings.kvCacheOffload = ollamaSettingsSnapshot.kvCacheOffload;
+    ollamaSettings.kvCacheType = ollamaSettingsSnapshot.kvCacheType;
+    ollamaSettings.defaultNumCtx = ollamaSettingsSnapshot.defaultNumCtx;
+  }
+  closeOllamaUnsavedModal();
+  // Now switch to the pending view
+  const target = pendingOllamaTargetView;
+  if (target) switchView(target);
+});
+
+// Save & Restart button — save, restart Ollama, then switch
+$('ollamaUnsavedSaveBtn')?.addEventListener('click', async () => {
+  closeOllamaUnsavedModal();
+  const target = pendingOllamaTargetView;
+  // Trigger the save flow
+  const btn = $('ollamaSaveBtn');
+  if (btn) {
+    btn.click();
+  }
+  // After a brief delay, switch to the target view
+  setTimeout(() => {
+    if (target) switchView(target);
+  }, 500);
+});
+
+// Close modal on X button
+$('ollamaUnsavedClose')?.addEventListener('click', closeOllamaUnsavedModal);
+// Close modal on overlay click
+$('ollamaUnsavedModal')?.addEventListener('click', (e) => {
+  if (e.target === $('ollamaUnsavedModal')) closeOllamaUnsavedModal();
+});

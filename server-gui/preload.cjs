@@ -14,6 +14,10 @@ contextBridge.exposeInMainWorld('serverAPI', {
   // ─── Ollama ────────────────────────────────
   getOllamaModels: () => ipcRenderer.invoke('get-ollama-models'),
   checkOllama: () => ipcRenderer.invoke('check-ollama'),
+  startOllama: () => ipcRenderer.invoke('start-ollama'),
+  getOllamaStatus: () => ipcRenderer.invoke('get-ollama-status'),
+  restartOllama: (confirm) => ipcRenderer.invoke('restart-ollama', confirm),
+  applyOllamaSettings: (payload) => ipcRenderer.invoke('apply-ollama-settings', payload),
 
   // ─── Bun / Ollama Auto-Install ───────
   checkBun: () => ipcRenderer.invoke('check-bun'),
@@ -76,6 +80,7 @@ contextBridge.exposeInMainWorld('serverAPI', {
 
   // ─── Model Settings ────────────────────────────
   getInstalledModels: () => ipcRenderer.invoke('get-installed-models'),
+  pullModel: (name) => ipcRenderer.invoke('pull-model', name),
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (payload) => ipcRenderer.invoke('save-settings', payload),
 

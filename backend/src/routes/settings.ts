@@ -3,6 +3,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import type { Variables } from '../types';
 import { getDataDir } from '../utils/helpers';
+import { invalidateNumCtxCache } from '../services/ollama';
 
 const SETTINGS_DIR = getDataDir();
 const SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json');
@@ -31,6 +32,12 @@ interface AppSettings {
   cloudMode?: 'auto' | 'local' | 'cloud';
   cloudApiKey?: string;
   cloudEndpoint?: string;
+  /** KV cache GPU offloading — when false, KV cache stays in system RAM */
+  kvCacheOffload?: boolean;
+  /** KV cache quantization type (f32, f16, q8_0, q4_0) */
+  kvCacheType?: string;
+  /** Default context window size for all models (num_ctx) */
+  defaultNumCtx?: number;
   updatedAt: number;
 }
 
@@ -41,6 +48,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   cloudMode: 'auto',
   cloudApiKey: '',
   cloudEndpoint: '',
+  kvCacheOffload: true,
+  kvCacheType: 'f16',
+  defaultNumCtx: 0,
   updatedAt: 0,
 };
 
@@ -120,10 +130,21 @@ settings.put('/', async (c) => {
       ...(body.cloudModelAssignments !== undefined
         ? { cloudModelAssignments: body.cloudModelAssignments }
         : {}),
+      ...(body.kvCacheOffload !== undefined
+        ? { kvCacheOffload: body.kvCacheOffload }
+        : {}),
+      ...(body.kvCacheType !== undefined
+        ? { kvCacheType: body.kvCacheType }
+        : {}),
+      ...(body.defaultNumCtx !== undefined
+        ? { defaultNumCtx: body.defaultNumCtx }
+        : {}),
 
       updatedAt: Date.now(),
     };
     await saveSettings(next);
+    // Invalidate num_ctx cache so the next API call picks up new settings
+    if (body.defaultNumCtx !== undefined) invalidateNumCtxCache();
     return c.json(next);
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Failed to save' }, 500);
@@ -313,7 +334,7 @@ settings.get('/cloud-models', async (c) => {
 });
 
 export default settings;
-export { SETTINGS_PASSWORD };
+export { SETTINGS_PASSWORD, loadSettings };
 
 /**
  * Read cloud-related settings (cloudMode, cloudApiKey, cloudEndpoint).
@@ -334,5 +355,26 @@ export async function getCloudSettings(): Promise<{
     };
   } catch {
     return { cloudMode: 'auto', cloudApiKey: '', cloudEndpoint: '' };
+  }
+}
+
+/**
+ * Read Ollama-specific settings (kvCacheOffload).
+ */
+export async function getOllamaSettings(): Promise<{
+  kvCacheOffload: boolean;
+  kvCacheType: string;
+  defaultNumCtx: number;
+}> {
+  try {
+    const data = await fs.readFile(SETTINGS_FILE, 'utf-8');
+    const parsed = JSON.parse(data);
+    return {
+      kvCacheOffload: parsed.kvCacheOffload !== false,
+      kvCacheType: parsed.kvCacheType || 'f16',
+      defaultNumCtx: parsed.defaultNumCtx || 0,
+    };
+  } catch {
+    return { kvCacheOffload: true, kvCacheType: 'f16', defaultNumCtx: 0 };
   }
 }

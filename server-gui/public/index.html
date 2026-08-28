@@ -18,7 +18,7 @@
         </svg>
         <div>
           <h1>Kasalix AI Chat</h1>
-          <span class="header-version" id="versionDisplay">v0.10.15</span>
+          <span class="header-version" id="versionDisplay">v0.11.0</span>
         </div>
       </div>
     </div>
@@ -69,10 +69,29 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
       API Keys
     </button>
+    <button class="tab" data-view="ollama">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Ollama
+    </button>
   </nav>
 
   <!-- ═══ DASHBOARD VIEW ═══ -->
   <div class="view" id="view-dashboard">
+
+    <!-- Update Notification Banner -->
+    <div class="update-banner" id="updateBanner" style="display:none;">
+      <div class="update-banner-content">
+        <span class="update-banner-icon">🆕</span>
+        <div class="update-banner-text">
+          <strong id="updateBannerVersion">New version available</strong>
+          <span id="updateBannerDesc"></span>
+        </div>
+        <div class="update-banner-actions">
+          <a href="https://github.com/Kasikexe/Kasalix/releases/latest" target="_blank" class="btn btn-small btn-primary">Download</a>
+          <button class="btn btn-small btn-ghost" id="updateBannerDismiss">Dismiss</button>
+        </div>
+      </div>
+    </div>
   <div class="layout">
     <!-- ─── Left Column: Server Controls ─── -->
     <div class="col-left">
@@ -562,6 +581,355 @@
     </div>
   </div>
 
+  <!-- ═══ OLLAMA SETTINGS VIEW ═══ -->
+  <div class="view" id="view-ollama" style="display:none">
+    <div class="view-header">
+      <div class="view-title-row">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <div>
+          <h2>Ollama Settings</h2>
+          <p>Configure Ollama runtime behavior · <span id="ollamaStatusText">Checking...</span></p>
+        </div>
+      </div>
+      <div class="view-actions">
+        <span class="save-status" id="ollamaSaveStatus"></span>
+        <button class="btn btn-small btn-primary" id="ollamaSaveBtn" disabled>Save &amp; Restart</button>
+      </div>
+    </div>
+
+    <!-- Sub-tabs: Settings / Model Catalog -->
+    <div class="ollama-subtabs">
+      <button class="ollama-subtab active" data-ollama-tab="settings">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Settings
+      </button>
+      <button class="ollama-subtab" data-ollama-tab="catalog">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        Model Catalog
+      </button>
+    </div>
+
+    <!-- Settings Sub-tab -->
+    <div class="ollama-tab-content" id="ollama-tab-settings">
+      <!-- Hardware Overview -->
+      <div class="card ollama-hw-card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          Your Hardware
+        </div>
+        <div class="ollama-hw-grid" id="hwInfoGrid">
+          <div class="ollama-hw-item">
+            <span class="ollama-hw-label">GPU</span>
+            <span class="ollama-hw-value" id="hwGpuName">Detecting...</span>
+          </div>
+          <div class="ollama-hw-item">
+            <span class="ollama-hw-label">VRAM</span>
+            <div class="ollama-hw-bar-wrap">
+              <div class="ollama-hw-bar"><div class="ollama-hw-bar-fill" id="hwVramBar" style="width:0%"></div></div>
+              <span class="ollama-hw-value" id="hwVramText">—</span>
+            </div>
+          </div>
+          <div class="ollama-hw-item">
+            <span class="ollama-hw-label">RAM</span>
+            <div class="ollama-hw-bar-wrap">
+              <div class="ollama-hw-bar"><div class="ollama-hw-bar-fill hw-bar-ram" id="hwRamBar" style="width:0%"></div></div>
+              <span class="ollama-hw-value" id="hwRamText">—</span>
+            </div>
+          </div>
+        </div>
+        <p class="apikeys-hint" style="margin-top: 8px;" id="hwRecommendation"></p>
+      </div>
+
+      <!-- KV Cache Offloading -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 4v16"/><path d="M15 4v16"/></svg>
+          Context Cache (KV Cache)
+          <span class="ollama-restart-badge">⚡ Restart required</span>
+        </div>
+        <p class="apikeys-desc">The context cache stores your conversation history. Choose where it lives — GPU is faster, RAM allows much longer context windows.</p>
+        <div class="ollama-split-layout">
+          <button class="ollama-option-card" id="kvOptionGpu" type="button">
+            <div class="ollama-option-icon">🎮</div>
+            <div class="ollama-option-info">
+              <span class="ollama-option-title">GPU</span>
+              <span class="ollama-option-desc">Fastest — conversation context lives in VRAM alongside model weights. Limited by your GPU memory.</span>
+            </div>
+          </button>
+          <button class="ollama-option-card" id="kvOptionRam" type="button">
+            <div class="ollama-option-icon">🧠</div>
+            <div class="ollama-option-info">
+              <span class="ollama-option-title">RAM</span>
+              <span class="ollama-option-desc">Larger context — conversation context lives in system RAM. Slower but supports 128K+ tokens.</span>
+            </div>
+          </button>
+        </div>
+        <div class="ollama-context-bar" id="kvOffloadEstimate" style="margin-top: 12px;">
+          <div class="ollama-context-label" id="kvEstimateLabel">Estimated memory for context cache:</div>
+          <div class="ollama-context-bar-track"><div class="ollama-context-bar-fill" id="kvVramEstimateBar" style="width:30%"></div></div>
+          <div class="ollama-context-values"><span id="kvVramEstimateText">~2 GB</span><span id="kvVramEstimateMax">of 8 GB VRAM</span></div>
+        </div>
+      </div>
+
+      <!-- KV Cache Quantization -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          Context Cache Quantization
+          <span class="ollama-restart-badge">⚡ Restart required</span>
+        </div>
+        <p class="apikeys-desc" id="kvQuantDesc">How precisely the conversation context is stored. Lower precision = less memory used, but slightly lower quality on very long conversations.</p>
+        <div class="ollama-quant-grid">
+          <button class="ollama-quant-card" data-quant="f32">
+            <div class="ollama-quant-header">
+              <span class="ollama-quant-name">f32</span>
+              <span class="ollama-quant-badge ollama-quant-hq">Highest Quality</span>
+            </div>
+            <div class="ollama-quant-desc">Full 32-bit precision. Best quality, uses the most VRAM.</div>
+            <div class="ollama-quality-bar">
+              <div class="ollama-quality-fill" style="width:100%; background: #22c55e;"></div>
+            </div>
+            <div class="ollama-quant-meta">
+              <span>Quality: Perfect</span>
+              <span>VRAM: 1x baseline</span>
+            </div>
+          </button>
+          <button class="ollama-quant-card ollama-quant-selected" data-quant="f16">
+            <div class="ollama-quant-header">
+              <span class="ollama-quant-name">f16</span>
+              <span class="ollama-quant-badge ollama-quant-rec">Recommended</span>
+            </div>
+            <div class="ollama-quant-desc">Half precision. Virtually identical quality to f32, half the VRAM.</div>
+            <div class="ollama-quality-bar">
+              <div class="ollama-quality-fill" style="width:97%; background: #22c55e;"></div>
+            </div>
+            <div class="ollama-quant-meta">
+              <span>Quality: Excellent</span>
+              <span>VRAM: 0.5x baseline</span>
+            </div>
+          </button>
+          <button class="ollama-quant-card" data-quant="q8_0">
+            <div class="ollama-quant-header">
+              <span class="ollama-quant-name">q8_0</span>
+              <span class="ollama-quant-badge ollama-quant-saver">Memory Saver</span>
+            </div>
+            <div class="ollama-quant-desc">8-bit quantization. ~50% less VRAM. Noticeable only on very long conversations.</div>
+            <div class="ollama-quality-bar">
+              <div class="ollama-quality-fill" style="width:85%; background: #eab308;"></div>
+            </div>
+            <div class="ollama-quant-meta">
+              <span>Quality: Very Good</span>
+              <span>VRAM: 0.25x baseline</span>
+            </div>
+          </button>
+          <button class="ollama-quant-card" data-quant="q4_0">
+            <div class="ollama-quant-header">
+              <span class="ollama-quant-name">q4_0</span>
+              <span class="ollama-quant-badge ollama-quant-max">Max Savings</span>
+            </div>
+            <div class="ollama-quant-desc">4-bit quantization. ~75% less VRAM. Some quality loss on long contexts.</div>
+            <div class="ollama-quality-bar">
+              <div class="ollama-quality-fill" style="width:65%; background: #f97316;"></div>
+            </div>
+            <div class="ollama-quant-meta">
+              <span>Quality: Good</span>
+              <span>VRAM: 0.12x baseline</span>
+            </div>
+          </button>
+        </div>
+        <div class="ollama-context-bar" id="kvQuantEstimate" style="margin-top: 12px;">
+          <div class="ollama-context-label">VRAM savings with <strong id="kvQuantLabel">f16</strong>:</div>
+          <div class="ollama-context-bar-track"><div class="ollama-context-bar-fill ollama-ctx-savings" id="kvQuantBar" style="width:50%"></div></div>
+          <div class="ollama-context-values"><span id="kvQuantSavingsText">50% of f32</span><span id="kvQuantFreeText">Saves ~2 GB VRAM</span></div>
+        </div>
+      </div>
+
+      <!-- Default Context Length -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          Context Window Size
+        </div>
+        <p class="apikeys-desc">How many tokens the model can remember at once. This determines the context cache size — more tokens = longer conversations before it "forgets" earlier messages.</p>
+        <div class="ollama-ctx-presets" id="ctxPresets">
+          <button class="ollama-ctx-preset" data-val="0">
+            <span class="ollama-ctx-preset-val">Auto</span>
+            <span class="ollama-ctx-preset-desc">Use model default</span>
+          </button>
+          <button class="ollama-ctx-preset" data-val="4096">
+            <span class="ollama-ctx-preset-val">4K</span>
+            <span class="ollama-ctx-preset-desc">~3,000 words</span>
+          </button>
+          <button class="ollama-ctx-preset" data-val="8192">
+            <span class="ollama-ctx-preset-val">8K</span>
+            <span class="ollama-ctx-preset-desc">~6,000 words</span>
+          </button>
+          <button class="ollama-ctx-preset" data-val="16384">
+            <span class="ollama-ctx-preset-val">16K</span>
+            <span class="ollama-ctx-preset-desc">~12,000 words</span>
+          </button>
+          <button class="ollama-ctx-preset" data-val="32768">
+            <span class="ollama-ctx-preset-val">32K</span>
+            <span class="ollama-ctx-preset-desc">~24,000 words</span>
+          </button>
+          <button class="ollama-ctx-preset" data-val="65536">
+            <span class="ollama-ctx-preset-val">64K</span>
+            <span class="ollama-ctx-preset-desc">~48,000 words</span>
+          </button>
+          <button class="ollama-ctx-preset" data-val="131072">
+            <span class="ollama-ctx-preset-val">128K</span>
+            <span class="ollama-ctx-preset-desc">~96,000 words</span>
+          </button>
+        </div>
+        <div class="ollama-ctx-slider-row">
+          <input type="range" id="numCtxSlider" min="0" max="131072" step="1024" value="0" style="flex: 1; accent-color: var(--accent);" />
+          <span id="numCtxValue" class="ollama-ctx-slider-val">Auto</span>
+        </div>
+        <div class="ollama-context-bar" id="ctxMemEstimate">
+          <div class="ollama-context-label">Estimated memory for this context:</div>
+          <div class="ollama-context-bar-track"><div class="ollama-context-bar-fill ollama-ctx-mem" id="ctxMemBar" style="width:0%"></div></div>
+          <div class="ollama-context-values"><span id="ctxMemText">Auto (model default)</span><span id="ctxMemMax"></span></div>
+        </div>
+      </div>
+
+      <!-- Ollama Status -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          Ollama Status
+        </div>
+        <div class="ollama-status-grid" id="ollamaStatusGrid">
+          <div class="ollama-status-item">
+            <span class="ollama-status-label">Running</span>
+            <span class="ollama-status-value" id="ollamaRunningStatus">Checking...</span>
+          </div>
+          <div class="ollama-status-item">
+            <span class="ollama-status-label">Owned by app</span>
+            <span class="ollama-status-value" id="ollamaOwnershipStatus">—</span>
+          </div>
+          <div class="ollama-status-item">
+            <span class="ollama-status-label">Loaded models</span>
+            <span class="ollama-status-value" id="ollamaLoadedModels">—</span>
+          </div>
+        </div>
+        <button class="btn btn-small btn-ghost" id="ollamaRefreshBtn" style="margin-top: 8px;">Refresh Status</button>
+      </div>
+    </div>
+
+    <!-- Model Catalog Sub-tab -->
+    <div class="ollama-tab-content" id="ollama-tab-catalog" style="display:none;">
+      <!-- Search Bar -->
+      <div class="card" style="padding:12px 16px;">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="catalogSearchInput" class="apikeys-input" placeholder="Search models — e.g. qwen3, llama, phi, uncensored..." style="flex:1;border:none;background:transparent;font-size:14px;" />
+          <button class="btn-icon" id="catalogRefreshBtn" title="Refresh installed models">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Installed Models Section -->
+      <div class="card" id="catalogInstalledSection">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          Installed on this machine
+        </div>
+        <div id="catalogInstalledList" class="model-catalog-list">
+          <div class="catalog-loading">Loading installed models...</div>
+        </div>
+      </div>
+
+      <!-- Browse Models Section -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          Browse Models
+          <span class="apikeys-hint" style="margin-left:8px;font-weight:400;font-size:11px;" id="catalogBrowseCount"></span>
+          <span class="catalog-db-badge" id="catalogDbSource"></span>
+        </div>
+        <div id="catalogBrowseList" class="model-catalog-browse">
+          <div class="catalog-loading">Type to search models...</div>
+        </div>
+      </div>
+
+      <!-- Pull Status -->
+      <div id="pullModelStatus" class="card" style="display:none;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="catalog-pull-spinner"></div>
+          <div style="flex:1;">
+            <div style="font-size:13px;font-weight:500;color:var(--text);" id="pullModelStatusText">Downloading...</div>
+            <div class="ollama-context-bar-track" style="margin-top:6px;"><div class="ollama-context-bar-fill" id="pullModelBar" style="width:0%;transition:width 0.3s;"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+n    <!-- Model Detail Popup -->
+    <div class="modal-overlay" id="modelDetailModal" style="display:none;">
+      <div class="modal">
+        <div class="modal-header">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="catalog-model-icon" style="width:32px;height:32px;font-size:16px;" id="detailModalIcon">🧠</div>
+            <div>
+              <h3 id="detailModalName" style="margin:0;font-size:16px;">Model Name</h3>
+              <div class="apikeys-hint" id="detailModalFamily" style="margin:0;"></div>
+            </div>
+          </div>
+          <button class="btn-icon" id="detailModalClose">✕</button>
+        </div>
+        <div class="modal-body" id="detailModalBody">
+          <div class="detail-capabilities" id="detailCapabilities"></div>
+          <div class="detail-section" id="detailDescription"></div>
+          <div class="detail-section" id="detailQuantizations"></div>
+          <div class="detail-section" id="detailVariants"></div>
+          <div class="detail-section" id="detailSizes"></div>
+          <div style="margin-top:16px;display:flex;gap:8px;">
+            <button class="btn btn-primary" id="detailPullBtn" style="flex:1;">📥 Pull Model</button>
+            <button class="btn btn-ghost" id="detailModalCancelBtn">Close</button>
+          </div>
+          <div id="detailPullStatus" style="margin-top:8px;display:none;">
+            <div class="apikeys-hint" id="detailPullStatusText"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Restart Confirmation Dialog -->
+    <div class="modal-overlay" id="ollamaRestartModal" style="display:none">
+      <div class="modal modal-sm">
+        <div class="modal-header">
+          <h3>Restart Ollama</h3>
+          <button class="btn-icon" onclick="document.getElementById('ollamaRestartModal').style.display='none'">✕</button>
+        </div>
+        <div class="modal-body">
+          <p id="ollamaRestartMsg">Ollama will be restarted with new settings.</p>
+          <p class="apikeys-hint" id="ollamaRestartHint" style="margin-top: 8px;"></p>
+          <div class="install-actions" style="margin-top: 16px;">
+            <button class="btn btn-primary" id="ollamaRestartConfirmBtn">Restart</button>
+            <button class="btn btn-ghost" onclick="document.getElementById('ollamaRestartModal').style.display='none'">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Ollama Unsaved Changes Modal ═══ -->
+  <div class="modal-overlay" id="ollamaUnsavedModal" style="display:none;">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3>Unsaved Changes</h3>
+        <button class="btn-icon" id="ollamaUnsavedClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px;color:var(--text);margin:0 0 12px 0;">You have unsaved Ollama settings. What would you like to do?</p>
+        <div style="display:flex;gap:8px;flex-direction:column;">
+          <button class="btn btn-primary" id="ollamaUnsavedSaveBtn">💾 Save & Restart Ollama</button>
+          <button class="btn btn-ghost" id="ollamaUnsavedDiscardBtn" style="color:var(--text-dim);">Discard Changes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ═══ SPEED TEST DETAIL MODAL ═══ -->
   <div class="modal-overlay" id="speedModal" style="display:none">
     <div class="modal">
@@ -613,11 +981,11 @@
         </div>
         <div class="check-item" id="check-deps">
           <span class="check-spinner"></span>
-          <span>Installing backend dependencies...</span>
+          <span>Checking if Ollama is available...</span>
         </div>
         <div class="check-item" id="check-ollama">
           <span class="check-spinner"></span>
-          <span>Checking Ollama...</span>
+          <span>Preparing backend...</span>
         </div>
         <div class="check-item" id="check-server">
           <span class="check-spinner"></span>

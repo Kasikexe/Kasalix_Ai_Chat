@@ -18,7 +18,7 @@ const OLLAMA_BASE_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const CACHE_FILE = path.join(getDataDir(), 'model-capabilities.json');
 
 // Bump this when the probe logic changes to invalidate old caches
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 interface ModelCaps {
   tools: boolean;

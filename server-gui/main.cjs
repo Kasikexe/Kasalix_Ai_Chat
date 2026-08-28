@@ -509,6 +509,65 @@ function setupIPC() {
     } catch { return { available: false }; }
   });
 
+  ipcMain.handle('start-ollama', async () => {
+    try {
+      const { spawn } = require('child_process');
+      const isWin = process.platform === 'win32';
+      const cmd = isWin ? 'ollama' : 'ollama';
+      const child = spawn(cmd, ['serve'], {
+        detached: true,
+        stdio: 'ignore',
+        ...(isWin ? { shell: true } : {}),
+      });
+      child.unref();
+      // Wait up to 15s for Ollama to come up
+      const http = require('http');
+      for (let i = 0; i < 15; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        const ok = await new Promise(resolve => {
+          const req = http.get('http://localhost:11434/api/tags', (res) => {
+            resolve(res.statusCode >= 200 && res.statusCode < 400);
+          });
+          req.on('error', () => resolve(false));
+          req.setTimeout(2000, () => { req.destroy(); resolve(false); });
+        });
+        if (ok) return { success: true };
+      }
+      return { success: false, error: 'Ollama started but not responding yet' };
+    } catch (e) { return { success: false, error: e.message }; }
+  });
+
+  // ─── Ollama Settings / Restart ────────────────────────
+  ipcMain.handle('get-ollama-status', async () => {
+    try {
+      return await backendRequest('/api/ollama/status', {
+        headers: { 'Cookie': 'settings_auth=1' },
+      });
+    } catch { return { running: false, ownedByUs: false, pid: null, loadedModels: [] }; }
+  });
+
+  ipcMain.handle('restart-ollama', async (_event, confirm) => {
+    try {
+      return await backendRequest('/api/ollama/restart', {
+        method: 'POST',
+        body: { confirm: !!confirm },
+        headers: { 'Cookie': 'settings_auth=1' },
+        timeout: 60000,
+      });
+    } catch { return { success: false, error: 'Failed to communicate with backend' }; }
+  });
+
+  ipcMain.handle('apply-ollama-settings', async (_event, payload) => {
+    try {
+      return await backendRequest('/api/ollama/apply', {
+        method: 'POST',
+        body: payload,
+        headers: { 'Cookie': 'settings_auth=1' },
+        timeout: 60000,
+      });
+    } catch { return { success: false, error: 'Failed to communicate with backend' }; }
+  });
+
   // Window control
   ipcMain.handle('minimize-window', () => {
     minimizeWindow();
@@ -811,6 +870,32 @@ function setupIPC() {
     try {
       return await backendRequest('/api/models');
     } catch { return { models: [] }; }
+  });
+
+  /** Pull a model from Ollama registry */
+  ipcMain.handle('pull-model', async (_event, modelName) => {
+    try {
+      const http = require('http');
+      return new Promise((resolve) => {
+        const payload = JSON.stringify({ name: modelName, stream: false });
+        const req = http.request('http://localhost:11434/api/pull', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+          timeout: 600000, // 10 min for large models
+        }, (res) => {
+          let body = '';
+          res.on('data', (chunk) => body += chunk);
+          res.on('end', () => {
+            try { resolve(JSON.parse(body)); }
+            catch { resolve({ error: 'Invalid response from Ollama' }); }
+          });
+        });
+        req.on('error', (err) => resolve({ error: err.message }));
+        req.on('timeout', () => { req.destroy(); resolve({ error: 'Pull timed out (10 min limit)' }); });
+        req.write(payload);
+        req.end();
+      });
+    } catch (err) { return { error: err.message }; }
   });
 
   /** Get the current app settings (model assignments, hidden models) */

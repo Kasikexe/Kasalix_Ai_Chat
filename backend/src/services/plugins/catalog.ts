@@ -11,7 +11,7 @@
  *   { "plugins": [
  *       { "id": "my-tool", "name": "My Tool", "version": "1.0.0",
  *         "description": "...", "author": "...", "icon": "🧰",
- *         "minKasalixVersion": "0.10.0",
+ *         "minKasalixVersion": "0.11.0",
  *         "source": "Kasikexe/Kasalix-AI-Plugins/plugins/my-tool" }
  *     ] }
  *
