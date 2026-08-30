@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('serverAPI', {
   getOllamaModels: () => ipcRenderer.invoke('get-ollama-models'),
   checkOllama: () => ipcRenderer.invoke('check-ollama'),
   startOllama: () => ipcRenderer.invoke('start-ollama'),
+  isOllamaInstalled: () => ipcRenderer.invoke('is-ollama-installed'),
   getOllamaStatus: () => ipcRenderer.invoke('get-ollama-status'),
   restartOllama: (confirm) => ipcRenderer.invoke('restart-ollama', confirm),
   applyOllamaSettings: (payload) => ipcRenderer.invoke('apply-ollama-settings', payload),
@@ -120,5 +121,11 @@ contextBridge.exposeInMainWorld('serverAPI', {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('download-progress', handler);
     return () => ipcRenderer.removeListener('download-progress', handler);
+  },
+
+  onPullProgress: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('pull-progress', handler);
+    return () => ipcRenderer.removeListener('pull-progress', handler);
   },
 });

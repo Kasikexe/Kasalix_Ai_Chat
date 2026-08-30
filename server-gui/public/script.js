@@ -129,12 +129,22 @@ async function ensureBun() {
   return false;
 }
 
+// Module-level startup log (used by ensureOllama and runStartup)
+function startupLogFn(text) {
+  const el = document.getElementById('startupLog');
+  if (el) {
+    el.textContent += text + '\n';
+    el.scrollTop = el.scrollHeight;
+  }
+}
+const log = startupLogFn;
+
 async function ensureOllama() {
   // 1. Check if Ollama is already running
   const check = await API.checkOllama();
   if (check.available) return true;
 
-  // 2. Not running — try to start it (it may be installed but not started)
+  // 2. Not running — try to start it
   log('Ollama not responding — trying to start it...');
   try {
     const startRes = await API.startOllama();
@@ -142,28 +152,26 @@ async function ensureOllama() {
       log('Ollama started ✓');
       return true;
     }
+    log('Auto-start failed: ' + (startRes.error || 'unknown error'));
   } catch (e) {
-    // startOllama failed — Ollama probably not installed
+    log('Auto-start failed: ' + e.message);
   }
 
-  // 3. Still not available — prompt to install
-  const yes = await promptInstall('ollama');
-  if (!yes) return false;
-  showInstallProgress('Installing Ollama...', 'Downloading Ollama (~1.5 GB) and installing it. This may take a few minutes depending on your connection.');
-  const res = await API.installOllama();
-  if (res.success) {
-    for (let i = 0; i < 20; i++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      const again = await API.checkOllama();
-      if (again.available) { hideInstallProgress(); return true; }
-    }
-    hideInstallProgress();
-    return true;
-  }
-  showInstallError('Ollama install failed', res.error || 'Ollama could not be installed. Please download it manually from https://ollama.com/download');
+  // 3. Ollama not running — show message in startup log
+  log('');
+  log('╔══════════════════════════════════════════╗');
+  log('║  🤖 Ollama is not running                ║');
+  log('║                                          ║');
+  log('║  Please open the Ollama app from your    ║');
+  log('║  Start menu or system tray, then click   ║');
+  log('║  "Retry" below.                          ║');
+  log('║                                          ║');
+  log('║  Do not have Ollama? Download it from:    ║');
+  log('║  https://ollama.com/download             ║');
+  log('╚══════════════════════════════════════════╝');
+  log('');
   return false;
 }
-
 // ─── Startup Sequence ───────────────────────────────────────────
 async function runStartup() {
   const mark = (id, status) => {
@@ -179,10 +187,7 @@ async function runStartup() {
     }
   };
 
-  const log = (text) => {
-    startupLog.textContent += text + '\n';
-    startupLog.scrollTop = startupLog.scrollHeight;
-  };
+
 
   // Step 1: Check Bun (auto-install if missing, after asking)
   mark('check-bun', 'active');
@@ -355,7 +360,7 @@ async function refreshModePill() {
     const settings = await API.getApiKeySettings();
     if (settings && settings.cloudMode) {
       const mode = settings.cloudMode;
-      const icon = mode === 'auto' ? '🔄' : mode === 'local' ? '🖥️' : '☁️';
+      const icon = mode === 'auto' ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>' : mode === 'local' ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>';
       const label = mode === 'auto' ? 'Auto' : mode === 'local' ? 'Local Only' : 'Cloud Only';
       const modeClass = `mode-${mode}`;
       $('modePillIcon').textContent = icon;
@@ -511,7 +516,7 @@ $('copyUrlBtn').addEventListener('click', () => {
     const btn = $('copyUrlBtn');
     btn.textContent = '✓';
     btn.classList.add('copied');
-    setTimeout(() => { btn.textContent = '📋'; btn.classList.remove('copied'); }, 1500);
+    setTimeout(() => { btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>'; btn.classList.remove('copied'); }, 1500);
   }).catch(() => {});
 });
 
@@ -972,8 +977,8 @@ const MODEL_LABELS = {
   image_generation: 'Image Generation',
 };
 const MODEL_ICONS = {
-  chat: '💬', chat_thinking: '🧠', code: '💻', vision: '👁️',
-  extraction: '🧠', search: '🌐', image_generation: '🎨',
+  chat: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>', chat_thinking: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg>', code: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>', vision: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  extraction: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg>', search: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>', image_generation: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
 };
 const DEFAULT_ASSIGNMENTS = {
   chat: 'qwen3:4b',
@@ -1223,7 +1228,7 @@ function renderModelsGrid() {
           <h3>Ollama Cloud</h3>
           <p>Pick from Ollama Cloud models (used when mode is Auto or Cloud)</p>
         </div>
-        <button class="cloud-refresh-btn" id="refreshCloudModelsBtn" title="Refresh Ollama Cloud models">🔄 Refresh</button>
+        <button class="cloud-refresh-btn" id="refreshCloudModelsBtn" title="Refresh Ollama Cloud models"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Refresh</button>
       </div>
       ${cloudLoading}
       ${usageBarHtml}
@@ -1261,7 +1266,7 @@ function renderModelsGrid() {
       refreshBtn.disabled = true;
       await fetchAvailableCloudModels();
       renderModelsGrid();
-      refreshBtn.textContent = '🔄 Refresh';
+      refreshBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Refresh';
       refreshBtn.disabled = false;
     });
   }
@@ -1403,7 +1408,7 @@ function renderTimeline() {
       <div class="speed-item-top">
         <div class="speed-chips">
           <span class="speed-chip">🗓 ${formatSpeedDate(r.date)}</span>
-          <span class="speed-chip">🧠 ${r.modelCount} models</span>
+          <span class="speed-chip"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg> ${r.modelCount} models</span>
           ${isLatest ? '<span class="speed-chip latest-chip">Latest</span>' : ''}
         </div>
         <button class="speed-del" data-id="${r.id}" title="Delete result">🗑</button>
@@ -1558,7 +1563,7 @@ function openSpeedDetail(r) {
             return `<tr>
               <td>${t.testName}</td>
               <td><span style="color:${color}">${ms ? ms.label : t.assignmentKey}</span></td>
-              <td class="td-status">${t.success ? '✅' : '❌'}</td>
+              <td class="td-status">${t.success ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'}</td>
               <td class="td-mono">${formatDuration(t.totalTimeMs)}</td>
               <td class="td-mono">${formatDuration(t.timeToFirstTokenMs)}</td>
               <td class="td-mono">${t.totalChars}</td>
@@ -1577,7 +1582,7 @@ function openSpeedDetail(r) {
 
   $('speedModalBody').innerHTML =
     summary + modelCards +
-    barChart('📊 Response Time by Test', (t) => t.totalTimeMs, formatDuration, maxTime) +
+    barChart('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg> Response Time by Test', (t) => t.totalTimeMs, formatDuration, maxTime) +
     barChart('⚡ Tokens per Second', (t) => t.tokensPerSecond, (v) => v.toFixed(1) + ' tok/s', maxTps) +
     qualityBlock + table + errorsBlock;
 }
@@ -2367,6 +2372,12 @@ const MODEL_DATABASE_FALLBACK = [
 
 // ─── Model Catalog (fetched from GitHub, fallback to hardcoded) ──
 let MODEL_DATABASE = [...MODEL_DATABASE_FALLBACK];
+// Catalog icon SVGs (module scope to avoid template literal quote conflicts)
+const _iconBrain = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg>';
+const _iconUnlock = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>';
+const _iconWrench = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>';
+const _iconEye = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+const _iconDownload = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 let catalogDbVersion = 'local';
 let catalogDbSource = 'local';
 const CATALOG_URL = 'https://raw.githubusercontent.com/Kasikexe/Kasalix/main/model-catalog.json';
@@ -2386,24 +2397,31 @@ function updateCatalogDbBadge() {
   }
 }
 
-async function fetchModelCatalog() {
-  try {
-    // Check cache first
-    const cached = localStorage.getItem(CATALOG_CACHE_KEY);
-    if (cached) {
-      const { timestamp, data } = JSON.parse(cached);
-      if (Date.now() - timestamp < CATALOG_CACHE_TTL && data?.models?.length) {
-        MODEL_DATABASE = data.models;
-        catalogDbVersion = data.version || 'local';
-        catalogDbSource = 'remote';
-        updateCatalogDbBadge();
-        return;
+async function fetchModelCatalog(forceRefresh) {
+  if (!forceRefresh) {
+    try {
+      // Check cache first
+      const cached = localStorage.getItem(CATALOG_CACHE_KEY);
+      if (cached) {
+        const { timestamp, data } = JSON.parse(cached);
+        if (Date.now() - timestamp < CATALOG_CACHE_TTL && data?.models?.length) {
+          MODEL_DATABASE = data.models;
+          catalogDbVersion = data.version || 'local';
+          catalogDbSource = 'remote';
+          updateCatalogDbBadge();
+          return;
+        }
       }
-    }
-  } catch {}
+    } catch {}
+  } else {
+    // Clear stale cache when force-refreshing
+    localStorage.removeItem(CATALOG_CACHE_KEY);
+  }
 
   try {
-    const res = await fetch(CATALOG_URL);
+    // Add cache-buster to bypass CDN/proxy caches
+    const bustUrl = CATALOG_URL + '?t=' + Date.now();
+    const res = await fetch(bustUrl);
     if (res.ok) {
       const data = await res.json();
       if (data?.models?.length) {
@@ -2449,15 +2467,15 @@ async function loadModelCatalog() {
           const quant = m.details?.quantization_level || '';
           const paramSize = m.details?.parameter_size || '';
           const meta = [family, paramSize, quant].filter(Boolean).join(' · ');
-          const dbEntry = MODEL_DATABASE.find(d => name.includes(d.name.split(':')[0]));
+          const dbEntry = MODEL_DATABASE.find(d => name === d.name || name.startsWith(d.name + ':') || name.startsWith(d.name + '-'));
           const badges = [];
           if (dbEntry) {
-            if (dbEntry.tools) badges.push('<span class="catalog-badge catalog-badge-tools">🔧 Tools</span>');
-            if (dbEntry.thinking) badges.push('<span class="catalog-badge catalog-badge-think">🧠 Thinking</span>');
-            if (dbEntry.vision) badges.push('<span class="catalog-badge catalog-badge-vision">👁 Vision</span>');
+            if (dbEntry.tools) badges.push('<span class="catalog-badge catalog-badge-tools"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg> Tools</span>');
+            if (dbEntry.thinking) badges.push('<span class="catalog-badge catalog-badge-think"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg> Thinking</span>');
+            if (dbEntry.vision) badges.push('<span class="catalog-badge catalog-badge-vision"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> Vision</span>');
           }
           return `<div class="catalog-model-card catalog-installed" onclick="showModelDetail('${esc(name)}')" title="Click for details">
-            <div class="catalog-model-icon">🧠</div>
+            <div class="catalog-model-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg></div>
             <div class="catalog-model-info">
               <div class="catalog-model-name">${esc(name)}</div>
               <div class="catalog-model-meta">${esc(meta)}</div>
@@ -2506,15 +2524,15 @@ function filterBrowseModels(query) {
   }
 
   browseList.innerHTML = results.map(m => {
-    const isInstalled = installedModelNames.some(n => n.startsWith(m.name.split(':')[0]));
+    const isInstalled = installedModelNames.some(n => n === m.name || n.startsWith(m.name + ':') || n.startsWith(m.name + '-'));
     const badges = [];
-    if (m.tools) badges.push('<span class="catalog-badge catalog-badge-tools">🔧 Tools</span>');
-    if (m.thinking) badges.push('<span class="catalog-badge catalog-badge-think">🧠 Thinking</span>');
-    if (m.vision) badges.push('<span class="catalog-badge catalog-badge-vision">👁 Vision</span>');
-    if (m.uncensored) badges.push('<span class="catalog-badge" style="background:rgba(239,68,68,0.12);color:#f87171;">🔓 Uncensored</span>');
+    if (m.tools) badges.push('<span class="catalog-badge catalog-badge-tools"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg> Tools</span>');
+    if (m.thinking) badges.push('<span class="catalog-badge catalog-badge-think"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg> Thinking</span>');
+    if (m.vision) badges.push('<span class="catalog-badge catalog-badge-vision"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> Vision</span>');
+    if (m.uncensored) badges.push('<span class="catalog-badge" style="background:rgba(239,68,68,0.12);color:#f87171;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg> Uncensored</span>');
 
     return `<div class="catalog-model-card" onclick="showModelDetail('${esc(m.name)}')" title="Click for details">
-      <div class="catalog-model-icon">${m.uncensored ? '🔓' : '🧠'}</div>
+      <div class="catalog-model-icon">${m.uncensored ? _iconUnlock : _iconBrain}</div>
       <div class="catalog-model-info">
         <div class="catalog-model-name">${esc(m.name)}</div>
         <div class="catalog-model-meta">${esc(m.family)} · ${esc(m.params)}</div>
@@ -2522,7 +2540,7 @@ function filterBrowseModels(query) {
       </div>
       <button class="catalog-model-pull-btn ${isInstalled ? 'catalog-pull-installed' : ''}"
         onclick="event.stopPropagation(); ${isInstalled ? '' : `pullModelFromCatalog('${esc(m.name)}')`}"
-        ${isInstalled ? 'disabled' : ''}>${isInstalled ? '✓ Installed' : '📥 Pull'}</button>
+        ${isInstalled ? 'disabled' : ''}>${isInstalled ? '✓ Installed' : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Pull'}</button>
     </div>`;
   }).join('');
 }
@@ -2534,7 +2552,7 @@ function showModelDetail(modelName) {
   // Find in database
   const dbEntry = MODEL_DATABASE.find(m => m.name === modelName);
   // Find in installed
-  const isInstalled = installedModelNames.some(n => n === modelName || n.startsWith(modelName.split(':')[0]));
+  const isInstalled = installedModelNames.some(n => n === modelName || n.startsWith(modelName + ':') || n.startsWith(modelName + '-'));
 
   const nameEl = $('detailModalName');
   const familyEl = $('detailModalFamily');
@@ -2549,7 +2567,7 @@ function showModelDetail(modelName) {
   const pullStatusText = $('detailPullStatusText');
 
   if (nameEl) nameEl.textContent = modelName;
-  if (iconEl) iconEl.textContent = dbEntry?.uncensored ? '🔓' : '🧠';
+  if (iconEl) iconEl.innerHTML = dbEntry?.uncensored ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg>';
 
   if (familyEl) {
     if (dbEntry) {
@@ -2566,10 +2584,10 @@ function showModelDetail(modelName) {
         <div class="detail-cap-badge ${dbEntry.tools ? 'cap-yes' : 'cap-no'}">🔧 Tools: ${dbEntry.tools ? 'Yes' : 'No'}</div>
         <div class="detail-cap-badge ${dbEntry.thinking ? 'cap-yes' : 'cap-no'}">🧠 Thinking: ${dbEntry.thinking ? 'Yes' : 'No'}</div>
         <div class="detail-cap-badge ${dbEntry.vision ? 'cap-yes' : 'cap-no'}">👁 Vision: ${dbEntry.vision ? 'Yes' : 'No'}</div>
-        ${dbEntry.uncensored ? '<div class="detail-cap-badge cap-no" style="border:1px solid rgba(239,68,68,0.3);">🔓 Uncensored</div>' : ''}
+        ${dbEntry.uncensored ? '<div class="detail-cap-badge cap-no" style="border:1px solid rgba(239,68,68,0.3);">' + _iconUnlock + ' Uncensored</div>' : ''}
       `;
     } else {
-      capEl.innerHTML = '<div class="detail-cap-badge cap-no">⚠️ Unknown capabilities — not in built-in database</div>';
+      capEl.innerHTML = '<div class="detail-cap-badge cap-no"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Unknown capabilities — not in built-in database</div>';
     }
   }
 
@@ -2584,14 +2602,14 @@ function showModelDetail(modelName) {
   if (quantEl) {
     const quants = dbEntry?.quantizations || ['Q4_K_M', 'Q8_0', 'FP16'];
     const defQuant = dbEntry?.defaultQuant || 'Q4_K_M';
-    const installedQuants = installedModelNames.filter(n => n.startsWith(modelName.split(':')[0]));
+    const installedQuants = installedModelNames.filter(n => n === modelName || n.startsWith(modelName + ':') || n.startsWith(modelName + '-'));
     quantEl.innerHTML = `<div class="detail-section-title">Available Quantizations</div>
       <div class="detail-quant-grid">${quants.map(q => {
         const isDef = q === defQuant;
         const isInst = installedQuants.some(n => n.toLowerCase().includes(q.toLowerCase()));
-        return `<div class="detail-quant-chip ${isInst ? 'detail-quant-installed' : ''}">${q}${isDef ? ' \u2605' : ''}${isInst ? ' \u2713' : ''}</div>`;
+        return `<div class="detail-quant-chip ${isInst ? 'detail-quant-installed' : ''}" ${isInst ? '' : `onclick="event.stopPropagation(); pullQuantFromDetail('${modelName}', '${q}')"`} title="${isInst ? 'Already installed' : 'Click to pull ' + q}">${q}${isDef ? ' \u2605' : ''}${isInst ? ' \u2713' : ''}</div>`;
       }).join('')}</div>
-      <div style="font-size:11px;color:var(--text-dim);margin-top:6px;">\u2605 = default \xb7 \u2713 = installed</div>`;
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px;">\u2605 = default \xb7 \u2713 = installed \xb7 Click a quantization to pull it</div>`;
   }
 
   // Variants (uncensored, coder, etc.)
@@ -2606,7 +2624,7 @@ function showModelDetail(modelName) {
         <div class="detail-variant-list">${variants.map(v => {
           const isInst = installedModelNames.some(n => n === v.name);
           return `<div class="detail-variant-item" onclick="showModelDetail('${esc(v.name)}')">
-            <span>${esc(v.name)} — ${v.params}${v.uncensored ? ' 🔓' : ''}</span>
+            <span>${esc(v.name)} — ${v.params}${v.uncensored ? ' <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>' : ''}</span>
             <span>${isInst ? '<span class="detail-variant-tag" style="color:#4ade80;">Installed</span>' : '<span class="detail-variant-tag">' + (v.tools ? '🔧' : '') + (v.thinking ? '🧠' : '') + (v.vision ? '👁' : '') + '</span>'}</span>
           </div>`;
         }).join('')}</div>`;
@@ -2645,7 +2663,7 @@ function showModelDetail(modelName) {
       pullBtn.disabled = true;
       pullBtn.style.opacity = '0.5';
     } else {
-      pullBtn.textContent = '📥 Pull ' + modelName;
+      pullBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Pull ' + modelName;
       pullBtn.disabled = false;
       pullBtn.style.opacity = '1';
       pullBtn.onclick = () => pullModelFromCatalog(modelName);
@@ -2661,6 +2679,19 @@ function closeModelDetail() {
   if (modal) modal.style.display = 'none';
 }
 
+function pullQuantFromDetail(modelName, quant) {
+  // modelName is like 'qwen3:8b', quant is like 'Q4_K_M'
+  // Ollama pull format: 'qwen3:8b-q4_k_m' for non-default quant
+  // Default quant: just pull 'qwen3:8b' as-is
+  const dbEntry = MODEL_DATABASE.find(m => m.name === modelName);
+  const defQuant = dbEntry?.defaultQuant || 'Q4_K_M';
+  if (quant === defQuant) {
+    pullModelFromCatalog(modelName);
+  } else {
+    pullModelFromCatalog(modelName + '-' + quant.toLowerCase());
+  }
+}
+
 // ─── Pull Model ──────────────────────────────────────
 let pullInProgress = false;
 
@@ -2668,35 +2699,88 @@ async function pullModelFromCatalog(modelName) {
   if (pullInProgress) return;
   pullInProgress = true;
 
+  // Elements: catalog bar
   const status = $('pullModelStatus');
   const statusText = $('pullModelStatusText');
   const bar = $('pullModelBar');
+  // Elements: detail popup
+  const detailStatus = $('detailPullStatus');
+  const detailStatusText = $('detailPullStatusText');
+  const detailBar = $('detailPullBar');
 
   if (status) status.style.display = 'block';
-  if (statusText) statusText.textContent = 'Downloading ' + modelName + '... This may take a while for large models.';
-  if (bar) { bar.style.width = '30%'; bar.style.background = ''; }
+  if (statusText) statusText.textContent = 'Preparing download for ' + modelName + '...';
+  if (bar) { bar.style.width = '5%'; bar.style.background = ''; bar.style.transition = 'width 0.3s'; }
+  if (detailStatus) detailStatus.style.display = 'block';
+  if (detailStatusText) detailStatusText.textContent = 'Preparing download...';
+  if (detailBar) { detailBar.style.width = '5%'; detailBar.style.background = ''; }
+
+  // Subscribe to streaming progress
+  let lastStage = '';
+  const unsub = API.onPullProgress((p) => {
+    if (p.status === 'done') {
+      if (statusText) statusText.textContent = '\u2705 ' + modelName + ' pulled successfully!';
+      if (bar) { bar.style.width = '100%'; bar.style.background = '#22c55e'; }
+      if (detailStatusText) detailStatusText.innerHTML = '\u2705 <span style="color:#4ade80;">Download complete!</span>';
+      if (detailBar) { detailBar.style.width = '100%'; detailBar.style.background = '#22c55e'; }
+      return;
+    }
+    if (p.status === 'error') {
+      if (statusText) statusText.textContent = '\u274c Failed: ' + (p.error || 'Unknown error');
+      if (bar) bar.style.width = '0%';
+      if (detailStatusText) detailStatusText.innerHTML = '\u274c <span style="color:#f87171;">Failed: ' + esc(p.error || 'Unknown error') + '</span>';
+      if (detailBar) detailBar.style.width = '0%';
+      return;
+    }
+    // Progress update from Ollama: { status, digest, total, completed }
+    if (p.total && p.completed != null) {
+      const pct = Math.min(99, Math.round((p.completed / p.total) * 100));
+      const totalMB = (p.total / 1024 / 1024).toFixed(0);
+      const doneMB = (p.completed / 1024 / 1024).toFixed(0);
+      if (bar) bar.style.width = pct + '%';
+      if (statusText) statusText.textContent = 'Downloading ' + modelName + ' \u2022 ' + doneMB + ' / ' + totalMB + ' MB (' + pct + '%)';
+      if (detailStatusText) detailStatusText.innerHTML = '\u2b07\ufe0f Downloading \u2022 <b>' + doneMB + ' / ' + totalMB + ' MB</b> (' + pct + '%)';
+      if (detailBar) detailBar.style.width = pct + '%';
+      lastStage = '';
+    } else if (p.status && p.status !== lastStage) {
+      lastStage = p.status;
+      if (statusText) statusText.textContent = '\u21bb ' + p.status + (p.digest ? ' \u2022 ' + p.digest.slice(0, 12) + '...' : '');
+      if (detailStatusText) detailStatusText.innerHTML = '\u21bb ' + esc(p.status);
+    }
+  });
 
   try {
     const result = await API.pullModel(modelName);
     if (result.error) {
-      if (statusText) statusText.textContent = '❌ Failed: ' + result.error;
+      if (statusText) statusText.textContent = '\u274c Failed: ' + result.error;
       if (bar) bar.style.width = '0%';
-    } else {
-      if (statusText) statusText.textContent = '✅ ' + modelName + ' pulled successfully!';
-      if (bar) { bar.style.width = '100%'; bar.style.background = '#22c55e'; }
-      loadModelCatalog(); // Refresh lists
-      // Refresh detail modal if open
-      const modal = $('modelDetailModal');
-      if (modal && modal.style.display !== 'none') {
-        showModelDetail(modelName);
-      }
+      if (detailStatusText) detailStatusText.innerHTML = '\u274c <span style="color:#f87171;">Failed: ' + esc(result.error) + '</span>';
     }
   } catch (e) {
-    if (statusText) statusText.textContent = '❌ Failed: ' + e.message;
+    if (statusText) statusText.textContent = '\u274c Failed: ' + e.message;
     if (bar) bar.style.width = '0%';
+    if (detailStatusText) detailStatusText.innerHTML = '\u274c <span style="color:#f87171;">Failed: ' + esc(e.message) + '</span>';
+    if (detailBar) detailBar.style.width = '0%';
   }
 
+  if (unsub) unsub();
+
+  setTimeout(() => {
+    loadModelCatalog();
+    const modal = $('modelDetailModal');
+    if (modal && modal.style.display !== 'none') {
+      showModelDetail(modelName);
+    }
+  }, 1000);
+
   pullInProgress = false;
+}
+
+// ─── Bar Color Helper ──────────────────────────
+function usageBarColor(pct) {
+  if (pct >= 85) return '#ef4444'; // red
+  if (pct >= 60) return '#eab308'; // yellow
+  return '#22c55e'; // green
 }
 
 function formatBytes(bytes) {
@@ -2720,7 +2804,10 @@ $('catalogSearchInput')?.addEventListener('input', (e) => {
   }
 });
 
-$('catalogRefreshBtn')?.addEventListener('click', loadModelCatalog);
+$('catalogRefreshBtn')?.addEventListener('click', async () => {
+  await fetchModelCatalog(true);
+  loadModelCatalog();
+});
 
 $('detailModalClose')?.addEventListener('click', closeModelDetail);
 $('detailModalCancelBtn')?.addEventListener('click', closeModelDetail);
@@ -2764,8 +2851,7 @@ function updateKvVramEstimate() {
   const kvMb = isGpu ? (BASELINE_KV_VRAM_MB[ollamaSettings.kvCacheType] || 1024) : (BASELINE_KV_VRAM_MB[ollamaSettings.kvCacheType] || 1024);
   const pct = Math.min(100, (kvMb / totalMb) * 100);
   bar.style.width = pct + '%';
-  if (isGpu) bar.style.background = '';
-  else bar.style.background = 'var(--accent)';
+  bar.style.background = usageBarColor(pct);
   text.textContent = '~' + (kvMb >= 1024 ? (kvMb / 1024).toFixed(1) + ' GB' : kvMb + ' MB');
   if (maxText) maxText.textContent = 'of ' + (totalMb >= 1024 ? (totalMb / 1024).toFixed(0) + ' GB' : totalMb + ' MB') + ' ' + storageLabel;
   const label = $('kvEstimateLabel');
@@ -2861,7 +2947,7 @@ function updateCtxMemoryEstimate() {
     const vramTotal = ollamaGpuInfo?.memTotal || 8192;
     const pct = Math.min(100, (totalMb / vramTotal) * 100);
     bar.style.width = pct + '%';
-    bar.style.background = '';
+    bar.style.background = usageBarColor(pct);
     if (text) text.textContent = ctx === 0 ? 'Auto (model default)' : formatNumCtx(ctx) + ' context (' + ollamaSettings.kvCacheType + ') — ~' + (totalMb >= 1024 ? (totalMb / 1024).toFixed(1) + ' GB' : totalMb + ' MB');
     if (max) max.textContent = 'of ' + (vramTotal / 1024).toFixed(0) + ' GB VRAM (model + context)';
   } else {
@@ -2870,7 +2956,7 @@ function updateCtxMemoryEstimate() {
     const ramUsedMb = ollamaRamInfo?.used ? Math.round(ollamaRamInfo.used / (1024 * 1024)) : 16384;
     const pct = Math.min(100, (kvMb / ramTotalMb) * 100);
     bar.style.width = pct + '%';
-    bar.style.background = 'var(--accent)';
+    bar.style.background = usageBarColor(pct);
     if (text) text.textContent = ctx === 0 ? 'Auto (model default)' : formatNumCtx(ctx) + ' context (' + ollamaSettings.kvCacheType + ') — ~' + (kvMb >= 1024 ? (kvMb / 1024).toFixed(1) + ' GB' : kvMb + ' MB');
     if (max) max.textContent = 'of ' + (ramTotalMb / 1024).toFixed(0) + ' GB RAM';
   }
@@ -2885,22 +2971,22 @@ function updateHardwareInfo() {
   const rec = $('hwRecommendation');
   if (ollamaGpuInfo) {
     if (gpuName) gpuName.textContent = ollamaGpuInfo.name || 'NVIDIA GPU';
-    if (vramBar) vramBar.style.width = Math.round((ollamaGpuInfo.memUsed / ollamaGpuInfo.memTotal) * 100) + '%';
+    if (vramBar) { const vpct = Math.round((ollamaGpuInfo.memUsed / ollamaGpuInfo.memTotal) * 100); vramBar.style.width = vpct + '%'; vramBar.style.background = usageBarColor(vpct); }
     if (vramText) vramText.textContent = ollamaGpuInfo.memUsed + ' / ' + ollamaGpuInfo.memTotal + ' MB';
     if (rec) {
       const freeVram = ollamaGpuInfo.memTotal - ollamaGpuInfo.memUsed;
-      if (freeVram < 2048) rec.textContent = '⚠️ Low VRAM free (' + (freeVram / 1024).toFixed(1) + ' GB). Consider disabling GPU offloading to free VRAM for model weights.';
-      else if (freeVram < 4096) rec.textContent = '💡 Moderate VRAM available. f16 context cache recommended. Consider q8_0 if context feels tight.';
-      else rec.textContent = '✅ Plenty of VRAM free (' + (freeVram / 1024).toFixed(1) + ' GB). GPU offloading with f16 is ideal.';
+      if (freeVram < 2048) rec.textContent = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Low VRAM free (' + (freeVram / 1024).toFixed(1) + ' GB). Consider disabling GPU offloading to free VRAM for model weights.';
+      else if (freeVram < 4096) rec.textContent = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg> Moderate VRAM available. f16 context cache recommended. Consider q8_0 if context feels tight.';
+      else rec.textContent = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Plenty of VRAM free (' + (freeVram / 1024).toFixed(1) + ' GB). GPU offloading with f16 is ideal.';
     }
   } else {
     if (gpuName) gpuName.textContent = 'No NVIDIA GPU detected';
     if (vramText) vramText.textContent = '—';
-    if (rec) rec.textContent = '💡 No GPU detected. Context cache will run on RAM. Set context length to match your available system RAM.';
+    if (rec) rec.textContent = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg> No GPU detected. Context cache will run on RAM. Set context length to match your available system RAM.';
   }
   // RAM
   if (ollamaRamInfo) {
-    if (ramBar) ramBar.style.width = ollamaRamInfo.usagePercent + '%';
+    if (ramBar) { ramBar.style.width = ollamaRamInfo.usagePercent + '%'; ramBar.style.background = usageBarColor(ollamaRamInfo.usagePercent); }
     if (ramText) ramText.textContent = (ollamaRamInfo.used / (1024 * 1024 * 1024)).toFixed(1) + ' / ' + (ollamaRamInfo.total / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
   }
 }
@@ -2944,18 +3030,16 @@ $('ollamaSaveBtn')?.addEventListener('click', async () => {
   const status = await API.getOllamaStatus();
   const modelsInterrupted = status.loadedModels && status.loadedModels.length > 0;
 
+
   if (modelsInterrupted) {
     // Show confirmation dialog
     const modal = $('ollamaRestartModal');
     const msg = $('ollamaRestartMsg');
     const hint = $('ollamaRestartHint');
     msg.textContent = `Model(s) currently loaded: ${status.loadedModels.map(m => m.name || m.model).join(', ')}. Restarting will interrupt any in-progress generation.`;
-    hint.textContent = status.ownedByUs
-      ? 'Ollama was started by this app and will be restarted automatically.'
-      : 'Ollama was started externally. It will be killed and restarted with new settings.';
+    hint.textContent = 'Ollama was started by this app and will be restarted automatically.';
     modal.style.display = 'flex';
 
-    // Wire up confirm button
     $('ollamaRestartConfirmBtn').onclick = async () => {
       modal.style.display = 'none';
       await doOllamaRestart(true);

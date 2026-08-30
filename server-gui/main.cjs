@@ -499,9 +499,19 @@ function setupIPC() {
   ipcMain.handle('check-ollama', async () => {
     try {
       const http = require('http');
+      const path = require('path');
+      const os = require('os');
       return new Promise((resolve) => {
         const req = http.get('http://localhost:11434/api/tags', (res) => {
-          resolve({ available: res.statusCode >= 200 && res.statusCode < 400 });
+          const available = res.statusCode >= 200 && res.statusCode < 400;
+          if (available) {
+            // Write ownership flag so backend knows the app manages Ollama
+            try {
+              const flagPath = path.join(os.tmpdir(), 'kasalix-ollama-owned');
+              fs.writeFileSync(flagPath, String(process.pid));
+            } catch {}
+          }
+          resolve({ available });
         });
         req.on('error', () => resolve({ available: false }));
         req.setTimeout(2000, () => { req.destroy(); resolve({ available: false }); });
@@ -510,31 +520,116 @@ function setupIPC() {
   });
 
   ipcMain.handle('start-ollama', async () => {
-    try {
-      const { spawn } = require('child_process');
-      const isWin = process.platform === 'win32';
-      const cmd = isWin ? 'ollama' : 'ollama';
-      const child = spawn(cmd, ['serve'], {
-        detached: true,
-        stdio: 'ignore',
-        ...(isWin ? { shell: true } : {}),
-      });
-      child.unref();
-      // Wait up to 15s for Ollama to come up
-      const http = require('http');
-      for (let i = 0; i < 15; i++) {
-        await new Promise(r => setTimeout(r, 1000));
-        const ok = await new Promise(resolve => {
-          const req = http.get('http://localhost:11434/api/tags', (res) => {
-            resolve(res.statusCode >= 200 && res.statusCode < 400);
-          });
-          req.on('error', () => resolve(false));
-          req.setTimeout(2000, () => { req.destroy(); resolve(false); });
+    const { spawn, execSync } = require('child_process');
+    const path = require('path');
+    const fs = require('fs');
+    const isWin = process.platform === 'win32';
+    const http = require('http');
+
+    console.log('[start-ollama] Attempting to start Ollama...');
+
+    async function isOllamaUp() {
+      return new Promise(resolve => {
+        const req = http.get('http://localhost:11434/api/tags', (res) => {
+          resolve(res.statusCode >= 200 && res.statusCode < 400);
         });
-        if (ok) return { success: true };
+        req.on('error', () => resolve(false));
+        req.setTimeout(2000, () => { req.destroy(); resolve(false); });
+      });
+    }
+
+    // Already running?
+    if (await isOllamaUp()) {
+      console.log('[start-ollama] Ollama is already running');
+      return { success: true };
+    }
+
+    // Find ollama executable
+    let ollamaPath = null;
+
+    if (isWin) {
+      // 1. Try 'where ollama'
+      try {
+        const whereOut = execSync('where ollama 2>nul', { encoding: 'utf8', timeout: 5000 }).trim();
+        const paths = whereOut.split(/\r?\n/).filter(Boolean);
+        ollamaPath = paths.find(p => p.toLowerCase().includes('ollama.exe') && !p.toLowerCase().includes('ollama app')) || paths[0];
+        console.log('[start-ollama] Found via where:', ollamaPath);
+      } catch {}
+
+      // 2. Check common install locations
+      if (!ollamaPath) {
+        const commonPaths = [
+          path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Ollama', 'ollama.exe'),
+          path.join(process.env.PROGRAMFILES || '', 'Ollama', 'ollama.exe'),
+          path.join(process.env['PROGRAMFILES(X86)'] || '', 'Ollama', 'ollama.exe'),
+        ];
+        for (const p of commonPaths) {
+          try { if (fs.existsSync(p)) { ollamaPath = p; console.log('[start-ollama] Found at:', p); break; } } catch {}
+        }
       }
-      return { success: false, error: 'Ollama started but not responding yet' };
-    } catch (e) { return { success: false, error: e.message }; }
+    }
+
+    // Use full path if found, otherwise fall back to shell
+    const useShell = !ollamaPath;
+    const cmd = ollamaPath || 'ollama';
+    console.log('[start-ollama] Spawning:', cmd, 'serve', useShell ? '(via shell)' : '(direct)');
+
+    return new Promise((resolve) => {
+      try {
+        const child = spawn(cmd, ['serve'], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          ...(useShell ? { shell: true } : { windowsHide: true }),
+        });
+
+        let settled = false;
+        const settle = (result) => {
+          if (settled) return;
+          settled = true;
+          try { child.unref(); } catch {}
+          resolve(result);
+        };
+
+        child.on('error', (err) => {
+          console.log('[start-ollama] Spawn error:', err.message);
+          settle({ success: false, error: err.message });
+        });
+
+        child.on('exit', (code) => {
+          console.log('[start-ollama] Process exited with code:', code);
+          settle({ success: false, error: 'Ollama exited immediately (code ' + code + ')' });
+        });
+
+        // Capture stderr for debugging
+        let stderr = '';
+        if (child.stderr) {
+          child.stderr.on('data', (d) => { stderr += d.toString(); });
+        }
+
+        // Poll for Ollama to come up
+        (async () => {
+          for (let i = 0; i < 20; i++) {
+            await new Promise(r => setTimeout(r, 1000));
+            if (await isOllamaUp()) {
+              console.log('[start-ollama] Ollama is up after', i + 1, 'seconds');
+              settle({ success: true });
+              // Write ownership flag for backend to detect
+              try {
+                const flagPath = require('path').join(require('os').tmpdir(), 'kasalix-ollama-owned');
+                const flagDir = require('path').dirname(flagPath);
+                if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
+                fs.writeFileSync(flagPath, String(process.pid));
+              } catch {}
+              return;
+            }
+          }
+          console.log('[start-ollama] Timed out. stderr:', stderr.slice(-500));
+          settle({ success: false, error: 'Ollama started but not responding after 20s' + (stderr ? ': ' + stderr.slice(-200) : '') });
+        })();
+      } catch (e) {
+        console.log('[start-ollama] Exception:', e.message);
+        resolve({ success: false, error: e.message });
+      }
+    });
   });
 
   // ─── Ollama Settings / Restart ────────────────────────
@@ -873,25 +968,43 @@ function setupIPC() {
   });
 
   /** Pull a model from Ollama registry */
-  ipcMain.handle('pull-model', async (_event, modelName) => {
+  ipcMain.handle('pull-model', async (event, modelName) => {
     try {
       const http = require('http');
       return new Promise((resolve) => {
-        const payload = JSON.stringify({ name: modelName, stream: false });
+        const payload = JSON.stringify({ name: modelName, stream: true });
         const req = http.request('http://localhost:11434/api/pull', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
           timeout: 600000, // 10 min for large models
         }, (res) => {
           let body = '';
-          res.on('data', (chunk) => body += chunk);
+          res.on('data', (chunk) => {
+            body += chunk;
+            // Send each line as a progress event to renderer
+            const lines = chunk.toString().split('\n').filter(l => l.trim());
+            for (const line of lines) {
+              try {
+                const progress = JSON.parse(line);
+                event.sender.send('pull-progress', progress);
+              } catch {}
+            }
+          });
           res.on('end', () => {
-            try { resolve(JSON.parse(body)); }
-            catch { resolve({ error: 'Invalid response from Ollama' }); }
+            // Send final status
+            event.sender.send('pull-progress', { status: 'done' });
+            resolve({ ok: true });
           });
         });
-        req.on('error', (err) => resolve({ error: err.message }));
-        req.on('timeout', () => { req.destroy(); resolve({ error: 'Pull timed out (10 min limit)' }); });
+        req.on('error', (err) => {
+          event.sender.send('pull-progress', { status: 'error', error: err.message });
+          resolve({ error: err.message });
+        });
+        req.on('timeout', () => {
+          req.destroy();
+          event.sender.send('pull-progress', { status: 'error', error: 'Pull timed out (10 min limit)' });
+          resolve({ error: 'Pull timed out (10 min limit)' });
+        });
         req.write(payload);
         req.end();
       });

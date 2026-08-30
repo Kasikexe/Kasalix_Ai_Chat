@@ -60,6 +60,11 @@ if %errorlevel% neq 0 (
     where ollama >nul 2>nul
     if !errorlevel! equ 0 (
         echo [INFO] Starting Ollama...
+        :: Read Ollama settings and inject env vars for next ollama serve
+        if exist "%DATA_DIR%\settings.json" (
+            node -e "const s=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));const a=[];if(s.kvCacheOffload===false)a.push('set LLAMA_ARG_KV_OFFLOAD=0');if(s.kvCacheType&&s.kvCacheType!=='f16'){a.push('set LLAMA_ARG_CACHE_TYPE_K='+s.kvCacheType);a.push('set LLAMA_ARG_CACHE_TYPE_V='+s.kvCacheType)};if(a.length){console.log('[INFO] Applying Ollama settings:');a.forEach(l=>console.log('  '+l.replace('set ','')));console.log(a.join('\r\n'))}" "%DATA_DIR%\settings.json" > "%TEMP%\kasalix_env.bat" 2>nul
+            if exist "%TEMP%\kasalix_env.bat" call "%TEMP%\kasalix_env.bat" & del "%TEMP%\kasalix_env.bat" 2>nul
+        )
         start "Ollama" /min cmd /c "ollama serve"
         timeout /t 3 /nobreak >nul
         echo [OK] Ollama started

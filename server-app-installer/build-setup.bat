@@ -18,55 +18,60 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
+:: Detect package manager (bun > npm)
+set "PKG=bun"
 where bun >nul 2>nul
 if %errorlevel% neq 0 (
-    echo [WARN] Bun not found. Will try npm instead.
-    set "USE_NPM=1"
-) else (
-    set "USE_NPM=0"
+    set "PKG=npm"
+    echo [WARN] Bun not found — using npm (slower)
 )
-
-:: ── 2. Read version from frontend/package.json ────
-
-echo [1/7] Reading version...
+echo   Package manager: %PKG%
 echo.
 
-:: Read current version from frontend/package.json
+:: ── 2. Read version ─────────────────────────────────
+
+echo [1/6] Reading version...
 for /f "usebackq delims=" %%a in (`node -e "const p=require('../frontend/package.json');console.log(p.version)"`) do set "CURRENT_VERSION=%%a"
 if not defined CURRENT_VERSION set "CURRENT_VERSION=1.0.0"
 echo   Version: %CURRENT_VERSION%
 echo.
 
-:: ── 3. Install backend dependencies ─────────────────
+:: ── 3. Install backend dependencies (skip if exists) ─
 
-echo [2/7] Installing backend dependencies...
+echo [2/6] Backend dependencies...
 pushd ..\backend
-if "!USE_NPM!"=="1" (
-    call npm install
+if not exist "node_modules" (
+    echo   Installing...
+    if "%PKG%"=="bun" (call bun install) else (call npm install --prefer-offline)
 ) else (
-    call bun install
+    echo   Already installed — skipping
 )
 if %errorlevel% neq 0 (
-    echo [ERROR] Failed to install backend dependencies.
+    echo [ERROR] Backend install failed.
     popd
     pause
     exit /b 1
 )
 popd
-echo [OK] Backend dependencies installed.
 echo.
 
-:: ── 4. Build frontend ───────────────────────────────
+:: ── 4. Build frontend (skip install if exists) ──────
 
-echo [3/7] Building frontend (production)...
+echo [3/6] Building frontend...
 pushd ..\frontend
-call npm install
+if not exist "node_modules" (
+    echo   Installing dependencies...
+    if "%PKG%"=="bun" (call bun install) else (call npm install --prefer-offline)
+) else (
+    echo   Dependencies already installed — skipping
+)
 if %errorlevel% neq 0 (
-    echo [ERROR] npm install failed for frontend.
+    echo [ERROR] Frontend install failed.
     popd
     pause
     exit /b 1
 )
+echo   Building (tsc + vite)...
 call npm run build
 if %errorlevel% neq 0 (
     echo [ERROR] Frontend build failed.
@@ -75,28 +80,28 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 popd
-echo [OK] Frontend built.
 echo.
 
-:: ── 5. Use version read in step 2 ──────────────────
-set "APP_VERSION=%CURRENT_VERSION%"
-echo [4/7] Version: %APP_VERSION%
+:: ── 5. Build Server GUI (skip install if exists) ────
 
-:: ── 6. Build Server GUI Electron App ────────────────
-
-echo [5/7] Building Server GUI (Electron)...
+echo [4/6] Building Server GUI...
 pushd ..\server-gui
-call npm install
+if not exist "node_modules" (
+    echo   Installing dependencies...
+    if "%PKG%"=="bun" (call bun install) else (call npm install --prefer-offline)
+) else (
+    echo   Dependencies already installed — skipping
+)
 if %errorlevel% neq 0 (
-    echo [ERROR] npm install failed for server-gui.
+    echo [ERROR] Server GUI install failed.
     popd
     pause
     exit /b 1
 )
+echo   Building portable...
 call npm run build:portable
 if %errorlevel% neq 0 (
     echo [WARN] Server GUI build failed. Falling back to CLI-only installer.
-    echo The server will still work via run-server.bat.
     popd
 ) else (
     echo [OK] Server GUI built.
@@ -104,20 +109,18 @@ if %errorlevel% neq 0 (
 )
 echo.
 
-:: ── 7. Create output directory ──────────────────────
+:: ── 6. Create output directory ──────────────────────
 
-echo [6/7] Preparing output directory...
+echo [5/6] Preparing output...
 if not exist "output" mkdir output
-echo [OK] Output directory ready.
 echo.
 
-:: ── 8. Build the Setup.exe ──────────────────────────
+:: ── 7. Build the Setup.exe ──────────────────────────
 
-echo [7/7] Creating installer...
+echo [6/6] Creating installer...
+set "APP_VERSION=%CURRENT_VERSION%"
 
-:: ── Detect NSIS Compiler ────────────────────────────
-:: NSIS may not be in PATH (default install doesn't add it)
-:: Check common install locations as fallback
+:: Detect NSIS
 set "NSIS_EXE=makensis"
 where makensis >nul 2>nul
 if %errorlevel% neq 0 (
@@ -126,56 +129,40 @@ if %errorlevel% neq 0 (
     ) else if exist "%ProgramFiles%\NSIS\makensis.exe" (
         set "NSIS_EXE=%ProgramFiles%\NSIS\makensis.exe"
     ) else (
-        :: NSIS not found — fallback to ZIP
         goto :ZIP_FALLBACK
     )
 )
 
-:: ── Compile with NSIS ────────────────────────────────
+:: Compile with NSIS
 echo Compiling with NSIS...
 "%NSIS_EXE%" /DVERSION=%APP_VERSION% setup.nsi
 if %errorlevel% equ 0 (
-    :: Find the generated installer
     for %%f in ("output\Kasalix-AI-Chat-Server-Setup-*.exe") do set "SETUP_FILE=%%~nxf"
     echo.
     echo ╔══════════════════════════════════════════════════╗
     echo ║  SUCCESS!                                       ║
     echo ║  Installer created:                             ║
     if defined SETUP_FILE (
-        echo ║    output\%SETUP_FILE%                        ║
+        echo ║    output\%SETUP_FILE%
     ) else (
-        echo ║    output\Kasalix-AI-Chat-Server-Setup-%APP_VERSION%.exe  ║
+        echo ║    output\Kasalix-AI-Chat-Server-Setup-%APP_VERSION%.exe
     )
-    echo ║                                                  ║
-    echo ║  NSIS is open-source and 100%% free for           ║
-    echo ║  commercial use. No license required.            ║
     echo ╚══════════════════════════════════════════════════╝
     echo.
     pause
     exit /b 0
 ) else (
     echo [ERROR] NSIS compilation failed.
-    echo.
-    echo You can right-click setup.nsi and select "Compile NSIS Script".
     pause
     exit /b 1
 )
 
 :ZIP_FALLBACK
-:: Fallback: create a portable ZIP archive
 echo NSIS not found. Creating portable ZIP instead...
 echo.
-echo To build the Setup.exe installer:
-echo   1. Install NSIS from: https://nsis.sourceforge.io/Download
-echo   2. Right-click setup.nsi ^> "Compile NSIS Script"
-echo      Or run: "^%ProgramFiles(x86)^%\NSIS\makensis" setup.nsi
-echo.
-echo Creating portable archive...
 
-:: Set a clean env var name (no dots) for PowerShell compatibility
 set "SERVER_APP_VER=%APP_VERSION%"
 
-:: Use PowerShell to create the ZIP
 powershell -NoProfile -Command ^
     "$staging = Join-Path (Get-Location) 'staging';" ^
     "$ver = [Environment]::GetEnvironmentVariable('SERVER_APP_VER','Process');" ^
@@ -199,16 +186,10 @@ powershell -NoProfile -Command ^
 
 echo.
 if exist "output\Kasalix-AI-Chat-Server-Portable-%APP_VERSION%.zip" (
-    echo ╔══════════════════════════════════════════════════════════╗
-    echo ║  Portable archive created:                              ║
-    echo ║    output\Kasalix-AI-Chat-Server-Portable-%APP_VERSION%.zip ║
-    echo ║                                                         ║
-    echo ║  For a proper Setup.exe:                                ║
-    echo ║    1. Install NSIS: nsis.sourceforge.io/Download          ║
-    echo ║    2. Right-click setup.nsi ^> Compile NSIS Script        ║
-    echo ╚══════════════════════════════════════════════════════════╝
-) else (
-    echo [WARN] Could not create ZIP archive. Files are ready for manual packaging.
+    echo ╔══════════════════════════════════════════════════╗
+    echo ║  Portable archive created:                      ║
+    echo ║    output\Kasalix-AI-Chat-Server-Portable-%APP_VERSION%.zip
+    echo ╚══════════════════════════════════════════════════╝
 )
 echo.
 pause

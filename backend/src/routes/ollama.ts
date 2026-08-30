@@ -2,6 +2,9 @@ import { Hono } from 'hono';
 import { spawn, execSync, type ChildProcess } from 'child_process';
 import type { Variables } from '../types';
 import { loadSettings } from './settings';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 
@@ -106,6 +109,12 @@ function killOllama(): void {
     // wmic/pkill may fail if no processes match — that's fine
     console.warn(`[ollama] Name-based kill completed: ${(e as Error).message}`);
   }
+  // Clean up ownership flag file
+  try {
+    const flagPath = path.join(os.tmpdir(), "kasalix-ollama-owned");
+    if (fs.existsSync(flagPath)) fs.unlinkSync(flagPath);
+  } catch {}
+
 }
 
 /** Spawn Ollama with the given environment overrides */
@@ -172,11 +181,19 @@ function buildOllamaEnv(kvCacheOffload: boolean, kvCacheType: string = 'f16'): R
 export async function detectOllamaOwnership(): Promise<void> {
   const running = await isOllamaRunning();
   if (running) {
-    // Ollama is already up — we didn't start it
+    // Check if server-gui started Ollama (flag file)
+    try {
+      const flagPath = path.join(os.tmpdir(), "kasalix-ollama-owned");
+      if (fs.existsSync(flagPath)) {
+        ownedByUs = true;
+        console.log("[ollama] Detected running Ollama instance (owned by app)");
+        return;
+      }
+    } catch {}
     ownedByUs = false;
-    console.log('[ollama] Detected running Ollama instance (not owned by us)');
+    console.log("[ollama] Detected running Ollama instance (not owned by us)");
   } else {
-    console.log('[ollama] No running Ollama instance detected');
+    console.log("[ollama] No running Ollama instance detected");
   }
 }
 

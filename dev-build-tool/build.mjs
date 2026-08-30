@@ -3,9 +3,6 @@
 /**
  * Developer Build Tool — builds Electron EXE and/or Android APK.
  *
- * This tool is for the developer only. It is NOT distributed to hosts
- * who download the server app.
- *
  * Usage:
  *   node build.mjs --electron     Build Electron EXE
  *   node build.mjs --android      Build Android APK
@@ -15,7 +12,7 @@
 
 import { execSync } from 'child_process';
 import { createInterface } from 'readline';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, copyFileSync, rmSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, copyFileSync, rmSync, statSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -47,17 +44,25 @@ function detectPm() {
   }
 }
 
+// Check if node_modules is newer than package.json (skip install if fresh)
+function needsInstall(dir) {
+  const nmPath = join(dir, 'node_modules');
+  const pkgPath = join(dir, 'package.json');
+  if (!existsSync(nmPath)) return true;
+  if (!existsSync(pkgPath)) return true;
+  try {
+    const nmTime = statSync(nmPath).mtimeMs;
+    const pkgTime = statSync(pkgPath).mtimeMs;
+    return pkgTime > nmTime;
+  } catch { return true; }
+}
+
 // ─── Windows Admin Elevation ────────────────────────────
-// electron-builder must extract the winCodeSign tool archive, which contains
-// symlinks. Creating symlinks requires SeCreateSymbolicLinkPrivilege — only an
-// elevated (Administrator) process has it by default. Without it the build
-// fails with "Cannot create symbolic link: A required privilege is not held".
-// If we're on Windows and NOT elevated, relaunch this script as Administrator.
 function ensureAdmin() {
   if (process.platform !== 'win32') return;
   try {
     execSync('net session', { stdio: 'ignore', windowsHide: true });
-    return; // already elevated
+    return;
   } catch { /* not elevated */ }
 
   const parts = [process.argv[1], ...process.argv.slice(2)].map((a) => `'${a.replace(/'/g, "''")}'`);
@@ -66,13 +71,14 @@ function ensureAdmin() {
   try {
     execSync(`powershell -NoProfile -Command "${psCmd}"`, { stdio: 'inherit', shell: true, windowsHide: true });
   } catch {
-    console.log('\n  ⚠️  Elevation was cancelled or failed. Re-run this tool as Administrator manually.');
+    console.log('\n  ⚠️  Elevation was cancelled or failed. Re-run as Administrator.');
     process.exit(1);
   }
   process.exit(0);
 }
 
 function run(cmd, opts = {}) {
+  const start = Date.now();
   console.log(`\n  $ ${cmd}\n`);
   try {
     execSync(cmd, {
@@ -82,22 +88,22 @@ function run(cmd, opts = {}) {
       timeout: opts.timeout || 600000,
       windowsHide: true,
     });
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    console.log(`  ✓ Done in ${elapsed}s`);
   } catch (e) {
-    console.error(`\n  ❌ Command failed: ${cmd}`);
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    console.error(`\n  ❌ Command failed after ${elapsed}s: ${cmd}`);
     throw e;
   }
 }
 
-// Keep the web favicon (public/icon.png) in sync with the current root icon.
-// Runs before BOTH Electron and Android builds so the favicon embedded in
-// dist/ (and thus the EXE, the APK, and the web) always matches the icon.
 function syncWebFavicon() {
   const faviconSrc = resolve(__dirname, '..', 'icon_client.png');
   if (!existsSync(faviconSrc)) return;
   const publicDir = join(ROOT_DIR, 'public');
   if (!existsSync(publicDir)) mkdirSync(publicDir, { recursive: true });
   copyFileSync(faviconSrc, join(publicDir, 'icon.png'));
-  console.log('  ✓ Web favicon synced from icon_client.png');
+  console.log('  ✓ Web favicon synced');
 }
 
 // ─── Config Management ──────────────────────────────────
@@ -136,8 +142,6 @@ function applyConfig(config) {
   console.log(`  ✓ Applied config to package.json`);
 }
 
-/**
-/** Persist the version to build-config.json + package.json. */
 function persistVersion(config) {
   saveJson(CONFIG_PATH, config);
   applyConfig(config);
@@ -147,6 +151,7 @@ function persistVersion(config) {
 
 async function buildElectron(config) {
   const pm = detectPm();
+  const buildStart = Date.now();
   console.log(`\n  ╔══════════════════════════════════════════╗`);
   console.log(`  ║    Building Electron EXE v${config.version.padEnd(12)}║`);
   console.log(`  ╚══════════════════════════════════════════╝\n`);
@@ -155,30 +160,30 @@ async function buildElectron(config) {
   console.log('  [1/4] Cleaning old builds...');
   const releaseDir = join(ROOT_DIR, 'release');
   if (existsSync(releaseDir)) {
-    // Windows
     try { execSync(`rmdir /s /q "${releaseDir}" 2>nul`, { shell: 'cmd.exe', windowsHide: true }); }
     catch { /* ignore */ }
   }
 
-  // Step 2: Install dependencies
-  console.log('  [2/4] Installing dependencies...');
-  run(`${pm} install`, { cwd: ROOT_DIR, timeout: 120000 });
+  // Step 2: Install dependencies (skip if fresh)
+  console.log('  [2/4] Checking dependencies...');
+  if (needsInstall(ROOT_DIR)) {
+    console.log('  Installing...');
+    run(`${pm} install`, { cwd: ROOT_DIR, timeout: 120000 });
+  } else {
+    console.log('  ✓ node_modules is fresh — skipping install');
+  }
 
   // Step 3: Build frontend with Vite
-  console.log('  [3/4] Building frontend with Vite...');
+  console.log('  [3/4] Building frontend...');
   syncWebFavicon();
   run(`${pm} run build`, { cwd: ROOT_DIR, timeout: 120000 });
 
-  // Guard: never package a dist that is missing the app entry point. A stale
-  // or incomplete dist (e.g. only icon.png) produces a client that serves
-  // "Not Found" — fail fast here instead of shipping a broken EXE.
   const distIndex = join(ROOT_DIR, 'dist', 'index.html');
   if (!existsSync(distIndex)) {
-    console.error(`\n  ❌ Frontend build did not produce ${distIndex}.`);
-    console.error('     Refusing to package a broken app. Check the Vite build above.');
+    console.error(`\n  ❌ Frontend build did not produce dist/index.html.`);
     process.exit(1);
   }
-  console.log('  ✓ dist/index.html present — packaging safe');
+  console.log('  ✓ dist/index.html present');
 
   // Step 4: Package with electron-builder
   console.log('  [4/4] Packaging Electron app...');
@@ -190,7 +195,7 @@ async function buildElectron(config) {
     timeout: 300000,
   });
 
-  // Copy EXE to root release/ directory
+  // Copy EXE to root release/
   const rootReleaseDir = resolve(__dirname, '..', 'release');
   if (!existsSync(rootReleaseDir)) mkdirSync(rootReleaseDir, { recursive: true });
   try {
@@ -205,13 +210,14 @@ async function buildElectron(config) {
     console.log(`  ⚠️  Could not copy to release/: ${err.message}`);
   }
 
-  console.log(`\n  ✅ Build complete!`);
-  console.log(`     ${config.productName} v${config.version}`);    console.log(`     Output: ${rootReleaseDir}\\`);
-  console.log(`     To distribute: share the Setup .exe file from the release folder.`);
-  console.log(`     Auto-update: place latest.yml + new .exe in the root release/ folder.\n`);
+  const totalElapsed = ((Date.now() - buildStart) / 1000).toFixed(1);
+  console.log(`\n  ✅ Build complete in ${totalElapsed}s`);
+  console.log(`     ${config.productName} v${config.version}`);
+  console.log(`     Output: ${rootReleaseDir}\\\n`);
 }
 
 async function buildAndroid(config) {
+  const buildStart = Date.now();
   console.log(`\n  ╔══════════════════════════════════════════╗`);
   console.log(`  ║    Building Android APK v${config.version.padEnd(12)}║`);
   console.log(`  ╚══════════════════════════════════════════╝\n`);
@@ -224,59 +230,58 @@ async function buildAndroid(config) {
     return;
   }
 
-  // Step 1: Install deps
-  console.log('  [1/4] Installing dependencies...');
-  run(`${pm} install`, { cwd: ROOT_DIR, timeout: 120000 });
+  // Step 1: Install deps (skip if fresh)
+  console.log('  [1/5] Checking dependencies...');
+  if (needsInstall(ROOT_DIR)) {
+    console.log('  Installing...');
+    run(`${pm} install`, { cwd: ROOT_DIR, timeout: 120000 });
+  } else {
+    console.log('  ✓ node_modules is fresh — skipping install');
+  }
 
   // Step 2: Build frontend
-  console.log('  [2/4] Building frontend with Vite...');
+  console.log('  [2/5] Building frontend...');
   syncWebFavicon();
   run(`${pm} run build`, { cwd: ROOT_DIR, timeout: 120000 });
 
-  // Step 3: Generate Android icons from the source logo in assets/
-  // capacitor-assets v3 reads assets/logo.png (no --path flag supported).
-  // The build tool copies the root icon_client.png there before running.
+  // Step 3: Generate Android icons
   const rootIcon = resolve(__dirname, '..', 'icon_client.png');
   const assetsDir = join(ROOT_DIR, 'assets');
   if (existsSync(rootIcon)) {
-    console.log('  [3/5] Generating Android icons from root icon_client.png...');
+    console.log('  [3/5] Generating Android icons...');
     try {
-      // Keep assets/logo.png in sync with the current root icon
       if (!existsSync(assetsDir)) mkdirSync(assetsDir, { recursive: true });
       copyFileSync(rootIcon, join(assetsDir, 'logo.png'));
       run(`npx @capacitor/assets generate --android --iconBackgroundColor "#030712" --splashBackgroundColor "#030712"`, {
         cwd: ROOT_DIR,
         timeout: 60000,
       });
-      console.log('  [OK] Android icons regenerated from icon_client.png');
     } catch {
       console.log('  [WARN] Icon generation failed — using existing icons');
     }
   } else {
-    console.log('  [SKIP] No icon_client.png found at root — using existing icons');
+    console.log('  [SKIP] No icon_client.png found — using existing icons');
   }
 
   // Step 4: Sync to Capacitor
   console.log('  [4/5] Syncing to Capacitor...');
   run('npx cap sync android', { cwd: ROOT_DIR, timeout: 60000 });
 
-  // Step 5: Build APK with Gradle
-  console.log('  [5/5] Building APK with Gradle (this may take a while)...');
+  // Step 5: Build APK
+  console.log('  [5/5] Building APK with Gradle...');
   run('gradlew.bat assembleDebug', { cwd: androidDir, timeout: 600000 });
 
-  // Copy APK to root release/ directory with a descriptive filename
-  // e.g. "Kasalix AI Chat" v1.6.4 → "Kasalix-AI-Chat-Android-v1.6.4.apk"
+  // Copy APK
   const apkDir = join(androidDir, 'app', 'build', 'outputs', 'apk', 'debug');
   const rootReleaseDir = resolve(__dirname, '..', 'release');
   if (!existsSync(rootReleaseDir)) mkdirSync(rootReleaseDir, { recursive: true });
   const apkBaseName = `${config.productName} Android v${config.version}`
-    .replace(/[^\w\- .]+/g, '') // keep letters/digits/underscore/dash/dot only
+    .replace(/[^\w\- .]+/g, '')
     .trim()
     .replace(/\s+/g, '-')
-    .replace(/-{2,}/g, '-'); // collapse any double dashes
+    .replace(/-{2,}/g, '-');
   let apkFileName = null;
   try {
-    // Remove stale APKs from previous builds so release/ only has the current one
     for (const f of readdirSync(rootReleaseDir)) {
       if (f.endsWith('.apk')) {
         try { rmSync(join(rootReleaseDir, f), { force: true }); }
@@ -289,17 +294,16 @@ async function buildAndroid(config) {
         apkFileName = `${apkBaseName}.apk`;
         copyFileSync(join(apkDir, f), join(rootReleaseDir, apkFileName));
         console.log(`     Copied ${f} → release/${apkFileName}`);
-        break; // only ship the primary APK
+        break;
       }
     }
-    if (!apkFileName) console.log('  ⚠️  No .apk found in Gradle output — check the build above.');
   } catch (err) {
-    console.log(`  ⚠️  Could not copy APK to release/: ${err.message}`);
+    console.log(`  ⚠️  Could not copy APK: ${err.message}`);
   }
 
-  console.log(`\n  ✅ Android APK build complete!`);
-  console.log(`     Output: ${rootReleaseDir}\\`);
-  console.log(`     File: ${apkFileName || 'app-debug.apk (copy failed)'}\n`);
+  const totalElapsed = ((Date.now() - buildStart) / 1000).toFixed(1);
+  console.log(`\n  ✅ Android APK build complete in ${totalElapsed}s`);
+  console.log(`     Output: ${rootReleaseDir}\\\n`);
 }
 
 // ─── Interactive Menu ──────────────────────────────────
@@ -333,8 +337,6 @@ function showMenu() {
   console.log('  [8] Build both (EXE + APK)');
   console.log('  [Q] Quit');
   console.log('');
-  console.log('  ℹ️  Version is taken from frontend/build-config.json');
-  console.log('');
 }
 
 async function interactiveMenu(config) {
@@ -360,9 +362,7 @@ async function interactiveMenu(config) {
       }
       case '4': {
         const v = await ask(`  Enter version (current: ${config.version}): `);
-        if (v.trim()) {
-          config.version = v.trim();
-        }
+        if (v.trim()) config.version = v.trim();
         break;
       }
       case '5': {
@@ -426,10 +426,7 @@ async function main() {
     await interactiveMenu(config);
   } else {
     const building = args.includes('--electron') || args.includes('--android') || args.includes('--all');
-    // Always persist the version from build-config.json
-    if (building) {
-      persistVersion(config);
-    }
+    if (building) persistVersion(config);
     if (args.includes('--electron')) await buildElectron(config);
     if (args.includes('--android')) await buildAndroid(config);
     if (!building) {
