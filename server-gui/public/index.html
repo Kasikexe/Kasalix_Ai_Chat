@@ -43,7 +43,7 @@
         Server
       </div>
       <button class="btn-icon" id="minimizeBtn" title="Minimize to tray">─</button>
-      <button class="btn-icon btn-close" id="closeBtn" title="Close (server keeps running)">✕</button>
+      <button class="btn-icon btn-close" id="closeBtn" title="Close (server keeps running)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
   </header>
 
@@ -137,7 +137,7 @@
         <!-- Cloud Usage Bar -->
         <div class="cloud-usage-card" id="cloudUsageCard" style="display:none">
           <div class="cloud-usage-header">
-            <span class="cloud-usage-title">☁️ Cloud Usage</span>
+            <span class="cloud-usage-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg> Cloud Usage</span>
             <span class="cloud-usage-count" id="cloudUsageCount">0 / 0</span>
           </div>
           <div class="cloud-usage-bar">
@@ -148,7 +148,7 @@
             <span id="cloudUsagePeriod">This month</span>
           </div>
           <div class="cloud-usage-cost" id="cloudUsageCost" style="display:none">
-            <span class="cloud-cost-icon">💲</span>
+            <span class="cloud-cost-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span>
             <span class="cloud-cost-label">Est. cost:</span>
             <span class="cloud-cost-value" id="cloudCostValue">$0.00</span>
           </div>
@@ -208,7 +208,7 @@
           <span class="dl-badge" id="releaseVersion"></span>
         </div>
         <button class="download-btn" id="downloadWin">
-          <span class="dl-icon">🪟</span>
+          <span class="dl-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span>
           <span class="dl-text">
             <span>Windows Desktop (EXE)</span>
             <span class="dl-status" id="dlWinStatus">Click to download</span>
@@ -216,7 +216,7 @@
           <span class="dl-progress" id="dlWinProgress"></span>
         </button>
         <button class="download-btn" id="downloadAndroid">
-          <span class="dl-icon">📱</span>
+          <span class="dl-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg></span>
           <span class="dl-text">
             <span>Android App (APK)</span>
             <span class="dl-status" id="dlAndroidStatus">Click to download</span>
@@ -334,7 +334,7 @@
           <button class="btn-icon log-expand-btn" id="toggleLogBtn" title="Expand / collapse log">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
-          <button class="btn-icon log-clear-btn" id="clearLogBtn" title="Clear log">🗑</button>
+          <button class="btn-icon log-clear-btn" id="clearLogBtn" title="Clear log"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
         </div>
         <div class="log-panel" id="logPanel">
           <div class="log-empty">Waiting for server output…</div>
@@ -382,7 +382,7 @@
       </div>
     </div>
     <div class="view-locked" id="modelsLocked" style="display:none">
-      <p>🔒 Unlock the admin panel (Settings Password on the Dashboard) to edit model assignments.</p>
+      <p><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Unlock the admin panel (Settings Password on the Dashboard) to edit model assignments.</p>
     </div>
     <!-- Quick assignment summary -->
     <div class="models-summary" id="modelsSummary" style="display:none">
@@ -424,7 +424,7 @@
       </div>
     </div>
     <div class="view-locked" id="speedLocked" style="display:none">
-      <p>🔒 Unlock the admin panel (Settings Password on the Dashboard) to run speed tests.</p>
+      <p><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Unlock the admin panel (Settings Password on the Dashboard) to run speed tests.</p>
     </div>
     <div class="speed-timeline" id="speedTimeline">
       <div class="speed-empty">No speed test results yet. Click "Run All Tests" to benchmark your models.</div>
@@ -447,7 +447,7 @@
       </div>
     </div>
     <div class="view-locked" id="pluginsLocked" style="display:none">
-      <p>🔒 Unlock the admin panel (Settings Password on the Dashboard) to install, enable, or remove plugins.</p>
+      <p><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Unlock the admin panel (Settings Password on the Dashboard) to install, enable, or remove plugins.</p>
     </div>
     <div class="plugins-catalog" id="pluginsCatalog">
       <div class="plugins-loading">Loading catalog…</div>
@@ -484,12 +484,12 @@
             <span class="mode-desc">Try cloud first, fall back to local if unavailable</span>
           </button>
           <button class="apikeys-mode-btn" data-mode="local">
-            <span class="mode-icon">🖥️</span>
+            <span class="mode-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span>
             <span class="mode-label">Local Only</span>
             <span class="mode-desc">Only use local Ollama models, no cloud fallback</span>
           </button>
           <button class="apikeys-mode-btn" data-mode="cloud">
-            <span class="mode-icon">☁️</span>
+            <span class="mode-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg></span>
             <span class="mode-label">Cloud Only</span>
             <span class="mode-desc">Only use Ollama Cloud, no fallback to local</span>
           </button>
@@ -561,7 +561,7 @@
         </div>
         <div class="cost-breakdown-list" id="costBreakdownList"></div>
         <div class="cost-note">
-          <span>💡</span> Cost is estimated from token usage × model pricing. Actual costs may vary.
+          <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg></span> Cost is estimated from token usage × model pricing. Actual costs may vary.
         </div>
       </div>
 
@@ -650,7 +650,7 @@
         <p class="apikeys-desc">The context cache stores your conversation history. Choose where it lives — GPU is faster, RAM allows much longer context windows.</p>
         <div class="ollama-split-layout">
           <button class="ollama-option-card" id="kvOptionGpu" type="button">
-            <div class="ollama-option-icon">🎮</div>
+            <div class="ollama-option-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="12" x2="10" y2="12"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="15" y1="13" x2="15.01" y2="13"/><line x1="18" y1="11" x2="18.01" y2="11"/><rect x="2" y="6" width="20" height="12" rx="6" ry="6"/></svg></div>
             <div class="ollama-option-info">
               <span class="ollama-option-title">GPU</span>
               <span class="ollama-option-desc">Fastest — conversation context lives in VRAM alongside model weights. Limited by your GPU memory.</span>
@@ -875,7 +875,7 @@
               <div class="apikeys-hint" id="detailModalFamily" style="margin:0;"></div>
             </div>
           </div>
-          <button class="btn-icon" id="detailModalClose">✕</button>
+          <button class="btn-icon" id="detailModalClose"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
         <div class="modal-body" id="detailModalBody">
           <div class="detail-capabilities" id="detailCapabilities"></div>
@@ -900,7 +900,7 @@
       <div class="modal modal-sm">
         <div class="modal-header">
           <h3>Restart Ollama</h3>
-          <button class="btn-icon" onclick="document.getElementById('ollamaRestartModal').style.display='none'">✕</button>
+          <button class="btn-icon" onclick="document.getElementById('ollamaRestartModal').style.display='none'"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
         <div class="modal-body">
           <p id="ollamaRestartMsg">Ollama will be restarted with new settings.</p>
@@ -919,7 +919,7 @@
     <div class="modal modal-sm">
       <div class="modal-header">
         <h3>Unsaved Changes</h3>
-        <button class="btn-icon" id="ollamaUnsavedClose">✕</button>
+        <button class="btn-icon" id="ollamaUnsavedClose"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
       <div class="modal-body">
         <p style="font-size:13px;color:var(--text);margin:0 0 12px 0;">You have unsaved Ollama settings. What would you like to do?</p>
@@ -935,7 +935,7 @@
     <div class="modal">
       <div class="modal-header">
         <h3 id="speedModalTitle">Speed Test Results</h3>
-        <button class="btn-icon" id="speedModalClose">✕</button>
+        <button class="btn-icon" id="speedModalClose"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
       <div class="modal-body" id="speedModalBody"></div>
     </div>
@@ -946,7 +946,7 @@
     <div class="modal modal-sm">
       <div class="modal-header">
         <h3 id="installModalTitle">Missing component</h3>
-        <button class="btn-icon" id="installModalClose">✕</button>
+        <button class="btn-icon" id="installModalClose"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
       <div class="modal-body">
         <p id="installModalMsg"></p>
@@ -961,7 +961,7 @@
   <!-- ═══ Install Progress Overlay ═══ -->
   <div class="overlay" id="installProgressOverlay" style="display:none">
     <div class="overlay-content">
-      <div class="overlay-icon" id="installProgressIcon">⬇️</div>
+      <div class="overlay-icon" id="installProgressIcon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></div>
       <h2 id="installProgressTitle">Installing...</h2>
       <div class="overlay-log" id="installProgressMsg"></div>
       <div class="progress-track"><div class="progress-fill" id="installProgressBar" style="width:0%"></div></div>
@@ -972,7 +972,7 @@
   <!-- ═══ Start-up Checklist (shown on launch) ═══ -->
   <div class="overlay" id="startupOverlay">
     <div class="overlay-content">
-      <div class="overlay-icon">🚀</div>
+      <div class="overlay-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg></div>
       <h2>Starting Kasalix AI Chat Server</h2>
       <div class="checklist" id="checklist">
         <div class="check-item" id="check-bun">

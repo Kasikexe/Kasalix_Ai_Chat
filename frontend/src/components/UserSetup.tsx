@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LogIn, UserPlus, Eye, EyeOff, AlertCircle, Settings } from 'lucide-react';
+import { LogIn, UserPlus, Eye, EyeOff, AlertCircle, Settings, Bot } from 'lucide-react';
 import { api } from '../services/api';
 import { ServerConfig } from './ServerConfig';
 
@@ -92,7 +92,7 @@ export function UserSetup({ onSubmit }: Props) {
  margin: '0 auto 16px',
  fontSize: '24px',
  }}>
- 🤖
+ <Bot size={28} color="#fff" />
  </div>
 
  <h1 style={{ fontSize: '24px', fontWeight: 600, textAlign: 'center', marginBottom: '4px' }}>

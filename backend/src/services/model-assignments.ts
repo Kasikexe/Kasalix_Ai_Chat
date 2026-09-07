@@ -5,6 +5,24 @@ import { getCloudSettings } from '../routes/settings';
 
 const SETTINGS_FILE = path.join(getDataDir(), 'settings.json');
 
+// In-memory cache for settings file (avoids multiple disk reads per request)
+let _settingsCache: { data: any; timestamp: number } | null = null;
+const SETTINGS_CACHE_TTL = 2000; // 2 seconds
+
+async function readSettingsCached(): Promise<any> {
+  if (_settingsCache && Date.now() - _settingsCache.timestamp < SETTINGS_CACHE_TTL) {
+    return _settingsCache.data;
+  }
+  try {
+    const data = await fs.readFile(SETTINGS_FILE, 'utf-8');
+    const parsed = JSON.parse(data);
+    _settingsCache = { data: parsed, timestamp: Date.now() };
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
 /**
  * All assignable model roles in the app.
  * Keys map to UI categories; values are Ollama model names (e.g. "qwen3:4b").
@@ -21,7 +39,6 @@ export interface ModelAssignments {
   vision: string;
   extraction: string;
   search: string;
-  image_generation: string;
 }
 
 export const ASSIGNMENT_KEYS: (keyof ModelAssignments)[] = [
@@ -31,7 +48,6 @@ export const ASSIGNMENT_KEYS: (keyof ModelAssignments)[] = [
   'vision',
   'extraction',
   'search',
-  'image_generation',
 ];
 
 export const ASSIGNMENT_LABELS: Record<keyof ModelAssignments, string> = {
@@ -41,7 +57,6 @@ export const ASSIGNMENT_LABELS: Record<keyof ModelAssignments, string> = {
   vision: 'Vision Analysis',
   extraction: 'Memory Extraction',
   search: 'Web Search',
-  image_generation: 'Image Generation',
 };
 
 export const ASSIGNMENT_ICONS: Record<keyof ModelAssignments, string> = {
@@ -51,7 +66,6 @@ export const ASSIGNMENT_ICONS: Record<keyof ModelAssignments, string> = {
   vision: '👁️',
   extraction: '🧠',
   search: '🌐',
-  image_generation: '🎨',
 };
 
 const DEFAULTS: ModelAssignments = {
@@ -61,7 +75,6 @@ const DEFAULTS: ModelAssignments = {
   vision: 'qwen2.5vl:3b',
   extraction: 'qwen2.5:3b',
   search: 'qwen2.5:3b',
-  image_generation: '',
 };
 
 /** Env-var names for legacy backward compatibility */
@@ -72,7 +85,6 @@ const ENV_MAP: Record<keyof ModelAssignments, string> = {
   vision: 'VISION_MODEL',
   extraction: 'EXTRACTOR_MODEL',
   search: 'SEARCH_MODEL',
-  image_generation: 'IMAGE_GENERATION_MODEL',
 };
 
 /**
@@ -82,8 +94,7 @@ const ENV_MAP: Record<keyof ModelAssignments, string> = {
 export async function getModelAssignment(category: keyof ModelAssignments): Promise<string> {
   // 1. Check settings file first
   try {
-    const data = await fs.readFile(SETTINGS_FILE, 'utf-8');
-    const settings = JSON.parse(data);
+    const settings = await readSettingsCached();
     const ma = settings.modelAssignments;
     // An EXPLICIT value wins — even an empty string, which the host uses to
     // set a category to "none" (no default fallback for those).
@@ -152,8 +163,7 @@ export async function getResolvedModel(
  */
 export async function getCloudModelAssignment(category: keyof ModelAssignments): Promise<string> {
   try {
-    const data = await fs.readFile(SETTINGS_FILE, 'utf-8');
-    const settings = JSON.parse(data);
+    const settings = await readSettingsCached();
     const cma = settings.cloudModelAssignments;
     if (cma && typeof cma[category] === 'string') {
       return cma[category];

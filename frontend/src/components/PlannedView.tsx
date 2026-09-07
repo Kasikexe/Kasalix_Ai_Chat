@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ListChecks, Plus, X, Loader, Trash2, Check, Lightbulb } from 'lucide-react';
+import { ListChecks, Plus, X, Loader, Trash2, Check, Lightbulb, ClipboardList, Globe, Palette, Rocket, Wrench, Bot, Zap, Package, Hammer, Target, BarChart3, RefreshCw, Lock, Smartphone, type LucideIcon } from 'lucide-react';
 import { api } from '../services/api';
 
 interface PlannedFeature {
@@ -18,7 +18,23 @@ const STATUS_STYLES: Record<string, { label: string; color: string }> = {
  planned: { label: 'Planned', color: 'bg-gray-800 text-gray-500 border-gray-700/50' },
 };
 
-const EMOJI_OPTIONS = ['📋', '🌐', '🎨', '🚀', '💡', '🔧', '🤖', '⚡', '📦', '🛠️', '🎯', '📊', '🔄', '🔒', '📱'];
+const FEATURE_ICONS: { id: string; Icon: LucideIcon }[] = [
+ { id: 'clipboard', Icon: ClipboardList },
+ { id: 'globe', Icon: Globe },
+ { id: 'palette', Icon: Palette },
+ { id: 'rocket', Icon: Rocket },
+ { id: 'bulb', Icon: Lightbulb },
+ { id: 'wrench', Icon: Wrench },
+ { id: 'bot', Icon: Bot },
+ { id: 'zap', Icon: Zap },
+ { id: 'package', Icon: Package },
+ { id: 'hammer', Icon: Hammer },
+ { id: 'target', Icon: Target },
+ { id: 'chart', Icon: BarChart3 },
+ { id: 'refresh', Icon: RefreshCw },
+ { id: 'lock', Icon: Lock },
+ { id: 'phone', Icon: Smartphone },
+];
 
 export function PlannedView({ isAdmin = false }: { isAdmin?: boolean }) {
  const [features, setFeatures] = useState<PlannedFeature[]>([]);
@@ -27,7 +43,7 @@ export function PlannedView({ isAdmin = false }: { isAdmin?: boolean }) {
  const [formTitle, setFormTitle] = useState('');
  const [formDescription, setFormDescription] = useState('');
  const [formStatus, setFormStatus] = useState<'done' | 'in-progress' | 'planned'>('planned');
- const [formIcon, setFormIcon] = useState('📋');
+ const [formIcon, setFormIcon] = useState('clipboard');
  const [submitting, setSubmitting] = useState(false);
  const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -50,7 +66,7 @@ export function PlannedView({ isAdmin = false }: { isAdmin?: boolean }) {
  setFormTitle('');
  setFormDescription('');
  setFormStatus('planned');
- setFormIcon('📋');
+ setFormIcon('clipboard');
  setEditingId(null);
  setShowForm(false);
  };
@@ -85,7 +101,7 @@ export function PlannedView({ isAdmin = false }: { isAdmin?: boolean }) {
  setFormTitle(feature.title);
  setFormDescription(feature.description);
  setFormStatus(feature.status);
- setFormIcon(feature.icon);
+ setFormIcon(FEATURE_ICONS.some((f) => f.id === feature.icon) ? feature.icon : 'clipboard');
  setShowForm(true);
  };
 
@@ -166,19 +182,19 @@ export function PlannedView({ isAdmin = false }: { isAdmin?: boolean }) {
  <div>
  <label className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">Icon</label>
  <div className="mt-1 flex flex-wrap gap-1 w-44">
- {EMOJI_OPTIONS.map((emoji) => (
+ {FEATURE_ICONS.map(({ id: optId, Icon: OptIcon }) => (
  <button
  type="button"
- key={emoji}
- onClick={() => setFormIcon(emoji)}
+ key={optId}
+ onClick={() => setFormIcon(optId)}
  className={`w-7 h-7 flex items-center justify-center rounded-lg text-sm transition-all ${
- formIcon === emoji
+ formIcon === optId
  ? 'bg-amber-600/30 border border-[#b8966a] scale-110'
  : 'bg-gray-800 border border-gray-700 hover:bg-gray-700'
  }`}
- title={emoji}
+ title={optId}
  >
- {emoji}
+ <OptIcon size={14} className="mx-auto" />
  </button>
  ))}
  </div>
@@ -225,7 +241,7 @@ export function PlannedView({ isAdmin = false }: { isAdmin?: boolean }) {
  feature.status === 'in-progress' ? 'bg-[#1a1610]' :
  'bg-gray-800'
  }`}>
- {feature.icon || '📋'}
+ {(() => { const fi = FEATURE_ICONS.find((f) => f.id === feature.icon); const IconCmp = fi ? fi.Icon : ListChecks; return <IconCmp size={18} className="mx-auto" />; })()}
  </div>
 
  {/* Content */}

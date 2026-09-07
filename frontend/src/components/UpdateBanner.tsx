@@ -154,7 +154,7 @@ export function UpdateBanner() {
  </div>
  <div className="flex-1 min-w-0">
  <p className={`text-sm font-medium ${isCritical ? 'text-red-200' : 'text-emerald-200'}`}>
- {isCritical ? '🚨 Big Update Ready' : `Update v${state.info.version} available`}
+ {isCritical ? 'Big Update Ready' : `Update v${state.info.version} available`}
  </p>
  <p className={`text-[11px] mt-0.5 ${isCritical ? 'text-[#c44]/70' : 'text-[#4a9988]/70'}`}>
  {isCritical

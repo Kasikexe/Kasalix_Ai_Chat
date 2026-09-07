@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { Play, Square, MessageSquare, Wrench, ClipboardList, FileText, CheckCircle2, Search, Brain, RefreshCw, XCircle, type LucideIcon } from 'lucide-react';
 
 // ─── Event types (mirrors backend session-log.ts) ──────────────────────
 
@@ -26,18 +27,18 @@ interface SessionEvent {
 
 // ─── Color mapping by event type ────────────────────────────────────────
 
-const EVENT_STYLES: Record<string, { bg: string; border: string; icon: string; label: string }> = {
- 'run:start': { bg: 'bg-emerald-900/20', border: 'border-[#1a3a33]', icon: '▶️', label: 'Run Started' },
- 'run:end': { bg: 'bg-emerald-900/20', border: 'border-[#1a3a33]', icon: '⏹️', label: 'Run Ended' },
- 'message': { bg: 'bg-gray-800/40', border: 'border-gray-700/50', icon: '💬', label: 'Message' },
- 'tool:call': { bg: 'bg-orange-900/20', border: 'border-orange-700/50', icon: '🔧', label: 'Tool Call' },
- 'tool:result': { bg: 'bg-[#1a1610]', border: 'border-[#5a4a30]', icon: '📋', label: 'Tool Result' },
- 'plan': { bg: 'bg-[#0e1a28]', border: 'border-[#2a3a52]', icon: '📝', label: 'Plan' },
- 'plan:update': { bg: 'bg-[#0e1a28]', border: 'border-[#2a3a52]', icon: '✅', label: 'Plan Update' },
- 'verify': { bg: 'bg-green-900/20', border: 'border-green-700/50', icon: '🔍', label: 'Verification' },
- 'thinking': { bg: 'bg-purple-900/20', border: 'border-[#2a3a52]', icon: '🧠', label: 'Thinking' },
- 'stage': { bg: 'bg-sky-900/20', border: 'border-sky-700/50', icon: '🔄', label: 'Stage' },
- 'error': { bg: 'bg-red-900/20', border: 'border-[#5a3030]', icon: '❌', label: 'Error' },
+const EVENT_STYLES: Record<string, { bg: string; border: string; icon: LucideIcon; label: string }> = {
+ 'run:start': { bg: 'bg-emerald-900/20', border: 'border-[#1a3a33]', icon: Play, label: 'Run Started' },
+ 'run:end': { bg: 'bg-emerald-900/20', border: 'border-[#1a3a33]', icon: Square, label: 'Run Ended' },
+ 'message': { bg: 'bg-gray-800/40', border: 'border-gray-700/50', icon: MessageSquare, label: 'Message' },
+ 'tool:call': { bg: 'bg-orange-900/20', border: 'border-orange-700/50', icon: Wrench, label: 'Tool Call' },
+ 'tool:result': { bg: 'bg-[#1a1610]', border: 'border-[#5a4a30]', icon: ClipboardList, label: 'Tool Result' },
+ 'plan': { bg: 'bg-[#0e1a28]', border: 'border-[#2a3a52]', icon: FileText, label: 'Plan' },
+ 'plan:update': { bg: 'bg-[#0e1a28]', border: 'border-[#2a3a52]', icon: CheckCircle2, label: 'Plan Update' },
+ 'verify': { bg: 'bg-green-900/20', border: 'border-green-700/50', icon: Search, label: 'Verification' },
+ 'thinking': { bg: 'bg-purple-900/20', border: 'border-[#2a3a52]', icon: Brain, label: 'Thinking' },
+ 'stage': { bg: 'bg-sky-900/20', border: 'border-sky-700/50', icon: RefreshCw, label: 'Stage' },
+ 'error': { bg: 'bg-red-900/20', border: 'border-[#5a3030]', icon: XCircle, label: 'Error' },
 };
 
 // ─── Props ──────────────────────────────────────────────────────────────
@@ -84,6 +85,7 @@ export const TrajectoryView: React.FC<TrajectoryViewProps> = ({ events, live = f
  <div ref={containerRef} className="space-y-2 max-h-[600px] overflow-y-auto pr-2">
  {filtered.map((event) => {
  const style = EVENT_STYLES[event.type] || EVENT_STYLES['message'];
+ const IconCmp = style.icon;
  const isExpanded = expandedSeq === event.seq;
  const hasContent = event.content && event.content.length > 0;
  const contentPreview = event.content
@@ -99,7 +101,7 @@ export const TrajectoryView: React.FC<TrajectoryViewProps> = ({ events, live = f
  >
  {/* Header */}
  <div className="flex items-center gap-2 mb-1">
- <span className="text-sm">{style.icon}</span>
+ <span className="text-sm flex"><IconCmp size={13} /></span>
  <span className="text-xs font-medium text-gray-300">{style.label}</span>
  {event.label && (
  <span className="text-xs px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 font-mono">

@@ -14,6 +14,39 @@ function esc(str) {
     .replace(/'/g, '&#39;');
 }
 
+// Reusable inline SVG icons (lucide-style) for UI text that used emoji.
+const S_CHECK = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+const S_XCIRC = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+const S_WARN = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+const S_INFO = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
+const S_CLOUD = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>';
+const S_MONITOR = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>';
+const S_BULB = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg>';
+const S_STAR = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+const S_BUG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2l1.88 1.88"/><path d="M14.12 3.88L16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/></svg>';
+const S_PLAY = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+const S_SQUARE = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
+const S_CHAT = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+const S_WRENCH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>';
+const S_CLIP = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>';
+const S_FILE = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+const S_SEARCH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+const S_BRAIN = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg>';
+const S_RFRESH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>';
+const S_SPARK = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3z"/></svg>';
+const S_LOCK = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+const S_PAUSE = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>';
+const S_TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+const S_CAL = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>';
+const S_DB = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>';
+const S_ANTENNA = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10a16 16 0 0 1 16 0"/><path d="M6.4 14a10.5 10.5 0 0 1 11.2 0"/><circle cx="12" cy="18" r="1"/></svg>';
+const S_PUZZLE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02z"/></svg>';
+const S_EYE = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+const S_ZAP = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>';
+const S_TARGET = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>';
+const S_X = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+const S_TIMER = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M9 2h6"/></svg>';
+
 // ─── State ───────────────────────────────────────────────────────
 let state = {
   serverRunning: false,
@@ -160,7 +193,7 @@ async function ensureOllama() {
   // 3. Ollama not running — show message in startup log
   log('');
   log('╔══════════════════════════════════════════╗');
-  log('║  🤖 Ollama is not running                ║');
+  log('║     Ollama is not running                ║');
   log('║                                          ║');
   log('║  Please open the Ollama app from your    ║');
   log('║  Start menu or system tray, then click   ║');
@@ -677,10 +710,10 @@ const feedbackDropdown = $('feedbackDropdown');
 
 // Render the menu from the config above
 const FEEDBACK_ITEMS = [
-  { emoji: '🐞', title: 'Report a bug', sub: 'Open a GitHub issue', url: FEEDBACK_CONFIG.issueUrl },
-  { emoji: '💡', title: 'Suggest an idea', sub: 'GitHub Discussions — Ideas', url: FEEDBACK_CONFIG.ideasUrl },
+  { icon: S_BUG, title: 'Report a bug', sub: 'Open a GitHub issue', url: FEEDBACK_CONFIG.issueUrl },
+  { icon: S_BULB, title: 'Suggest an idea', sub: 'GitHub Discussions — Ideas', url: FEEDBACK_CONFIG.ideasUrl },
   null,
-  { emoji: '⭐', title: 'Visit repository', sub: FEEDBACK_CONFIG.repoUrl.replace('https://', ''), url: FEEDBACK_CONFIG.repoUrl },
+  { icon: S_STAR, title: 'Visit repository', sub: FEEDBACK_CONFIG.repoUrl.replace('https://', ''), url: FEEDBACK_CONFIG.repoUrl },
 ];
 feedbackDropdown.innerHTML = FEEDBACK_ITEMS.map((item) =>
   item
@@ -965,7 +998,7 @@ function refreshAuthedView() {
 // ══════════════════════════════════════════════════════
 const MODEL_KEYS = [
   'chat', 'chat_thinking', 'code', 'vision', 'extraction',
-  'search', 'image_generation',
+  'search',
 ];
 const MODEL_LABELS = {
   chat: 'Chat',
@@ -974,11 +1007,10 @@ const MODEL_LABELS = {
   vision: 'Vision Analysis',
   extraction: 'Memory Extraction',
   search: 'Web Search',
-  image_generation: 'Image Generation',
 };
 const MODEL_ICONS = {
   chat: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>', chat_thinking: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg>', code: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>', vision: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
-  extraction: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg>', search: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>', image_generation: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+  extraction: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg>', search: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>',
 };
 const DEFAULT_ASSIGNMENTS = {
   chat: 'qwen3:4b',
@@ -987,7 +1019,6 @@ const DEFAULT_ASSIGNMENTS = {
   vision: 'qwen2.5vl:3b',
   extraction: 'qwen2.5:3b',
   search: 'qwen2.5:3b',
-  image_generation: 'x/flux2-klein',
 };
 
 let installedModels = [];
@@ -1106,13 +1137,13 @@ function renderModelsGrid() {
       })
       .join('');
     const thinkingNote = key === 'chat' && cur && !installedModels.find((m) => m.name === cur)?.supportsThinking
-      ? '<div class="model-note">⚠️ This model has no thinking mode — a separate Thinking model below is used while the Thinking toggle is on.</div>'
+      ? '<div class="model-note">This model has no thinking mode — a separate Thinking model below is used while the Thinking toggle is on.</div>'
       : '';
     const thinkingRoleNote = key === 'chat_thinking'
       ? '<div class="model-note">Used only when the Thinking toggle is ON, because the Chat model above can\'t think.</div>'
       : '';
     const suggBtn = suggestion && suggestion !== cur
-      ? `<button class="model-chip suggestion" data-key="${key}" data-model="${suggestion}">✨ ${esc(suggestion)}</button>`
+      ? `<button class="model-chip suggestion" data-key="${key}" data-model="${suggestion}">${S_SPARK} ${esc(suggestion)}</button>`
       : '';
     const noneBtn = `<button class="model-chip none${cur === '' ? ' selected' : ''}" data-key="${key}" data-model="" title="Clear this category — no model used">None</button>`;
     return `<div class="model-card">
@@ -1138,7 +1169,7 @@ function renderModelsGrid() {
   const cloudLoading = fetchingCloudModels
     ? '<div class="models-loading">Fetching Ollama Cloud models…</div>'
     : availableCloudModels.length === 0
-      ? `<div class="models-loading">${cloudModelsError ? '⚠️ ' + esc(cloudModelsError) : 'No Ollama Cloud models found. Check your endpoint and API key in the API Keys tab.'}</div>`
+      ? `<div class="models-loading">${cloudModelsError ? S_WARN + ' ' + esc(cloudModelsError) : 'No Ollama Cloud models found. Check your endpoint and API key in the API Keys tab.'}</div>`
     : '';
 
   // Estimate usage level for a model (1=light, 4=heavy) based on name patterns
@@ -1213,7 +1244,7 @@ function renderModelsGrid() {
   grid.innerHTML = `
     <div class="models-section">
       <div class="models-section-header">
-        <span class="section-icon">🖥️</span>
+        <span class="section-icon">${S_MONITOR}</span>
         <div>
           <h3>Local Models (Ollama)</h3>
           <p>Pick from installed Ollama models on this machine</p>
@@ -1223,7 +1254,7 @@ function renderModelsGrid() {
     </div>
     <div class="models-section">
       <div class="models-section-header">
-        <span class="section-icon">☁️</span>
+        <span class="section-icon">${S_CLOUD}</span>
         <div>
           <h3>Ollama Cloud</h3>
           <p>Pick from Ollama Cloud models (used when mode is Auto or Cloud)</p>
@@ -1262,7 +1293,7 @@ function renderModelsGrid() {
   const refreshBtn = $('refreshCloudModelsBtn');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', async () => {
-      refreshBtn.textContent = '⏳ Loading…';
+      refreshBtn.innerHTML = `${S_RFRESH} Loading…`;
       refreshBtn.disabled = true;
       await fetchAvailableCloudModels();
       renderModelsGrid();
@@ -1407,11 +1438,11 @@ function renderTimeline() {
     return `<div class="speed-item${isLatest ? ' latest' : ''}" data-id="${r.id}">
       <div class="speed-item-top">
         <div class="speed-chips">
-          <span class="speed-chip">🗓 ${formatSpeedDate(r.date)}</span>
+          <span class="speed-chip">${S_CAL} ${formatSpeedDate(r.date)}</span>
           <span class="speed-chip"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg> ${r.modelCount} models</span>
           ${isLatest ? '<span class="speed-chip latest-chip">Latest</span>' : ''}
         </div>
-        <button class="speed-del" data-id="${r.id}" title="Delete result">🗑</button>
+        <button class="speed-del" data-id="${r.id}" title="Delete result">${S_TRASH}</button>
       </div>
       <div class="speed-model-badges">${badges}</div>
       <div class="speed-quick">
@@ -1482,10 +1513,10 @@ function openSpeedDetail(r) {
 
   const summary = `
     <div class="summary-cards">
-      <div class="summary-card"><div class="sc-label">⏱ Total Duration</div><div class="sc-value">${formatDuration(r.totalDurationMs)}</div></div>
-      <div class="summary-card"><div class="sc-label">🧠 Models Tested</div><div class="sc-value">${r.modelCount}</div></div>
-      <div class="summary-card"><div class="sc-label">⚡ Avg Response</div><div class="sc-value">${formatDuration(r.summary.avgResponseTimeMs)}</div></div>
-      <div class="summary-card"><div class="sc-label">🎯 Avg Quality</div><div class="sc-value" style="color:${qualityColor(r.summary.avgQualityScore)}">${r.summary.avgQualityScore}%</div></div>
+      <div class="summary-card"><div class="sc-label">${S_TIMER} Total Duration</div><div class="sc-value">${formatDuration(r.totalDurationMs)}</div></div>
+      <div class="summary-card"><div class="sc-label">${S_BRAIN} Models Tested</div><div class="sc-value">${r.modelCount}</div></div>
+      <div class="summary-card"><div class="sc-label">${S_ZAP} Avg Response</div><div class="sc-value">${formatDuration(r.summary.avgResponseTimeMs)}</div></div>
+      <div class="summary-card"><div class="sc-label">${S_TARGET} Avg Quality</div><div class="sc-value" style="color:${qualityColor(r.summary.avgQualityScore)}">${r.summary.avgQualityScore}%</div></div>
     </div>`;
 
   const modelCards = `
@@ -1535,12 +1566,12 @@ function openSpeedDetail(r) {
 
   const qualityBlock = `
     <div class="chart-block">
-      <div class="chart-title">🎯 Quality Score by Test — check details below each bar</div>
+      <div class="chart-title">${S_TARGET} Quality Score by Test — check details below each bar</div>
       ${r.tests.map((t) => {
         const q = t.qualityScore || 0;
         const color = qualityColor(q);
         const checks = (t.qualityChecks || []).map((c) =>
-          `<div class="qcheck ${c.passed ? 'pass' : 'fail'}"><span>${c.passed ? '✓' : '✗'}</span> ${c.name}${c.details ? ` <span class="qc-detail">— ${c.details}</span>` : ''}</div>`
+          `<div class="qcheck ${c.passed ? 'pass' : 'fail'}"><span>${c.passed ? S_CHECK : S_X}</span> ${c.name}${c.details ? ` <span class="qc-detail">— ${c.details}</span>` : ''}</div>`
         ).join('');
         return `<div class="qrow">
           <div class="qrow-top"><span class="qrow-name">${t.testName}</span><span class="qrow-score" style="color:${color}">${q}%</span></div>
@@ -1552,7 +1583,7 @@ function openSpeedDetail(r) {
 
   const table = `
     <div class="chart-block">
-      <div class="chart-title">📋 All Test Details</div>
+      <div class="chart-title">${S_CLIP} All Test Details</div>
       <table class="detail-table">
         <thead><tr><th>Test</th><th>Model</th><th>Status</th><th>Time</th><th>TTFB</th><th>Chars</th><th>Tok/s</th><th>Quality</th></tr></thead>
         <tbody>
@@ -1577,13 +1608,13 @@ function openSpeedDetail(r) {
 
   const errors = r.tests.filter((t) => !t.success);
   const errorsBlock = errors.length
-    ? `<div class="errors-block"><h4>⚠️ Errors</h4>${errors.map((t) => `<p><strong>${t.testName}:</strong> ${t.error || 'Unknown error'}</p>`).join('')}</div>`
+    ? `<div class="errors-block"><h4>${S_WARN} Errors</h4>${errors.map((t) => `<p><strong>${t.testName}:</strong> ${t.error || 'Unknown error'}</p>`).join('')}</div>`
     : '';
 
   $('speedModalBody').innerHTML =
     summary + modelCards +
     barChart('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg> Response Time by Test', (t) => t.totalTimeMs, formatDuration, maxTime) +
-    barChart('⚡ Tokens per Second', (t) => t.tokensPerSecond, (v) => v.toFixed(1) + ' tok/s', maxTps) +
+    barChart('Tokens per Second', (t) => t.tokensPerSecond, (v) => v.toFixed(1) + ' tok/s', maxTps) +
     qualityBlock + table + errorsBlock;
 }
 
@@ -1644,7 +1675,7 @@ async function loadPluginCatalog() {
 function pluginCard(p, authed) {
   const isEnabled = p.enabled === true;
   const badge = p.installed
-    ? `<span class="plugin-badge plugin-badge-installed" title="Installed v${escapeHtml(p.installedVersion || p.version)}">${isEnabled ? '✓ Enabled' : '⏸ Disabled'}</span>`
+    ? `<span class="plugin-badge plugin-badge-installed" title="Installed v${escapeHtml(p.installedVersion || p.version)}">${isEnabled ? S_CHECK + ' Enabled' : S_PAUSE + ' Disabled'}</span>`
     : `<span class="plugin-badge">${escapeHtml(p.version)}</span>`;
   const actions = p.installed
     ? (authed
@@ -1654,9 +1685,9 @@ function pluginCard(p, authed) {
         : `<span class="plugin-installed-note">Installed — unlock admin to manage</span>`)
     : (authed
         ? `<button class="btn btn-small btn-primary" data-act="install" data-id="${escapeHtml(p.id)}" data-source="${escapeHtml(p.source)}">Install</button>`
-        : `<span class="plugin-installed-note">🔒 Unlock admin to install</span>`);
+        : `<span class="plugin-installed-note">${S_LOCK} Unlock admin to install</span>`);
   return `<div class="plugin-card">
-    <div class="plugin-icon">${p.icon ? escapeHtml(p.icon) : '🧩'}</div>
+    <div class="plugin-icon">${p.icon ? escapeHtml(p.icon) : S_PUZZLE}</div>
     <div class="plugin-body">
       <div class="plugin-title-row">
         <span class="plugin-name">${escapeHtml(p.name)}</span>
@@ -1846,13 +1877,13 @@ function ensureToastContainer() {
 
 function showToast(message, type = 'info', duration = 5000) {
   const container = ensureToastContainer();
-  const icons = { error: '❌', warning: '⚠️', success: '✅', info: 'ℹ️' };
+  const icons = { error: S_XCIRC, warning: S_WARN, success: S_CHECK, info: S_INFO };
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
   toast.innerHTML = `
-    <span class="toast-icon">${icons[type] || 'ℹ️'}</span>
+    <span class="toast-icon">${icons[type] || S_INFO}</span>
     <span class="toast-text">${message}</span>
-    <button class="toast-close" title="Dismiss">✕</button>
+    <button class="toast-close" title="Dismiss">${S_X}</button>
   `;
   const close = () => {
     toast.classList.add('toast-exit');
@@ -2067,10 +2098,10 @@ $('resetUsageBtn').addEventListener('click', async () => {
 
 // ─── Trajectory Panel ─────────────────────────────────────────────────
 const TRAJECTORY_ICONS = {
-  'run:start': '▶️', 'run:end': '⏹️', 'message': '💬',
-  'tool:call': '🔧', 'tool:result': '📋', 'plan': '📝',
-  'plan:update': '✅', 'verify': '🔍', 'thinking': '🧠',
-  'stage': '🔄', 'error': '❌',
+ 'run:start': S_PLAY, 'run:end': S_SQUARE, 'message': S_CHAT,
+ 'tool:call': S_WRENCH, 'tool:result': S_CLIP, 'plan': S_FILE,
+ 'plan:update': S_CHECK, 'verify': S_SEARCH, 'thinking': S_BRAIN,
+ 'stage': S_RFRESH, 'error': S_XCIRC,
 };
 const TRAJECTORY_CLASSES = {
   'run:start': 'te-run', 'run:end': 'te-run', 'message': 'te-message',
@@ -2271,7 +2302,7 @@ async function refreshOllamaStatus() {
 
   try {
     const status = await API.getOllamaStatus();
-    if (runningEl) runningEl.textContent = status.running ? '✅ Running' : '❌ Stopped';
+    if (runningEl) runningEl.innerHTML = (status.running ? S_CHECK : S_XCIRC) + (status.running ? ' Running' : ' Stopped');
     if (ownershipEl) ownershipEl.textContent = status.ownedByUs ? 'Yes (app started)' : 'No (external)';
     if (loadedEl) {
       const models = status.loadedModels || [];
@@ -2281,7 +2312,7 @@ async function refreshOllamaStatus() {
     }
     if (statusText) statusText.textContent = status.running ? 'Connected' : 'Disconnected';
   } catch {
-    if (runningEl) runningEl.textContent = '❌ Unreachable';
+    if (runningEl) runningEl.innerHTML = S_XCIRC + ' Unreachable';
     if (statusText) statusText.textContent = 'Unreachable';
   }
 }
@@ -2389,10 +2420,10 @@ function updateCatalogDbBadge() {
   if (!badge) return;
   const v = catalogDbVersion === 'local' ? 'v1' : 'v' + catalogDbVersion;
   if (catalogDbSource === 'remote') {
-    badge.textContent = '📡 ' + v + ' (remote)';
+    badge.innerHTML = S_ANTENNA + ' ' + esc(v) + ' (remote)';
     badge.className = 'catalog-db-badge catalog-db-remote';
   } else {
-    badge.textContent = '💾 ' + v + ' (local)';
+    badge.innerHTML = S_DB + ' ' + esc(v) + ' (local)';
     badge.className = 'catalog-db-badge catalog-db-local';
   }
 }
@@ -2479,7 +2510,7 @@ async function loadModelCatalog() {
             <div class="catalog-model-info">
               <div class="catalog-model-name">${esc(name)}</div>
               <div class="catalog-model-meta">${esc(meta)}</div>
-              <div class="catalog-model-badges">${badges.join('')}<span class="catalog-badge catalog-badge-installed">✓ Installed</span>${size ? '<span class="catalog-badge catalog-badge-size">' + esc(size) + '</span>' : ''}</div>
+              <div class="catalog-model-badges">${badges.join('')}<span class="catalog-badge catalog-badge-installed">${S_CHECK} Installed</span>${size ? '<span class="catalog-badge catalog-badge-size">' + esc(size) + '</span>' : ''}</div>
             </div>
           </div>`;
         }).join('');
@@ -2540,7 +2571,7 @@ function filterBrowseModels(query) {
       </div>
       <button class="catalog-model-pull-btn ${isInstalled ? 'catalog-pull-installed' : ''}"
         onclick="event.stopPropagation(); ${isInstalled ? '' : `pullModelFromCatalog('${esc(m.name)}')`}"
-        ${isInstalled ? 'disabled' : ''}>${isInstalled ? '✓ Installed' : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Pull'}</button>
+        ${isInstalled ? 'disabled' : ''}>${isInstalled ? S_CHECK + ' Installed' : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Pull'}</button>
     </div>`;
   }).join('');
 }
@@ -2581,9 +2612,9 @@ function showModelDetail(modelName) {
   if (capEl) {
     if (dbEntry) {
       capEl.innerHTML = `
-        <div class="detail-cap-badge ${dbEntry.tools ? 'cap-yes' : 'cap-no'}">🔧 Tools: ${dbEntry.tools ? 'Yes' : 'No'}</div>
-        <div class="detail-cap-badge ${dbEntry.thinking ? 'cap-yes' : 'cap-no'}">🧠 Thinking: ${dbEntry.thinking ? 'Yes' : 'No'}</div>
-        <div class="detail-cap-badge ${dbEntry.vision ? 'cap-yes' : 'cap-no'}">👁 Vision: ${dbEntry.vision ? 'Yes' : 'No'}</div>
+        <div class="detail-cap-badge ${dbEntry.tools ? 'cap-yes' : 'cap-no'}">${S_WRENCH} Tools: ${dbEntry.tools ? 'Yes' : 'No'}</div>
+        <div class="detail-cap-badge ${dbEntry.thinking ? 'cap-yes' : 'cap-no'}">${S_BRAIN} Thinking: ${dbEntry.thinking ? 'Yes' : 'No'}</div>
+        <div class="detail-cap-badge ${dbEntry.vision ? 'cap-yes' : 'cap-no'}">${S_EYE} Vision: ${dbEntry.vision ? 'Yes' : 'No'}</div>
         ${dbEntry.uncensored ? '<div class="detail-cap-badge cap-no" style="border:1px solid rgba(239,68,68,0.3);">' + _iconUnlock + ' Uncensored</div>' : ''}
       `;
     } else {
@@ -2625,7 +2656,7 @@ function showModelDetail(modelName) {
           const isInst = installedModelNames.some(n => n === v.name);
           return `<div class="detail-variant-item" onclick="showModelDetail('${esc(v.name)}')">
             <span>${esc(v.name)} — ${v.params}${v.uncensored ? ' <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>' : ''}</span>
-            <span>${isInst ? '<span class="detail-variant-tag" style="color:#4ade80;">Installed</span>' : '<span class="detail-variant-tag">' + (v.tools ? '🔧' : '') + (v.thinking ? '🧠' : '') + (v.vision ? '👁' : '') + '</span>'}</span>
+            <span>${isInst ? '<span class="detail-variant-tag" style="color:#4ade80;">Installed</span>' : '<span class="detail-variant-tag">' + (v.tools ? S_WRENCH : '') + (v.thinking ? S_BRAIN : '') + (v.vision ? S_EYE : '') + '</span>'}</span>
           </div>`;
         }).join('')}</div>`;
     } else {

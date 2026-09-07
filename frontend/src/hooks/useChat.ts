@@ -397,7 +397,7 @@ export function useChat(
             e.currentPlan = plan;
             // Also inject as a visible message in the chat
             const planLines = plan.split('\n').filter((l) => l.trim());
-            const planContent = '📋 **Plan:**\n' + planLines.map((l, i) => `${i + 1}. ${l.replace(/^\d+\.?\s*/, '').trim()}`).join('\n');
+            const planContent = '**Plan:**\n' + planLines.map((l, i) => `${i + 1}. ${l.replace(/^\d+\.?\s*/, '').trim()}`).join('\n');
             e.messages = [...e.messages, {
               role: 'assistant' as const,
               content: planContent,

@@ -7,6 +7,7 @@ import { logger } from './logger';
 import { applySearchReplace, diffLines, changedLineCount } from '../utils/edits';
 import { withAiRules } from './ai-rules';
 import { getWebContext } from './search';
+import { sanitizeSvg, saveArtwork } from './image-gen';
 import { getResolvedModel } from './model-assignments';
 import { getCloudSettings } from '../routes/settings';
 import { readProjectRules, findAgentMemoryFile, readAgentMemory, appendAgentMemory, readProjectConfig } from './project-rules';
@@ -382,6 +383,12 @@ export const AGENT_TOOL_DEFS: AgentToolDef[] = [
     name: 'web_search',
     description: 'Search the live web and return current, real-time information (docs, APIs, syntax, news). Use when you need up-to-date knowledge that is not in your training data. Results are capped.',
     args: '{"query": "python requests library latest API"}',
+    mutating: false,
+  },
+  {
+    name: 'draw_image',
+    description: 'Draw or generate an image when the user asks for a picture/logo/icon/illustration (no text-to-image model exists, so you are the artist). Pass svg: ONE complete standalone SVG that DRAWS the request — not a prompt. Declare width="1024" height="1024" viewBox="0 0 1024 1024"; flat vector style with rect/circle/ellipse/polygon/path and gradients in <defs>; background first, foreground last; NEVER use <text> (no fonts); under ~60 elements. The SVG is rasterized to PNG and the tool result tells you the EXACT markdown to embed in your reply.',
+    args: '{"svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1024\" height=\"1024\" viewBox=\"0 0 1024 1024\"><rect width=\"1024\" height=\"1024\" fill=\"#223\"/></svg>"}',
     mutating: false,
   },
   {
@@ -1081,6 +1088,26 @@ export async function executeTool(root: string, call: ToolCall, autoApply: boole
         return { ok: true, output: `[WEB SEARCH RESULTS — CURRENT AND LIVE]\n${capped}` };
       } catch (e) {
         return { ok: false, output: `Web search failed: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+
+    case 'draw_image': {
+      const svg = typeof args.svg === 'string' ? args.svg.trim() : '';
+      if (!svg) {
+        return { ok: false, output: 'draw_image requires an "svg" string argument containing a complete standalone SVG document.' };
+      }
+      const check = sanitizeSvg(svg);
+      if (!check.ok) {
+        return { ok: false, output: `Your SVG was rejected: ${check.error} Rewrite it to fix the problem, then call the tool again.` };
+      }
+      try {
+        const art = await saveArtwork(svg);
+        return {
+          ok: true,
+          output: `Image drawn and saved as "${art.filename}" (${art.png ? 'raster PNG' : 'SVG'}). In your next message to the user, include this EXACT markdown so the image displays: ![Generated image](/api/generated/${art.filename})`,
+        };
+      } catch (e) {
+        return { ok: false, output: `Could not save the image: ${e instanceof Error ? e.message : String(e)}` };
       }
     }
 
@@ -2325,8 +2352,6 @@ Workspace: ${workspacePath}
 
 You have ${tools.length} tools. Use them — respond with ONLY a single JSON object.
 ${toolList}
-
-TOOL EXAMPLES:\n${TOOL_JSON_EXAMPLES}
 
 AVAILABILITY: ${autoApply ? 'full (read, write, delete, rename, run, search web)' : 'read-only'}`;
 }

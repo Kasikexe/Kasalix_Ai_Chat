@@ -11,6 +11,7 @@ import { registerColorTool } from './color';
 import { registerDateTimeTool } from './datetime';
 import { registerHashTool } from './hash';
 import { registerSearchTool } from './search';
+import { registerDrawTool } from './draw';
 import { getAllTools } from './index';
 
 export function registerAllTools(): void {
@@ -23,6 +24,7 @@ export function registerAllTools(): void {
   registerDateTimeTool();
   registerHashTool();
   registerSearchTool();
+  registerDrawTool();
 
   const tools = getAllTools();
   console.log(`[tools] ${tools.length} tool(s) registered: ${tools.map((t) => t.name).join(', ')}`);

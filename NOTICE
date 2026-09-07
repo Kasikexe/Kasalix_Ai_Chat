@@ -9,3 +9,4 @@ whose licenses are listed in THIRD_PARTY_NOTICES.md:
 
   - The Apache Software Foundation (Apache License 2.0, e.g. TypeScript)
   - Many other open source projects under MIT, BSD, ISC and other permissive licenses
+  - resvg and resvg-js (Mozilla Public License 2.0) — used for SVG rendering

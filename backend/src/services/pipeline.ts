@@ -1,14 +1,14 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import { streamChat, streamChatWithTools, modelSupportsTools, modelSupportsThinking } from './ollama';
+import { streamChat, streamChatWithTools, modelSupportsThinking } from './ollama';
 import type { ToolLoopMessage } from './ollama';
 import { getMemory } from './memory';
 import { getResolvedModel, getModelAssignment } from './model-assignments';
 import { getWebContext } from './search';
-import { generateImage } from './image';
 import { executeTool, detectTool, getAllTools, isProbablyMathExpression } from './tools/index';
 import type { ToolResult } from './tools/index';
 import { runAgentLoop, collectReferencedFiles } from './agent';
+import { sanitizeSvg, saveArtwork } from './image-gen';
 import { withAiRules } from './ai-rules';
 import { findDangerousRequest, DANGEROUS_REPLY } from './content-guard';
 import { getCloudSettings } from '../routes/settings';
@@ -105,12 +105,10 @@ interface DetectedIntent {
   hasImage: boolean;
   wantsCode: boolean;
   wantsFileInfo: boolean;
-  wantsImage: boolean;
   wantsTool: boolean;
   toolId?: string;
   toolParams?: Record<string, unknown>;
   imageDataUrl?: string;
-  imagePrompt?: string;
 }
 
 // IGNORE_DIRS from files route — skip these when listing for the AI
@@ -157,12 +155,16 @@ function needsWebSearch(userMessage: string): boolean {
     /\bis my\b.*\b(big|small|long|tall|good|bad|attractive|pretty|handsome|smart|nice|ok|okay|normal|weird|fine)\b/i.test(lower);
   if (selfReferential) return false;
 
-  // Search when there's a clear question about external information
-  const isQuestion = lower.includes('?');
-  const startsWithQuestionWord = /^(what|who|where|when|why|how)\b/i.test(lower.trim());
-  const containsFactualNeed = /\b(current|latest|recent|news|update|today'?s|population|weather|price|cost|distance|temperature|forecast|schedule|deadline|release|announcement|election|president|ceo|founder|invented|discovered)\b/i.test(lower);
+  // Explicit search requests — user is directly asking the AI to search.
+  const explicitSearch = /\b(search|look\s*up|find\s*(?:me)?|google|look\s*into|research|check\s*(?:online|the\s*web|internet)|what(?:'s| is| are) (?:on|in|about|the latest)|tell me about)\b/i.test(lower);
+  if (explicitSearch) return true;
 
-  return isQuestion || startsWithQuestionWord || containsFactualNeed;
+  // Time-sensitive / external-factual queries.
+  // General knowledge ("What is X", "How do I Y") the model already knows.
+  const containsFactualNeed = /\b(current|latest|recent|news|update|today'?s|tonight|tomorrow|yesterday|population|weather|price|cost|distance|temperature|forecast|schedule|deadline|release|announcement|election|president|ceo|founder|invented|discovered|stock|rate|gdp|salary|rank|record|statistic|index|benchmark)\b/i.test(lower);
+  const hasTimeWord = /\b(now|right now|currently|as of|in \d{4}|this (?:year|month|week|day)|last (?:year|month|week))\b/i.test(lower);
+
+  return containsFactualNeed || hasTimeWord;
 }
 
 /**
@@ -242,7 +244,7 @@ async function listWorkspaceFiles(wsPath: string): Promise<string> {
 async function detectIntent(messages: Message[], mode?: ConversationMode): Promise<DetectedIntent> {
   const last = messages[messages.length - 1];
   if (!last || last.role !== 'user') {
-    return { hasImage: false, wantsCode: false, wantsFileInfo: false, wantsImage: false, wantsTool: false };
+    return { hasImage: false, wantsCode: false, wantsFileInfo: false, wantsTool: false };
   }
 
   const content = last.content.toLowerCase();
@@ -253,22 +255,6 @@ async function detectIntent(messages: Message[], mode?: ConversationMode): Promi
   const wantsTool = !!toolMatch;
   const toolId = toolMatch?.toolId;
   const toolParams = toolMatch?.params;
-
-  // Detect if user wants image generation
-  const imagePhrases = [
-    'generate an image', 'generate a picture', 'generate a photo',
-    'create an image', 'create a picture', 'create a photo',
-    'make an image', 'make a picture', 'make a photo',
-    'draw me', 'paint me', 'render an image', 'render a picture',
-    'image of', 'picture of',
-    'generate art', 'ai image', 'generate image', 'generate picture',
-  ];
-  const wantsImage = !content.includes('[image:') && imagePhrases.some((phrase) => content.includes(phrase));
-
-  // Extract the image prompt (text without any [image:...] tags)
-  const imagePrompt = wantsImage
-    ? last.content.replace(/\[image:[^\]]+\]/g, '').trim()
-    : undefined;
 
   // Detect if user is asking about files/directory contents
   const fileQueryPhrases = [
@@ -363,7 +349,7 @@ async function detectIntent(messages: Message[], mode?: ConversationMode): Promi
   const match = last.content.match(/\[image:(data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+))\]/);
   if (match) imageDataUrl = match[1];
 
-  return { hasImage, wantsCode, wantsFileInfo, wantsImage, wantsTool, toolId, toolParams, imageDataUrl, imagePrompt };
+  return { hasImage, wantsCode, wantsFileInfo, wantsTool, toolId, toolParams, imageDataUrl };
 }
 
 // Internal stage: runs the model without streaming output to user
@@ -458,6 +444,20 @@ async function runVisibleStage(
 
 const MAX_TOOL_ROUNDS = 4;
 
+/**
+ * Tool schemas for chat mode: web_search + draw_image (the model can look
+ * things up and draw pictures, without the ~900-token full tool set).
+ * Kept in sync with the registry definitions so descriptions don't drift.
+ */
+const CHAT_TOOL_IDS = new Set(['web_search', 'draw_image']);
+
+function toChatTools(): Record<string, unknown>[] {
+  return toOllamaTools().filter((t) => {
+    const name = (t.function as { name?: string } | undefined)?.name;
+    return !!name && CHAT_TOOL_IDS.has(name);
+  });
+}
+
 /** Convert the registered tool definitions into Ollama's tool schema. */
 function toOllamaTools(): Record<string, unknown>[] {
   return getAllTools().map((t) => {
@@ -496,15 +496,25 @@ async function runChatToolLoop(
   signal?: AbortSignal,
   extraOpts: { temperature?: number; top_p?: number; max_tokens?: number } = {},
   onThinking?: (chunk: string) => void,
-  onStage?: (stage: string) => void
+  onStage?: (stage: string) => void,
+  toolsOverride?: Record<string, unknown>[]
 ): Promise<string> {
-  const tools = toOllamaTools();
+  const tools = toolsOverride ?? toOllamaTools();
   const loopMessages: ToolLoopMessage[] = messages.map((m) => ({ role: m.role, content: m.content }));
   const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
   const userInput = lastUserMsg?.content ?? '';
 
+  // Files produced by successful draw_image calls. The model is told to embed
+  // them, but this deterministic fallback guarantees the image always shows up.
+  const savedImages: string[] = [];
+  const wantsImage = detectImageRequest(userInput);
+
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    onStage?.(round === 0 ? 'chat:thinking' : 'tool:executing');
+    // Surface an explicit "image generation" stage so the UI can show a
+    // dedicated generating-image box from the moment the model starts drawing.
+    onStage?.(round === 0
+      ? (wantsImage ? 'image:generating' : 'chat:thinking')
+      : (savedImages.length ? 'image:generating' : 'tool:executing'));
     console.log(`[pipeline] Tool round ${round + 1}/${MAX_TOOL_ROUNDS} — ${model}`);
     const { content, toolCalls } = await streamChatWithTools(model, loopMessages, tools, onChunk, {
       signal,
@@ -513,7 +523,7 @@ async function runChatToolLoop(
       onThinking,
     });
 
-    if (!toolCalls.length) return content;
+    if (!toolCalls.length) return embedGeneratedImages(content, savedImages, onChunk);
 
     // Record what the model wanted to do, then feed the results back.
     loopMessages.push({ role: 'assistant', content, tool_calls: toolCalls });
@@ -522,11 +532,16 @@ async function runChatToolLoop(
       const args = tc.function?.arguments ?? {};
       let result: ToolResult;
       try {
+        if (name === 'draw_image') onStage?.('image:generating');
         result = await executeTool(name, args, { userInput });
       } catch (e) {
         result = { success: false, output: `Tool "${name}" crashed: ${e instanceof Error ? e.message : String(e)}` };
       }
       console.log(`[pipeline] Tool "${name}" → ${result.success ? 'ok' : 'error'}: ${result.output.substring(0, 80)}`);
+      if (name === 'draw_image' && result.success && result.data?.filename) {
+        const filename = String(result.data.filename);
+        if (filename) savedImages.push(filename);
+      }
       loopMessages.push({ role: 'tool', content: result.output });
     }
   }
@@ -539,7 +554,190 @@ async function runChatToolLoop(
     ...extraOpts,
     onThinking,
   });
-  return final.content;
+  return embedGeneratedImages(final.content, savedImages, onChunk);
+}
+
+/**
+ * Guarantee every successfully drawn image is referenced in the final reply.
+ * If the model already embedded it (normal case) nothing changes; otherwise the
+ * markdown is appended and streamed so the client's text matches what's saved.
+ */
+function embedGeneratedImages(content: string, filenames: string[], onChunk: (chunk: string) => void): string {
+  let out = content;
+  let appended = '';
+  for (const filename of filenames) {
+    const ref = `/api/generated/${filename}`;
+    if (out.includes(ref)) continue; // model already embedded it
+    const image = `![Generated image](${ref})`;
+    appended += (out || appended ? '\n\n' : '') + image;
+    out = out ? `${out}\n\n${image}` : image;
+  }
+  if (appended) onChunk(appended);
+  return out;
+}
+
+// ─── Image request detection ─────────────────────────────────────
+// The draw_image tool only fires when the model chooses to call it. Some
+// models can't/won't use tools and instead reply "here's your image!" with no
+// actual image — so when the user clearly asked for one, the pipeline also
+// detects it and can author the SVG directly as a fallback.
+const IMAGE_VERBS =
+  'generate|draw|make|create|produce|paint|render|design|build|sketch|illustrate|imagine';
+const IMAGE_NOUNS =
+  'image|picture|photo|photograph|artwork|art|logo|icon|illustration|portrait|avatar|sketch|drawing|meme|wallpaper|banner|poster|mascot|character|cartoon';
+
+function detectImageRequest(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase().replace(/\s+/g, ' ').trim();
+  // Informational questions are never image requests.
+  if (/\b(explain|describe|what is|what are|how (does|do|to|can i)|tell me about|why is|meaning of|difference between|tutorial)\b/.test(lower)) {
+    return false;
+  }
+  // "generate/draw/create … an image/picture/logo …"
+  if (new RegExp(`\\b(${IMAGE_VERBS})\\b[^.!?\\n]{0,100}\\b(${IMAGE_NOUNS})\\b`, 'i').test(lower)) {
+    return true;
+  }
+  // "an image / a picture / a portrait of …" (no explicit verb, e.g. "an image of a cat")
+  return new RegExp(`\\b(image|picture|photo|photograph|portrait|avatar)\\b[^.!?\\n]{0,60}\\bof (an?|the|my|our|a few|some)\\b`, 'i').test(lower);
+}
+
+/** Pull the raw <svg>…</svg> out of a model reply (tolerates markdown fences). */
+function extractSvg(text: string): string {
+  const start = text.indexOf('<svg');
+  const end = text.lastIndexOf('</svg>');
+  if (start === -1 || end === -1) return '';
+  return text.slice(start, end + '</svg>'.length);
+}
+
+interface EnsureImageDrawnOptions {
+  model: string;
+  request: string;
+  signal?: AbortSignal;
+  onChunk: (chunk: string) => void;
+  onStage?: (stage: string) => void;
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
+}
+
+/**
+ * Fallback used when the model never called draw_image: run one dedicated
+ * no-tools call that returns ONLY an SVG for the request, then save it and
+ * append the markdown image to the reply. If even that fails, the original
+ * text reply is returned unchanged.
+ */
+async function ensureImageDrawn(baseText: string, o: EnsureImageDrawnOptions): Promise<string> {
+  o.onStage?.('image:generating');
+  const system =
+    'You are a vector-art generator. Produce ONE complete standalone SVG document that draws the requested picture.\n' +
+    'Rules:\n' +
+    '- Output ONLY the raw SVG, starting with <svg and ending with </svg>. No markdown fences, no commentary, no extra words.\n' +
+    '- Declare xmlns, width="1024", height="1024", viewBox="0 0 1024 1024".\n' +
+    '- Flat vector style: rect, circle, ellipse, polygon, path and gradients inside <defs>; draw background first, foreground last.\n' +
+    '- NEVER use <text> (no fonts available). Keep it under ~60 elements — a clean simple scene beats a busy one.';
+
+  let content = '';
+  try {
+    const res = await streamChatWithTools(
+      o.model,
+      [
+        { role: 'system', content: system },
+        { role: 'user', content: o.request },
+      ],
+      [],
+      (chunk) => { content += chunk; },
+      {
+        signal: o.signal,
+        think: false,
+        temperature: o.temperature,
+        top_p: o.top_p,
+        max_tokens: o.max_tokens,
+      }
+    );
+    content = res.content || content;
+  } catch (e) {
+    console.warn('[pipeline] Image fallback call failed:', e instanceof Error ? e.message : String(e));
+    return baseText;
+  }
+
+  const svg = extractSvg(content);
+  const check = sanitizeSvg(svg);
+  if (!check.ok) {
+    console.warn(`[pipeline] Image fallback produced unusable SVG: ${check.error}`);
+    return baseText;
+  }
+
+  try {
+    const art = await saveArtwork(svg);
+    const markdown = `![Generated image](/api/generated/${art.filename})`;
+    console.log(`[pipeline] Image fallback saved ${art.filename}`);
+    const appended = (baseText.trimEnd() ? '\n\n' : '') + markdown;
+    o.onChunk(appended);
+    return (baseText.trimEnd() ? baseText.trimEnd() + appended : markdown);
+  } catch (e) {
+    console.error('[pipeline] Image fallback save failed:', e);
+    return baseText;
+  }
+}
+
+interface RunDrawImageChatOptions {
+  model: string;
+  systemMessages: Message[];
+  messages: Message[];
+  requestText: string;
+  think: boolean;
+  signal?: AbortSignal;
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
+  onChunk: (chunk: string) => void;
+  onThinking?: (chunk: string) => void;
+  onStage?: (stage: string) => void;
+}
+
+/**
+ * Shared "the user asked for a picture" path — used by BOTH plain chat and
+ * agent (Koding) mode so image requests behave identically everywhere:
+ * nudge the model toward draw_image, then if the final reply still contains
+ * no image, author the SVG directly with a dedicated no-tools call. An image
+ * therefore always appears, no matter which model/view is being used.
+ */
+async function runDrawImageChat(o: RunDrawImageChatOptions): Promise<string> {
+  const nudge =
+    '\n\nThe user asked for an image. Call the draw_image tool, passing your complete SVG (read its description for the scene rules), then include the exact markdown image it returns in your reply.';
+  const systemMessages = o.systemMessages.map((m, idx) =>
+    idx === 0 ? { ...m, content: m.content + nudge } : m
+  );
+  const chatMessages: Message[] = [...systemMessages, ...o.messages];
+
+  const reply = await runChatToolLoop(
+    'chat',
+    o.model,
+    chatMessages,
+    o.think,
+    o.onChunk,
+    o.signal,
+    { temperature: o.temperature, top_p: o.top_p, max_tokens: o.max_tokens },
+    o.onThinking,
+    o.onStage,
+    toChatTools()
+  );
+
+  // Some models answer "here's your image!" without ever calling draw_image.
+  // If no image was embedded, author the SVG directly with a dedicated
+  // no-tools call so the picture actually shows up.
+  if (reply.includes('/api/generated/')) return reply;
+  console.log('[pipeline] Model replied without draw_image — running SVG fallback');
+  return ensureImageDrawn(reply, {
+    model: o.model,
+    request: o.requestText,
+    signal: o.signal,
+    onChunk: o.onChunk,
+    onStage: o.onStage,
+    temperature: o.temperature,
+    top_p: o.top_p,
+    max_tokens: o.max_tokens,
+  });
 }
 
 
@@ -681,6 +879,40 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
     opts.onModelInfo?.(model, finalResolved.source);
   } catch {}
 
+  // ─── IMAGE REQUESTS IN AGENT (KODING) MODE ────────────────
+  // runAgentLoop is a coding loop: it happily replies "here's your picture!"
+  // in plain text but never draws anything, so a draw request there produced
+  // captions with no image. Route picture requests through the same guaranteed
+  // chat draw pipeline (draw_image + dedicated SVG fallback) so an actual
+  // image always appears — using the code model the Koding view expects.
+  if (mode === 'agent' && !intent.hasImage) {
+    const agentUserText = (lastUserMsgForThink?.content ?? '').replace(/\[image:[^\]]+\]/g, '').trim();
+    if (agentUserText && detectImageRequest(agentUserText)) {
+      console.log('[pipeline] Image request in agent mode — using draw pipeline instead of agent loop');
+      const { model: codeModel } = await getResolvedModel('code');
+      const drawModel = codeModel || model;
+      const drawSystem = await withAiRules(
+        'You are a friendly assistant generating an image for the user.\n' +
+        'Warm and brief. If your draw_image tool call succeeded, include the markdown image it returned in your reply — it is important the user sees it.',
+        'chat'
+      );
+      return await runDrawImageChat({
+        model: drawModel,
+        systemMessages: [{ role: 'system', content: drawSystem }],
+        messages,
+        requestText: agentUserText,
+        think: false,
+        signal,
+        temperature,
+        top_p,
+        max_tokens,
+        onChunk,
+        onThinking,
+        onStage,
+      });
+    }
+  }
+
   // ─── AGENT LOOP (auto-apply mode) ─────────────────────────
   // In auto-apply mode the AI is autonomous: it can read files, run
   // commands, write and delete files, and iterate until the task is done.
@@ -730,7 +962,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
     });
   }
 
-  console.log(`[pipeline] Intent: hasImage=${intent.hasImage}, wantsCode=${intent.wantsCode}, wantsFileInfo=${intent.wantsFileInfo}, wantsImage=${intent.wantsImage}, wantsTool=${intent.wantsTool}, think=${think}`);
+  console.log(`[pipeline] Intent: hasImage=${intent.hasImage}, wantsCode=${intent.wantsCode}, wantsFileInfo=${intent.wantsFileInfo}, wantsTool=${intent.wantsTool}, think=${think}`);
 
   // ─── Message Truncation (#7) ──────────────────────────────
   // Keep only the last MAX_HISTORY messages + any system messages to limit context size.
@@ -754,7 +986,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
     : '';
 
   const needsFileListing = intent.wantsFileInfo || (intent.wantsCode && planningEnabled);
-  const shouldSearch = !intent.hasImage && !intent.wantsImage && userText.length > 0 && needsWebSearch(userText);
+  const shouldSearch = !intent.hasImage && userText.length > 0 && needsWebSearch(userText);
 
   // Send immediate stage feedback so the user sees progress right away
   if (needsFileListing && workspacePath) onStage('reading:workspace');
@@ -771,7 +1003,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   ]);
 
   // Log whether web search was skipped (useful for tuning the heuristic)
-  if (userText && !shouldSearch && !intent.hasImage && !intent.wantsImage) {
+  if (userText && !shouldSearch && !intent.hasImage) {
     console.log(`[pipeline] Skipped web search (heuristic) for: "${userText.substring(0, 60)}..."`);
   }
 
@@ -791,10 +1023,10 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   let toolStageHandled = false;
   let toolSucceeded = false;
 
-  // TOOL STAGE (heuristic fallback) — only runs when the chat model can't call
-  // tools itself. Tool-capable models use the model-driven loop further down.
-  const chatSupportsTools = mode !== 'agent' && (await modelSupportsTools(model));
-  if (!chatSupportsTools && intent.wantsTool && intent.toolId) {
+  // TOOL STAGE (heuristic fallback) — runs for tool-like requests in chat mode.
+  // Chat mode never sends tool definitions to Ollama (saves ~900 tokens per request).
+  // Agent mode has its own tool loop in runAgentLoop.
+  if (mode !== 'agent' && intent.wantsTool && intent.toolId) {
     onStage('tool:executing');
     const lastMsg = messages[messages.length - 1];
     const userInput = lastMsg.content;
@@ -813,7 +1045,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
   }
 
   // Simple chat — no pipeline needed (injects agent awareness in agent mode)
-  if (!intent.hasImage && !intent.wantsCode && !intent.wantsImage) {
+  if (!intent.hasImage && !intent.wantsCode) {
     // A SUCCESSFUL heuristic tool result is returned directly (e.g. "2 + 2 = 4").
     // A FAILED tool never becomes the answer — it's passed to the AI below so
     // the conversation stays answerable.
@@ -862,16 +1094,14 @@ export async function runPipeline(opts: PipelineOptions): Promise<string> {
     // The persona below is the anti-robot layer: no meta-commentary, no
     // clinical phrasing — the AI should read like a friend having a chat.
     const chatSystem = await withAiRules(
-      `You are a real person — a friend the user is chatting with, not a chatbot or a customer-service rep.
-
-HOW TO TALK (this matters more than anything):
-- Sound human: use contractions ("I'm", "don't", "that's") and natural, conversational phrasing.
-- Lead with the answer. NEVER open with meta-commentary like "I can provide some context", "Based on available data", "Here is what I found", "According to studies", "As an AI", "I'd be happy to help", or "Great question!".
-- Match the user's tone and length. A short question gets a short answer. Don't write essays or pad with filler.
-- Skip the robot tells: no "It's important to note", "In conclusion", "Overall,", "Research suggests that", and no clinical bullet lists unless the user asked for one.
-- Answer the user's ACTUAL question. Never respond with something that belongs to a different topic.
-- Facts: never invent numbers, statistics, dimensions, prices, dates, names, quotes, or sources. If asked a factual question you genuinely don't know, say "I don't know" plainly. If you have a web search tool and need a fact you can't verify from memory, look it up.
-- Refuse genuinely illegal or dangerous requests — making bombs or weapons, doxxing, fraud, malware — in one calm, short sentence, no sermon, then offer the closest legal alternative if one exists.`,
+      `You are a real person — a friend the user is chatting with, not a chatbot.
+Be conversational: contractions, short answers, match their tone.
+Lead with the answer. Never open with "I can provide...", "Based on...", "As an AI...", "Great question!".
+Answer their ACTUAL question — never go off-topic.
+Never fabricate facts, numbers, dates, or sources. Say "I don't know" if unsure.
+Never apologize — just fix it and move on.
+Keep answers concise unless asked for detail.
+Refuse dangerous requests in one short sentence, then offer alternatives.`,
       'chat'
     );
     const chatSystemMessages: Message[] = [
@@ -885,22 +1115,35 @@ HOW TO TALK (this matters more than anything):
     ];
     const chatMessages: Message[] = [...chatSystemMessages, ...messages];
 
-    if (chatSupportsTools) {
-      try {
-        return await runChatToolLoop('chat', model, chatMessages, think, onChunk, signal, { temperature, top_p, max_tokens }, onThinking, onStage);
-      } catch (e) {
-        if (e instanceof Error && e.name === 'AbortError') throw e;
-        console.warn(`[pipeline] Tool calling failed, falling back to plain chat: ${e instanceof Error ? e.message : String(e)}`);
-      }
+    // Give the model web_search + draw_image so it can decide when to look
+    // something up or draw a picture — far lighter than the full tool set.
+    // Image requests route through the shared draw path (tool nudge + a
+    // guaranteed SVG-authoring fallback) so a picture always appears.
+    if (detectImageRequest(userText)) {
+      return await runDrawImageChat({
+        model,
+        systemMessages: chatSystemMessages,
+        messages,
+        requestText: userText,
+        think,
+        signal,
+        temperature,
+        top_p,
+        max_tokens,
+        onChunk,
+        onThinking,
+        onStage,
+      });
     }
-    return await runVisibleStage('chat', model, chatMessages, think, onChunk, signal, { temperature, top_p, max_tokens }, onThinking);
+
+    const reply = await runChatToolLoop('chat', model, chatMessages, think, onChunk, signal, { temperature, top_p, max_tokens }, onThinking, undefined, toChatTools());
+    return reply;
   }
 
   let imageDescription = '';
   let planOutput = '';
   let codeOutput = '';
-  let generatedImageFilename: string | undefined;
-  let imageGenNote = '';
+
 
   // STAGE 1: Vision analysis (INTERNAL — user doesn't see this)
   if (intent.hasImage && intent.imageDataUrl) {
@@ -993,44 +1236,7 @@ Output ONLY the plan — no introductory text, no conclusion, no code blocks.`,
     }
   }
 
-  // STAGE 3: Image generation (VISIBLE — when user wants an image)
-  if (intent.wantsImage && intent.imagePrompt) {
-    const userText = intent.imagePrompt;
-
-    const { model: imageModel, source: imageSource } = await getResolvedModel('image_generation');
-    console.log(`[pipeline] Image gen model: ${imageModel || '(none)'} (source: ${imageSource})`);
-
-    // Try to generate image
-    try {
-      if (!imageModel) {
-        // No image model assigned (set to None in the Server App) — tell the
-        // user instead of calling Ollama with an empty model name.
-        console.log('[pipeline] Image generation skipped: no model assigned');
-        imageGenNote = '\n\n(Image generation is not set up — assign an image model in the Server App → Models to enable it.)';
-      } else {
-        onStage('image:generating');
-
-        // We run this as a visible stage that sends status updates
-        // but the actual image data is returned via the done event
-        console.log(`[pipeline] Generating image with model: ${imageModel}`);
-
-        const result = await generateImage(userText, imageModel, signal);
-        generatedImageFilename = result.filename;
-
-        console.log(`[pipeline] Image generated: ${result.filename}`);
-        if (imageSource === 'cloud') {
-          const inputTokenEst = estimateTokens(userText);
-          trackCloudUsage(imageModel, inputTokenEst);
-        }
-      }
-    } catch (e) {
-      if (e instanceof Error && e.name === 'AbortError') throw e;
-      console.error('[pipeline] Image generation failed:', e);
-      // Don't abort — continue with code generation or final response
-    }
-  }
-
-  // STAGE 4: Code generation (INTERNAL — user sees the final summary)
+  // STAGE 3: Code generation (INTERNAL — user sees the final summary)
   if (intent.wantsCode) {
     if (!fileListing) onStage('reading:workspace');
 
@@ -1140,18 +1346,15 @@ Output ONLY code blocks. No explanations before or after.`;
   if (imageDescription) pipelineContext.push(`The user's image shows: ${imageDescription}`);
   if (planOutput) pipelineContext.push(`Plan created:\n${planOutput}`);
   if (codeOutput) pipelineContext.push(`Generated code:\n${codeOutput}`);
-  if (generatedImageFilename) pipelineContext.push(`Generated image: ${generatedImageFilename}`);
-  if (imageGenNote) pipelineContext.push(imageGenNote);
 
   const summaryPrompt = pipelineContext.length > 0
-    ? `The pipeline has completed. Here is a summary of the results:\n\n${pipelineContext.join('\n\n---\n\n')}\n\nNow provide a brief, friendly summary to the user. If there's code, present the key files. If there's an image, show it. If there's a plan, present it. Be conversational — not robotic.`
+    ? `The pipeline has completed. Here is a summary of the results:\n\n${pipelineContext.join('\n\n---\n\n')}\n\nNow provide a brief, friendly summary to the user. If there's code, present the key files. If there's a plan, present it. Be conversational — not robotic.`
     : 'The pipeline has completed but produced no output. Tell the user something went wrong and ask them to try again.';
 
   const summaryMessages: Message[] = [
     { role: 'system', content: await withAiRules(
       `You are a helpful assistant summarizing pipeline output for the user.
-Be concise and conversational. Present results clearly.
-${generatedImageFilename ? `Generated image file: ${generatedImageFilename} — show it to the user.` : ''}`,
+Be concise and conversational. Present results clearly.`,
       'chat'
     ) },
     ...messages,

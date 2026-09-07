@@ -84,7 +84,7 @@ export function Header({
  '',
  ];
  for (const msg of conversation.messages) {
- const role = msg.role === 'user' ? '👤 **You**' : '🤖 **Assistant**';
+ const role = msg.role === 'user' ? '**You**' : '**Assistant**';
  const content = msg.content.replace(/\[image:[^\]]+\]/g, '[Image attached]');
  lines.push(`${role}:`);
  lines.push('');

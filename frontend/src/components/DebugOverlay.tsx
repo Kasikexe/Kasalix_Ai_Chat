@@ -102,7 +102,7 @@ export function DebugOverlay() {
  </div>
 
  <div className="text-gray-500 text-[10px]">
- 📋 Tap an ID to copy
+ Tap an ID to copy
  </div>
  </div>
  </div>

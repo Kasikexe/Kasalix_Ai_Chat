@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Bot } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { ChatView } from './components/ChatView';
@@ -75,7 +76,7 @@ function App() {
  fontSize: '14px',
  }}>
  <div style={{ textAlign: 'center' }}>
- <div style={{ fontSize: '24px', marginBottom: '12px' }}>🤖</div>
+ <div style={{ fontSize: '24px', marginBottom: '12px' }}><Bot size={28} color="#fff" /></div>
  <div style={{ color: '#9ca3af' }}>Checking session...</div>
  </div>
  </div>

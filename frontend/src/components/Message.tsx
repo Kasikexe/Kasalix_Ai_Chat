@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
-import { Check, Copy, Download, User, Bot, FileCode, RefreshCw, Pencil, X, Save, FilePlus2, Trash2, GitBranch, Code2, FileText, Layers, ImageIcon, ZoomIn, Brain, ChevronDown } from 'lucide-react';
+import { Check, Copy, Download, User, Bot, FileCode, RefreshCw, Pencil, X, Save, FilePlus2, Trash2, GitBranch, Code2, FileText, Layers, Loader2, ImageIcon, ZoomIn, Brain, ChevronDown, MessageSquare, Timer, Palette, Sparkles, Wrench, Hourglass, CheckCircle2, Globe, BookOpen, ClipboardList, FolderOpen, Settings2, Scissors, PenLine, Play, FileDiff, FolderPlus, Link2, Ruler, Eye, HelpCircle, Cloud, CloudOff, Search, type LucideIcon } from 'lucide-react';
 import type { Message as MessageType, TimelineEvent } from '../types';
 
 const languageExtensions: Record<string, string> = {
@@ -392,54 +392,67 @@ interface Props {
  onFork?: (index: number) => void;
 }
 
+const stageIcons: Record<string, LucideIcon> = {
+ 'agent:thinking': Bot, 'agent:plan': ClipboardList, 'agent:reading': FolderOpen, 'agent:tool': Wrench,
+ 'agent:verify': CheckCircle2, 'agent:working': Bot, 'agent:waiting': Hourglass, 'agent:done': Sparkles,
+ 'reading:workspace': FolderOpen, 'search:web': Globe, 'search:docs': BookOpen, 'tool:executing': Wrench,
+ 'chat:thinking': MessageSquare, 'vision:analyzing': Eye, 'planning:create': ClipboardList,
+ 'planning:evaluating': ClipboardList, 'image:generating': Palette, 'code:generating': Code2,
+ 'writing:files': PenLine, 'summary:writing': Sparkles, 'cloud:warming': Cloud, 'cloud:unavailable': CloudOff,
+ 'agent': Bot, 'reading': FolderOpen, 'writing': PenLine, 'code': Code2, 'editing': PenLine,
+ 'summary': Sparkles, 'chat': MessageSquare, 'search': Globe, 'planning': ClipboardList, 'vision': Eye,
+};
+
 const stageLabels: Record<string, string> = {
  // Agent loop (auto-apply mode)
- 'agent:thinking': '🤖 Planning approach',
- 'agent:plan': '📝 Creating a plan',
- 'agent:reading': '📂 Reading workspace files',
- 'agent:tool': '🔧 Using tools',
- 'agent:verify': '✅ Verifying changes',
- 'agent:working': '🤖 Working through it',
- 'agent:waiting': '⏳ Waiting for approval',
- 'agent:done': '✨ Finishing up',
+ 'agent:thinking': 'Planning approach',
+ 'agent:plan': 'Creating a plan',
+ 'agent:reading': 'Reading workspace files',
+ 'agent:tool': 'Using tools',
+ 'agent:verify': 'Verifying changes',
+ 'agent:working': 'Working through it',
+ 'agent:waiting': 'Waiting for approval',
+ 'agent:done': 'Finishing up',
  // Regular pipeline stages (approval / chat / image modes)
- 'reading:workspace': '📂 Reading workspace',
- 'search:web': '🌐 Searching the web',
- 'search:docs': '📚 Searching docs',
- 'tool:executing': '🔧 Running a tool',
- 'chat:thinking': '💬 Thinking',
- 'vision:analyzing': '🔍 Analyzing image',
- 'planning:create': '📋 Creating a plan',
- 'planning:evaluating': '📋 Evaluating the plan',
- 'image:generating': '🎨 Generating image',
- 'code:generating': '💻 Writing code',
- 'writing:files': '✏️ Writing files',  'summary:writing': '✨ Polishing response',
-  'cloud:warming': '☁️ Cloud model warming up (this may take a few minutes)...',
-  'cloud:unavailable': '☁️ Cloud unavailable — using local model',
+ 'reading:workspace': 'Reading workspace',
+ 'search:web': 'Searching the web',
+ 'search:docs': 'Searching docs',
+ 'tool:executing': 'Running a tool',
+ 'chat:thinking': 'Thinking',
+ 'vision:analyzing': 'Analyzing image',
+ 'planning:create': 'Creating a plan',
+ 'planning:evaluating': 'Evaluating the plan',
+ 'image:generating': 'Generating image',
+ 'code:generating': 'Writing code',
+ 'writing:files': 'Writing files', 'summary:writing': 'Polishing response',
+  'cloud:warming': 'Cloud model warming up (this may take a few minutes)...',
+  'cloud:unavailable': 'Cloud unavailable — using local model',
  // Fallbacks for legacy / unknown namespaced stages
- 'agent': '🤖 Working',
- 'reading': '📂 Reading workspace',
- 'writing': '✏️ Writing files',
- 'code': '💻 Writing code',
- 'editing': '✏️ Editing files',
- 'summary': '✨ Polishing response',
- 'chat': '💬 Thinking',
- 'search': '🌐 Searching the web',
- 'planning': '📋 Creating a plan',
- 'vision': '🔍 Analyzing image',
+ 'agent': 'Working',
+ 'reading': 'Reading workspace',
+ 'writing': 'Writing files',
+ 'code': 'Writing code',
+ 'editing': 'Editing files',
+ 'summary': 'Polishing response',
+ 'chat': 'Thinking',
+ 'search': 'Searching the web',
+ 'planning': 'Creating a plan',
+ 'vision': 'Analyzing image',
 };
 
 // Longest-prefix match so namespaced stages (e.g. 'search:docs') resolve to
 // their specific label instead of the short generic one ('search').
-function getStageLabel(stage?: string): string | null {
- if (!stage) return null;
+interface StageInfo { label: string | null; Icon: LucideIcon | null; }
+function getStageInfo(stage?: string): StageInfo {
+ if (!stage) return { label: null, Icon: null };
  let best: string | null = null;
  for (const key of Object.keys(stageLabels)) {
  if (stage.startsWith(key) && (best === null || key.length > best.length)) {
  best = key;
  }
  }
- return best ? stageLabels[best] : '⚙️ Processing';
+ if (!best) return { label: 'Processing', Icon: Settings2 };
+ return { label: stageLabels[best], Icon: stageIcons[best] || null };
 }
 
 /** Compact inline row for a single timeline event (thinking or tool call) */
@@ -468,20 +481,20 @@ function TimelineRow({ event, isStreaming, isLast }: { event: TimelineEvent; isS
  }
 
  // Tool call row — compact inline with icon + tool name + args
- const toolIcons: Record<string, string> = {
-   read_file: '📖', write_file: '✏️', edit_file: '✂️', delete_file: '🗑️',
-   run_command: '▶', list_files: '📂', search_files: '🔍', web_search: '🌐',
-   read_rules: '📋', update_memory: '🧠', git_status: '📊', git_diff: '📊',
-   git_commit: '💾', ask_user: '❓', rename_file: '📝', create_directory: '📁',
-   file_exists: '📄', read_url: '🔗', diff_files: '📊', replace_in_file: '✂️',
-   count_lines: '📏', glob: '🔍', multi_edit: '✂️', delegate_to_subagent: '🤖',
-   read_image: '👁️', find_references: '🔍', refactor_rename: '📝',
+ const toolIcons: Record<string, LucideIcon> = {
+   read_file: FileText, write_file: PenLine, edit_file: Scissors, delete_file: Trash2,
+   run_command: Play, list_files: FolderOpen, search_files: Search, web_search: Globe,
+   read_rules: ClipboardList, update_memory: Brain, git_status: GitBranch, git_diff: FileDiff,
+   git_commit: GitBranch, ask_user: HelpCircle, rename_file: PenLine, create_directory: FolderPlus,
+   file_exists: FileText, read_url: Link2, diff_files: FileDiff, replace_in_file: Scissors,
+   count_lines: Ruler, glob: Search, multi_edit: Scissors, delegate_to_subagent: Bot,
+   read_image: Eye, find_references: Search, refactor_rename: PenLine,
  };
- const icon = toolIcons[event.tool] || '🔧';
+ const ToolIcon = toolIcons[event.tool] || Wrench;
  const isRunning = isStreaming && isLast && event.status === 'done';
  return (
    <div className="flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-gray-800/30 transition-colors text-[11px] font-mono">
-     <span className="text-gray-600 flex-shrink-0">{icon}</span>
+     <span className="text-gray-600 flex-shrink-0 flex"><ToolIcon size={10} /></span>
      <span className="text-[#4a9988] flex-shrink-0 font-medium">{event.tool}</span>
      {event.args && <span className="truncate text-gray-500 min-w-0">{event.args}</span>}
      {event.status === 'error' && <span className="ml-auto text-[#c44] text-[10px]">failed</span>}
@@ -496,7 +509,11 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  const [showRaw, setShowRaw] = useState(false);
  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
  const isUser = message.role === 'user';
- const stageLabel = getStageLabel(stage);
+ const stageInfo = getStageInfo(stage);
+ const StageIcon = stageInfo.Icon;
+ const stageLabel = stageInfo.label;
+ // Dedicated ChatGPT-style "Generating Image" box while an image is being drawn.
+ const generatingImage = isStreaming && !!stage && (stage === 'image:generating' || stage.startsWith('image:'));
  const { toast } = useToast();
 
  const copy = async () => {
@@ -522,10 +539,9 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  setEditing(false);
  };
 
- // Strip the [image:...] tag from display and convert [generated_image:...] to markdown images
+ // Strip the [image:...] tag from display
  const displayContent = message.content
  .replace(/\[image:[^\]]+\]/g, '')
- .replace(/\[generated_image:([^\]]+)\]/g, '![Generated image](/api/generated/$1)')
  .trim();
 
  // Extract applicable files for"Apply All"button
@@ -717,13 +733,13 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  )}
  </div>
 
- {isStreaming && stageLabel && (
+ {isStreaming && stageLabel && !generatingImage && (
  <div className="mb-2 inline-flex items-center gap-2 text-xs text-gray-400">
- <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse"/>
+ {StageIcon ? <StageIcon size={12} className="text-gray-500" /> : <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse"/>}
  <span>{stageLabel}</span>
  {liveDuration !== undefined && (
- <span className="tabular-nums text-gray-500">
- ⏱️ {liveDuration < 1000 ? `${liveDuration}ms` : `${(liveDuration / 1000).toFixed(1)}s`}
+ <span className="tabular-nums text-gray-500 inline-flex items-center gap-1">
+ <Timer size={11} /> {liveDuration < 1000 ? `${liveDuration}ms` : `${(liveDuration / 1000).toFixed(1)}s`}
  </span>
  )}
  </div>
@@ -746,8 +762,8 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
 
  {/* Show image attachment for user messages */}
  {isUser && (message.content.includes('[image:data:image') || message.content.includes('[image]')) && (
- <div className="mb-2 text-xs text-gray-500 italic">
- 📷 Image attached
+ <div className="mb-2 text-xs text-gray-500 italic inline-flex items-center gap-1">
+ <ImageIcon size={12} /> Image attached
  </div>
  )}
 
@@ -783,6 +799,13 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  </button>
  </div>
  </div>
+ ) : generatingImage ? (
+ <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl px-5 py-6">
+ <div className="flex items-center gap-4">
+ <Loader2 size={22} className="text-[#4a9988] animate-spin flex-shrink-0" />
+ <span className="text-sm font-medium text-gray-200">Generating Image</span>
+ </div>
+ </div>
  ) : (
  <div className="prose prose-invert prose-sm max-w-none break-words">
  {displayContent ? (
@@ -810,13 +833,13 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  {!editing && (
  <div className="flex items-center gap-1 mt-2">
  {!isUser && message.durationMs && !isStreaming && (
- <span className="text-xs text-gray-500 mr-1"title="Response time">
- ⏱️ {message.durationMs < 1000 ? `${message.durationMs}ms` : `${(message.durationMs / 1000).toFixed(1)}s`}
+ <span className="text-xs text-gray-500 mr-1 inline-flex items-center gap-1"title="Response time">
+ <Timer size={12} /> {message.durationMs < 1000 ? `${message.durationMs}ms` : `${(message.durationMs / 1000).toFixed(1)}s`}
  </span>
  )}
  {!isUser && message.generatedBy && !isStreaming && (
  <span className="text-xs text-gray-500"title={`Generated by ${message.generatedBy} (${message.modelSource || 'local'})`}>
- 🤖 {message.generatedBy.split('/').pop() || message.generatedBy}{message.modelSource === 'cloud' ? ' ☁️' : ''}
+ <Bot size={12} /> {message.generatedBy.split('/').pop() || message.generatedBy}{message.modelSource === 'cloud' ? ' (cloud)' : ''}
  </span>
  )}
  {!isUser && displayContent && !isStreaming && (

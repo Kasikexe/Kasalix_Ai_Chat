@@ -85,7 +85,6 @@ export interface ModelAssignments {
   vision: string;
   extraction: string;
   search: string;
-  image_generation: string;
 }
 
 export const MODEL_ASSIGNMENT_KEYS: (keyof ModelAssignments)[] = [
@@ -95,7 +94,6 @@ export const MODEL_ASSIGNMENT_KEYS: (keyof ModelAssignments)[] = [
   'vision',
   'extraction',
   'search',
-  'image_generation',
 ];
 
 export const MODEL_ASSIGNMENT_LABELS: Record<keyof ModelAssignments, string> = {
@@ -105,17 +103,15 @@ export const MODEL_ASSIGNMENT_LABELS: Record<keyof ModelAssignments, string> = {
   vision: 'Vision Analysis',
   extraction: 'Memory Extraction',
   search: 'Web Search',
-  image_generation: 'Image Generation',
 };
 
 export const MODEL_ASSIGNMENT_ICONS: Record<keyof ModelAssignments, string> = {
-  chat: '💬',
-  chat_thinking: '🧠',
-  code: '💻',
-  vision: '👁️',
-  extraction: '🧠',
-  search: '🌐',
-  image_generation: '🎨',
+  chat: '',
+  chat_thinking: '',
+  code: '',
+  vision: '',
+  extraction: '',
+  search: '',
 };
 
 export interface AppSettings {

@@ -10,7 +10,7 @@ import { WorkspaceSetup } from './WorkspaceSetup';
 import {
   Wrench, FolderOpen, Plus, ChevronDown, ChevronRight,
   FilePlus2, Check, X, Loader, History, FileCode,
-  Undo2, Pencil,
+  Undo2, Pencil, PenLine, Scissors, Sparkles, Terminal,
   Trash2, Play, Lightbulb, ClipboardList,
   MessageSquare, GripVertical,
   Bot, Eye, AlertTriangle,
@@ -566,9 +566,9 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
               The AI can read, write, and run commands in your workspace.
             </p>
             <div className="flex flex-wrap justify-center gap-3 mb-6 text-xs text-gray-500">
-              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-800/50 border border-gray-700/50">📂 Browse files</span>
-              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-800/50 border border-gray-700/50">✏️ Edit code</span>
-              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-800/50 border border-gray-700/50">💻 Run commands</span>
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-800/50 border border-gray-700/50"><FolderOpen size={12}/> Browse files</span>
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-800/50 border border-gray-700/50"><PenLine size={12}/> Edit code</span>
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-800/50 border border-gray-700/50"><Terminal size={12}/> Run commands</span>
             </div>
             {!online ? (
               <ServerDownInline
@@ -867,8 +867,8 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
                     <FileCode size={10} className="inline"/> {pendingCode.fileName}
                     <span className="ml-2 text-gray-600">
                       {pendingCode.isEdit
-                        ? '✂️ Surgical edit'
-                        : pendingCode.oldContent ? '✏️ Rewrite' : '✨ New'}
+                        ? <><Scissors size={10} className="inline"/> Surgical edit</>
+                        : pendingCode.oldContent ? <><PenLine size={10} className="inline"/> Rewrite</> : <><Sparkles size={10} className="inline"/> New</>}
                     </span>
                   </p>
                 </div>

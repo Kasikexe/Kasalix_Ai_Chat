@@ -97,9 +97,9 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, Props>(function Ter
  }
  }
  if (result.killed) {
- addEntry({ type: 'error', text: '⚠️ Command timed out (60s limit)', timestamp: Date.now() });
+ addEntry({ type: 'error', text: 'Command timed out (60s limit)', timestamp: Date.now() });
  } else if (result.code !== 0 && !result.stdout && !result.stderr) {
- addEntry({ type: 'error', text: `⚠️ Process exited with code ${result.code}`, timestamp: Date.now() });
+ addEntry({ type: 'error', text: `Process exited with code ${result.code}`, timestamp: Date.now() });
  }
  } catch (e) {
  addEntry({ type: 'error', text: `Error: ${e instanceof Error ? e.message : 'Command failed'}`, timestamp: Date.now() });

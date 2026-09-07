@@ -20,7 +20,8 @@ import speedtestRoutes from './routes/speedtest';
 import pluginsRoutes from './routes/plugins';
 import cloudUsageRoutes from './routes/cloud-usage';
 import sessionLogsRoutes from './routes/session-logs';
-import { errorHandler, generateId, getGeneratedImagesDir } from './utils/helpers';
+import { errorHandler, generateId } from './utils/helpers';
+import { getGeneratedImagesDir } from './services/image-gen';
 import { registerAllTools } from './services/tools/register';
 import { getAllTools, executeTool } from './services/tools/index';
 import { loadInstalledPlugins } from './services/plugins/manager';
@@ -279,26 +280,43 @@ app.route('/api/plugins', pluginsRoutes);
 app.route('/api/cloud-usage', cloudUsageRoutes);
 app.route('/api/session-logs', sessionLogsRoutes);
 
-// Serve generated images
-const GENERATED_DIR = getGeneratedImagesDir();
+// ─── Generated images ─────────────────────────────────────────
+// Files produced by the AI draw_image tool (raster PNG, or SVG fallback).
+// The Electron launcher sets GENERATED_IMAGES_DIR so these persist next to
+// the exe; plain `bun run src/index.ts` keeps them under backend/generated_images.
+const GENERATED_IMAGES_DIR = getGeneratedImagesDir();
 
-async function streamGeneratedImage(filename: string, c: any, forceDownload?: boolean) {
-  // Prevent path traversal
-  if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+const IMAGE_CONTENT_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+};
+
+function isSafeImageFilename(filename: string): boolean {
+  return (
+    !filename.includes('..') &&
+    !filename.includes('/') &&
+    !filename.includes('\\') &&
+    /^[A-Za-z0-9._-]+$/.test(filename)
+  );
+}
+
+async function serveGeneratedImage(filename: string, c: any, forceDownload: boolean) {
+  if (!isSafeImageFilename(filename)) {
     return c.json({ error: 'Invalid filename' }, 400);
   }
-  const filePath = path.join(GENERATED_DIR, filename);
+  const filePath = path.join(GENERATED_IMAGES_DIR, filename);
   try {
     const data = await fs.readFile(filePath);
     const ext = path.extname(filename).toLowerCase();
-    const contentType =
-      ext === '.png' ? 'image/png' :
-      ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
-      ext === '.webp' ? 'image/webp' :
-      'application/octet-stream';
     const headers: Record<string, string> = {
-      'Content-Type': contentType,
+      'Content-Type': IMAGE_CONTENT_TYPES[ext] || 'application/octet-stream',
       'Cache-Control': forceDownload ? 'no-cache' : 'public, max-age=3600',
+      // Defense in depth: even if a non-sanitized SVG ever slips through,
+      // it cannot run scripts when opened directly.
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'",
     };
     if (forceDownload) {
       headers['Content-Disposition'] = `attachment; filename="${filename}"`;
@@ -310,18 +328,18 @@ async function streamGeneratedImage(filename: string, c: any, forceDownload?: bo
 }
 
 // Serve image for embedding (inline)
-app.get('/api/generated/:filename', async (c) => {
-  return streamGeneratedImage(c.req.param('filename'), c, false);
-});
+app.get('/api/generated/:filename', (c) => serveGeneratedImage(c.req.param('filename'), c, false));
 
 // Download image (forces browser download dialog)
-app.get('/api/generated/:filename/download', async (c) => {
-  return streamGeneratedImage(c.req.param('filename'), c, true);
-});
+app.get('/api/generated/:filename/download', (c) => serveGeneratedImage(c.req.param('filename'), c, true));
 
 // Save a generated image to a workspace folder
 app.post('/api/generated/:filename/save-to-workspace', async (c) => {
   const filename = c.req.param('filename');
+  if (!isSafeImageFilename(filename)) {
+    return c.json({ error: 'Invalid filename' }, 400);
+  }
+
   let targetDir: string;
   try {
     const body = await c.req.json();
@@ -329,29 +347,19 @@ app.post('/api/generated/:filename/save-to-workspace', async (c) => {
   } catch {
     return c.json({ error: 'workspacePath is required in request body' }, 400);
   }
-
-  if (!targetDir) {
+  if (!targetDir || typeof targetDir !== 'string') {
     return c.json({ error: 'workspacePath is required' }, 400);
   }
 
-  // Prevent path traversal in filename
-  if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-    return c.json({ error: 'Invalid filename' }, 400);
-  }
-
-  const sourcePath = path.join(GENERATED_DIR, filename);
-  const resolvedDir = path.resolve(targetDir);
-  const destPath = path.join(resolvedDir, filename);
+  const sourcePath = path.join(GENERATED_IMAGES_DIR, filename);
+  const destPath = path.join(path.resolve(targetDir), filename);
 
   try {
     await fs.access(sourcePath);
-    await fs.mkdir(resolvedDir, { recursive: true });
-    await fs.copyFile(sourcePath, destPath);      appLogger.info(`[image] Saved to workspace: ${destPath}`);
-    return c.json({
-      success: true,
-      path: destPath,
-      filename,
-    });
+    await fs.mkdir(path.dirname(destPath), { recursive: true });
+    await fs.copyFile(sourcePath, destPath);
+    appLogger.info(`[image] Saved to workspace: ${destPath}`);
+    return c.json({ success: true, path: destPath, filename });
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
       return c.json({ error: 'Image not found' }, 404);

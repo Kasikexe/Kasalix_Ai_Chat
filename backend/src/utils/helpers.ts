@@ -13,10 +13,6 @@ export const errorHandler = (err: Error, c: Context) => {
 export const getDataDir = (): string =>
   process.env.DATA_DIR || path.join(process.cwd(), 'data');
 
-// Where generated images live. Same rationale — overridable so they persist.
-export const getGeneratedImagesDir = (): string =>
-  process.env.GENERATED_IMAGES_DIR || path.join(process.cwd(), 'generated_images');
-
 export const generateId = (): string => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return crypto.randomUUID();

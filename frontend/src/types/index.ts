@@ -91,6 +91,5 @@ export interface ModelAssignments {
   vision: string;
   extraction: string;
   search: string;
-  image_generation: string;
 }
 

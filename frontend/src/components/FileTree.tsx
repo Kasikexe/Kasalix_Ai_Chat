@@ -251,7 +251,7 @@ export function FileTree({ rootPath, workspacePath, onFileSelect, onBrowseFolder
  className="text-[10px] text-gray-600 hover:text-gray-400"
  title="Refresh"
  >
- ↻
+ <RefreshCw size={12} />
  </button>
  </div>
 

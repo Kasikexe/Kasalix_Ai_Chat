@@ -1,5 +1,5 @@
 import { useRef, useState, KeyboardEvent, useEffect, DragEvent } from 'react';
-import { Send, Square, Paperclip, X, Mic } from 'lucide-react';
+import { Send, Square, Paperclip, X, Mic, Zap, Lock, HelpCircle } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
 
 interface Props {
@@ -286,7 +286,7 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
                       : 'Read-only: no file changes allowed'
                     }
                   >
-                    {m === 'auto' ? '⚡ Auto' : m === 'ask-each' ? '✋ Ask' : '🔒 Read-only'}
+                    {m === 'auto' ? <><Zap size={11}/> Auto</> : m === 'ask-each' ? <><HelpCircle size={11}/> Ask</> : <><Lock size={11}/> Read-only</>}
                   </button>
                 ))}
               </div>

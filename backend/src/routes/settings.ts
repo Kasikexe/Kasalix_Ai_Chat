@@ -340,22 +340,39 @@ export { SETTINGS_PASSWORD, loadSettings };
  * Read cloud-related settings (cloudMode, cloudApiKey, cloudEndpoint).
  * Used by the pipeline to decide routing and by the health check.
  */
+// In-memory cache for settings file (avoids multiple disk reads per request)
+let _settingsCache: { data: any; timestamp: number } | null = null;
+const SETTINGS_CACHE_TTL = 2000; // 2 seconds
+
+async function readSettingsCached(): Promise<any> {
+  if (_settingsCache && Date.now() - _settingsCache.timestamp < SETTINGS_CACHE_TTL) {
+    return _settingsCache.data;
+  }
+  try {
+    const data = await fs.readFile(SETTINGS_FILE, 'utf-8');
+    const parsed = JSON.parse(data);
+    _settingsCache = { data: parsed, timestamp: Date.now() };
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Read cloud-related settings (cloudMode, cloudApiKey, cloudEndpoint).
+ * Used by the pipeline to decide routing and by the health check.
+ */
 export async function getCloudSettings(): Promise<{
   cloudMode: 'auto' | 'local' | 'cloud';
   cloudApiKey: string;
   cloudEndpoint: string;
 }> {
-  try {
-    const data = await fs.readFile(SETTINGS_FILE, 'utf-8');
-    const parsed = JSON.parse(data);
-    return {
-      cloudMode: parsed.cloudMode || 'auto',
-      cloudApiKey: parsed.cloudApiKey || '',
-      cloudEndpoint: parsed.cloudEndpoint || '',
-    };
-  } catch {
-    return { cloudMode: 'auto', cloudApiKey: '', cloudEndpoint: '' };
-  }
+  const parsed = await readSettingsCached();
+  return {
+    cloudMode: parsed.cloudMode || 'auto',
+    cloudApiKey: parsed.cloudApiKey || '',
+    cloudEndpoint: parsed.cloudEndpoint || '',
+  };
 }
 
 /**
@@ -366,15 +383,10 @@ export async function getOllamaSettings(): Promise<{
   kvCacheType: string;
   defaultNumCtx: number;
 }> {
-  try {
-    const data = await fs.readFile(SETTINGS_FILE, 'utf-8');
-    const parsed = JSON.parse(data);
-    return {
-      kvCacheOffload: parsed.kvCacheOffload !== false,
-      kvCacheType: parsed.kvCacheType || 'f16',
-      defaultNumCtx: parsed.defaultNumCtx || 0,
-    };
-  } catch {
-    return { kvCacheOffload: true, kvCacheType: 'f16', defaultNumCtx: 0 };
-  }
+  const parsed = await readSettingsCached();
+  return {
+    kvCacheOffload: parsed.kvCacheOffload !== false,
+    kvCacheType: parsed.kvCacheType || 'f16',
+    defaultNumCtx: parsed.defaultNumCtx || 0,
+  };
 }
