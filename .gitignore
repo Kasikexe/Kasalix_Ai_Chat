@@ -71,3 +71,5 @@ bun.lockb
 *.pyc
 .json
 /frontend/android/app/src/main/res/mipmap-xxxhdpi
+/frontend/android/app/src/main/res
+*.png
