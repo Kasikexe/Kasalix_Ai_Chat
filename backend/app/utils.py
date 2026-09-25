@@ -2,12 +2,15 @@
 
 - Myers line diff (O(ND)) for measuring real changes
 - Search/replace edit engine shared by the agent edit_file tool and /api/files/edit
+- Line-range (edit_lines) and anchor-based (edit_section) edit engines — they let a model
+  change part of a file WITHOUT reproducing the old text byte-for-byte
 - Protected server-internal directories
 - Realpath-based workspace containment (symlink-safe)
 """
 
 from __future__ import annotations
 
+import difflib
 import os
 import re
 from pathlib import Path
@@ -226,4 +229,295 @@ def apply_search_replace(content: str, old_string: str, new_string: str) -> dict
             "Could not find the search text in the file. The file may have changed — read the current "
             "file content and retry with the exact text. Tip: include a couple of surrounding lines for uniqueness."
         ),
+    }
+
+
+# ─── Line-range and anchor-based edit engine ───────────────
+# Why these exist: apply_search_replace makes the model reproduce the OLD text
+# byte-exactly (or whitespace-equivalently). For a small local model that is the
+# hard half of editing — copying 200 lines perfectly is harder than generating
+# 200 plausible new ones — so it dodges the wall by rewriting the whole file.
+# Line-range edits (numbers straight out of read_file) and anchored edits
+# (replace everything between two anchors) remove the exactness requirement, so
+# a surgical change costs the model no more than a rewrite.
+
+# A region edit may not silently remove most of a file: past these bounds the
+# model is rewriting, and should use write_file with force (or show the user).
+_REGION_MIN_ABSOLUTE = 25
+_REGION_FRACTION = 0.8
+
+
+def _split_edit_lines(content: str) -> tuple[list[str], bool]:
+    """Split content for editing. Returns (lines, had_trailing_newline)."""
+    text = content.replace("\r\n", "\n")
+    trailing = text.endswith("\n")
+    lines = text.split("\n")
+    if trailing and len(lines) > 1:
+        lines = lines[:-1]
+    return lines, trailing
+
+
+def _join_edit_lines(lines: list[str], trailing: bool) -> str:
+    if not lines:
+        return ""
+    return "\n".join(lines) + ("\n" if trailing else "")
+
+
+def _replacement_lines(replacement: str) -> list[str]:
+    """Turn replacement text into whole lines (one trailing newline ignored,
+    "" for a blank line, empty string for nothing)."""
+    text = replacement.replace("\r\n", "\n")
+    if text.endswith("\n"):
+        text = text[:-1]
+    return text.split("\n") if text != "" else []
+
+
+def _int_arg(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and re.fullmatch(r"\s*-?\d+\s*", value):
+        return int(value.strip())
+    return None
+
+
+def _region_too_large(total: int, region_len: int) -> bool:
+    return region_len > _REGION_MIN_ABSOLUTE and region_len > int(total * _REGION_FRACTION)
+
+
+def _closest_line_hint(lines: list[str], needle: str) -> str:
+    """A constructive hint: the real line that most resembles the one the model
+    was looking for. Turns "anchor not found" into something it can act on."""
+    norm_needle = _normalize_line(needle)
+    if not norm_needle:
+        return ""
+    best_ratio = 0.0
+    best_idx = -1
+    for i, line in enumerate(lines):
+        norm = _normalize_line(line)
+        if not norm:
+            continue
+        ratio = difflib.SequenceMatcher(None, norm_needle, norm).ratio()
+        if ratio > best_ratio:
+            best_ratio, best_idx = ratio, i
+    if best_idx < 0 or best_ratio < 0.6:
+        return ""
+    return f"\nClosest line in the file (line {best_idx + 1}): {lines[best_idx].strip()}"
+
+
+def _anchor_blocks(anchor: str) -> list[str]:
+    """The anchor as non-empty lines, trailing/leading blanks dropped (models
+    routinely tack on a newline when copying a snippet)."""
+    lines = [re.sub(r"\r$", "", l) for l in anchor.replace("\r\n", "\n").split("\n")]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    return lines
+
+
+def _find_anchor_matches(lines: list[str], anchor_lines: list[str]) -> list[int]:
+    """Start indices where anchor_lines matches lines, ignoring runs of whitespace."""
+    if not anchor_lines:
+        return []
+    norm = [_normalize_line(l) for l in anchor_lines]
+    out: list[int] = []
+    for i in range(len(lines) - len(anchor_lines) + 1):
+        if all(_normalize_line(lines[i + j]) == norm[j] for j in range(len(anchor_lines))):
+            out.append(i)
+    return out
+
+
+def apply_line_range(
+    content: str,
+    start: Any,
+    end: Any = None,
+    replacement: str = "",
+    expect: str | None = None,
+) -> dict[str, Any]:
+    """Replace lines start..end (1-based, inclusive; negative counts from the
+    end) with `replacement`, without reproducing the old text.
+
+    - end omitted       → replace only line `start`
+    - end < start       → insert before line `start` (nothing removed)
+    - replacement ""    → delete those lines
+    - expect            → a snippet of the FIRST line being replaced; if it does
+                          not match, the edit is refused (catches stale numbers
+                          after an earlier edit shifted the file)
+
+    Returns {ok, newContent?, error?, replaced?, added?, total?}.
+    """
+    s_raw = _int_arg(start)
+    if s_raw is None:
+        return {"ok": False, "error": (
+            '"start" must be a whole line number, 1-based (e.g. 42), negative to count '
+            "from the end (-1 = last line)."
+        )}
+    if s_raw == 0:
+        return {"ok": False, "error": "Line numbers are 1-based — line 1 is the first line, not 0."}
+    e_raw: int | None = None
+    if end is not None and not (isinstance(end, str) and not end.strip()):
+        e_raw = _int_arg(end)
+        if e_raw is None:
+            return {"ok": False, "error": '"end" must be a whole line number, or omitted to change just one line.'}
+        if e_raw == 0:
+            return {"ok": False, "error": "Line numbers are 1-based — line 1 is the first line, not 0."}
+
+    lines, trailing = _split_edit_lines(content)
+    total = len(lines)
+
+    s = s_raw if s_raw > 0 else total + s_raw + 1
+    if s < 1:
+        return {"ok": False, "error": f"start={s_raw} is before the start of the file (which has {total} line(s))."}
+    if s > total + 1:
+        return {"ok": False, "error": (
+            f"start={s_raw} is past the end of the file, which has {total} line(s). "
+            'Re-read it with read_file {"path": ..., "numbers": true} and use a line that exists.'
+        )}
+
+    e = s if e_raw is None else (e_raw if e_raw > 0 else total + e_raw + 1)
+    if e_raw is not None and e < 1:
+        return {"ok": False, "error": f"end={e_raw} is before the start of the file (which has {total} line(s))."}
+    if e_raw is not None and e > total:
+        return {"ok": False, "error": (
+            f"end={e_raw} is past the end of the file, which has {total} line(s). "
+            'Re-read it with read_file {"path": ..., "numbers": true} and use a line that exists.'
+        )}
+
+    start_idx = s - 1
+    end_idx = e if e < s else e  # e < s → empty slice → insertion before `start`
+    old_region = lines[start_idx:end_idx]
+
+    if expect is not None and str(expect).strip() and old_region:
+        want = _normalize_line(str(expect).strip().split("\n")[0])
+        got = _normalize_line(old_region[0])
+        if want != got:
+            shown = "\n".join(f"{start_idx + 1 + i}| {l}" for i, l in enumerate(old_region[:4]))
+            return {"ok": False, "error": (
+                f"Line {s} is not the line you expected, so the edit was refused (nothing was written). "
+                f"You expected it to be:\n  {str(expect).strip().splitlines()[0]}\n"
+                f"Line {s} actually reads:\n  {old_region[0]}\n"
+                f"Current lines {start_idx + 1}-{start_idx + len(old_region[:4])} of the file:\n{shown}\n"
+                'The file changed since you read it — re-read it (read_file with "numbers": true) and retry.'
+            )}
+
+    if _region_too_large(total, len(old_region)):
+        return {"ok": False, "error": (
+            f"Refusing this edit of a {total}-line file: it removes {len(old_region)} lines — that is a "
+            "rewrite, not a targeted change. Narrow start/end to just the lines you are changing. If the "
+            "USER really asked to rewrite the whole file, use write_file with \"force\": true, or describe "
+            "the new version in your final message."
+        )}
+
+    repl = _replacement_lines(replacement)
+    new_lines = lines[:start_idx] + repl + lines[end_idx:]
+    return {
+        "ok": True,
+        "newContent": _join_edit_lines(new_lines, trailing),
+        "replaced": len(old_region),
+        "added": len(repl),
+        "total": total,
+    }
+
+
+def apply_section_replace(
+    content: str,
+    start_anchor: str | None,
+    end_anchor: str | None,
+    replacement: str = "",
+) -> dict[str, Any]:
+    """Replace everything BETWEEN two anchors. The anchor lines themselves are
+    KEPT verbatim and everything outside them is untouched — so the model never
+    reproduces the text it is replacing.
+
+    - start_anchor omitted → region starts at line 1
+    - end_anchor omitted   → region ends at the last line
+    - both anchors are matched on whole lines, ignoring whitespace runs
+    """
+    start_anchor = start_anchor if isinstance(start_anchor, str) else ""
+    end_anchor = end_anchor if isinstance(end_anchor, str) else ""
+    if not start_anchor.strip() and not end_anchor.strip():
+        return {"ok": False, "error": (
+            'edit_section needs at least one of "start_anchor" / "end_anchor" — lines copied from the file '
+            "between which the old text sits."
+        )}
+
+    lines, trailing = _split_edit_lines(content)
+    total = len(lines)
+
+    begin = 0
+    end = total
+
+    if start_anchor.strip():
+        s_lines = _anchor_blocks(start_anchor)
+        matches = _find_anchor_matches(lines, s_lines)
+        if not matches:
+            return {"ok": False, "error": (
+                f"Could not find the start anchor as whole line(s) of the file: {s_lines[0].strip() if s_lines else start_anchor!r}"
+                + _closest_line_hint(lines, s_lines[0] if s_lines else start_anchor)
+                + "\nCopy the anchor text EXACTLY from the file (read_file first)."
+            )}
+        if len(matches) > 1:
+            shown = ", ".join(str(m + 1) for m in matches[:8])
+            return {"ok": False, "error": (
+                f"The start anchor matches {len(matches)} places (lines {shown}) — add a couple of "
+                "surrounding lines to make it unique."
+            )}
+        begin = matches[0] + len(s_lines)
+
+    if end_anchor.strip():
+        e_lines = _anchor_blocks(end_anchor)
+        matches = _find_anchor_matches(lines, e_lines)
+        if not matches:
+            return {"ok": False, "error": (
+                f"Could not find the end anchor as whole line(s) of the file: {e_lines[0].strip() if e_lines else end_anchor!r}"
+                + _closest_line_hint(lines, e_lines[0] if e_lines else end_anchor)
+                + "\nCopy the anchor text EXACTLY from the file (read_file first)."
+            )}
+        after = [m for m in matches if m >= begin]
+        if len(after) > 1:
+            shown = ", ".join(str(m + 1) for m in after[:8])
+            return {"ok": False, "error": (
+                f"The end anchor matches {len(after)} places after the start anchor (lines {shown}) — add a "
+                "couple of surrounding lines to make it unique."
+            )}
+        if not after:
+            return {"ok": False, "error": (
+                "The end anchor is not BELOW the start anchor in the file — swap them, or pick anchors in the "
+                "order they appear."
+            )}
+        end = after[0]
+
+    old_region = lines[begin:end]
+    if _region_too_large(total, len(old_region)):
+        return {"ok": False, "error": (
+            f"Refusing this edit of a {total}-line file: the region between those anchors is "
+            f"{len(old_region)} lines — that is a rewrite, not a targeted change. Pick anchors closer together. "
+            "If the USER really asked to rewrite the whole file, use write_file with \"force\": true, or "
+            "describe the new version in your final message."
+        )}
+
+    if old_region:
+        first_new = _replacement_lines(replacement)
+        first_new = next((l for l in first_new if l.strip()), "")
+        if start_anchor.strip() and first_new:
+            anchor_first = _anchor_blocks(start_anchor)[0]
+            if _normalize_line(first_new) == _normalize_line(anchor_first):
+                return {"ok": False, "error": (
+                    f"Your content starts with {first_new.strip()!r}, which is the start anchor — that line is "
+                    "KEPT as-is, so repeat it would duplicate it in the file. Remove that line from content "
+                    "(the region is everything BETWEEN the anchors)."
+                )}
+
+    repl = _replacement_lines(replacement)
+    new_lines = lines[:begin] + repl + lines[end:]
+    return {
+        "ok": True,
+        "newContent": _join_edit_lines(new_lines, trailing),
+        "replaced": len(old_region),
+        "added": len(repl),
+        "total": total,
     }

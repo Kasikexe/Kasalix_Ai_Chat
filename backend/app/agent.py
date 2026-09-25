@@ -40,7 +40,9 @@ from .services.session_log import SessionLog, list_session_logs, read_session_lo
 from .settings_store import get_cloud_settings
 from .utils import (
     PROTECTED_DIRS,
+    apply_line_range,
     apply_search_replace,
+    apply_section_replace,
     changed_line_count,
     diff_lines,
     is_path_inside,
@@ -153,6 +155,52 @@ async def resolve_target_smart(root: str, p: str) -> dict[str, Any]:
             }
         return {"target": None, "error": f"Could not find {p} inside the workspace ({root}). Use list_files to see what exists."}
     return {"target": None, "error": f"Access denied: {p} is outside the workspace."}
+
+
+def first_present(args: dict[str, Any], *keys: str) -> Any:
+    """First argument that the model actually supplied (skip missing/None)."""
+    for k in keys:
+        if k in args and args[k] is not None:
+            return args[k]
+    return None
+
+
+def _arg_str(args: dict[str, Any], *keys: str) -> str | None:
+    """First argument that is a string, tolerating the alias drift models emit
+    (old_string / oldString / text, and so on)."""
+    v = first_present(args, *keys)
+    return v if isinstance(v, str) else None
+
+
+NUMBERED_LINE_RE = re.compile(r"^\s*\d+\|\s?")
+
+
+def strip_line_numbers(text: str) -> str:
+    """Undo read_file's `  12| code` numbering when a model pastes a numbered
+    read back into an edit. Only strips when EVERY non-empty line carries a
+    number, and callers use it as a FALLBACK after a plain match failed, so real
+    content that happens to contain "12| " is never mangled."""
+    lines = text.split("\n")
+    non_empty = [l for l in lines if l.strip()]
+    if not non_empty or not all(NUMBERED_LINE_RE.match(l) for l in non_empty):
+        return text
+    return "\n".join(NUMBERED_LINE_RE.sub("", l, count=1) for l in lines)
+
+
+def search_replace_with_number_fallback(content: str, old_string: str, new_string: str) -> dict[str, Any]:
+    """apply_search_replace, then — only if the snippet was not found at all —
+    retry once with pasted `12| ` line numbers stripped."""
+    result = apply_search_replace(content, old_string, new_string)
+    if result.get("ok"):
+        return result
+    if result.get("matches"):  # found but ambiguous / refused: numbering is not the problem
+        return result
+    cleaned = strip_line_numbers(old_string)
+    if cleaned != old_string:
+        retry = apply_search_replace(content, cleaned, new_string)
+        if retry.get("ok"):
+            return retry
+    return result
 
 
 # ─── User rules (read-only for the agent) ───────────────────────────────
@@ -479,7 +527,7 @@ def find_python_interpreter(root: str | None = None) -> list[str]:
 # ─── Tool definitions (exposed to the model) ────────────────────────────
 AGENT_TOOL_DEFS: list[dict[str, Any]] = [
     {"name": "list_files", "description": "List files and directories in the workspace (recursive, ignores node_modules/.git/dist etc). Use this to see what exists before editing.", "args": "{}", "mutating": False},
-    {"name": "read_file", "description": "Read the contents of a file inside the workspace. Always read a file BEFORE editing it so you know exactly what is in it. Do NOT pass offset/length for normal files — read the whole file in one call; offset/length is ONLY for files larger than 200KB.", "args": '{"path": "src/index.ts"} or {"path": "src/index.ts", "offset": 200000, "length": 100000}', "mutating": False},
+    {"name": "read_file", "description": "Read the contents of a file inside the workspace. Always read a file BEFORE editing it so you know exactly what is in it. Do NOT pass offset/length for normal files — read the whole file in one call; offset/length is ONLY for files larger than 200KB. Pass \"numbers\": true to get line numbers in front of each line (12| code) — needed for edit_lines; never copy those numbers into an edit's text.", "args": '{"path": "src/index.ts"} or {"path": "src/index.ts", "numbers": true} or {"path": "src/index.ts", "offset": 200000, "length": 100000}', "mutating": False},
     {"name": "search_files", "description": "Search the workspace for a text pattern. Returns matching file paths + line numbers. Use to find where things are defined.", "args": '{"query": "function render"}', "mutating": False},
     {"name": "run_command", "description": "Run a shell command inside the workspace directory (e.g. build, test, install). The command is sandboxed to the workspace. Output is capped. For long-running commands (servers, watchers), set background=true to run async and poll with __bg_status:id.", "args": '{"command": "bun run build", "background": false}', "mutating": False},
     {"name": "play_game", "description": "PLAY a game/interactive Python script headlessly to verify it WORKS — injects scripted keyboard input, steps the game loop for N frames, captures PNG frames, and MEASURES whether the picture actually changes between frames. Use this for pygame/SDL games instead of guessing: pass inputs to steer (e.g. hold right for 20 frames, then down), then read the captured frames with read_image to SEE the result. Reports frames run, any crash, and changed-pixels per frame — 'changedPixels: 0' between frames that should be animating is a REAL BUG (the actor is not moving or is drawn off-screen).", "args": '{"path": "snake.py", "frames": 120, "inputs": [{"frame": 0, "keys": ["right"]}, {"frame": 30, "keys": ["down"]}], "screenshotEvery": 10}', "mutating": False},
@@ -495,6 +543,8 @@ AGENT_TOOL_DEFS: list[dict[str, Any]] = [
     {"name": "git_diff", "description": "Show the exact changes (diff) of files in the workspace. Use this to review your own work and to write an accurate commit message. Returns an error if the workspace is not a git repo.", "args": "{}", "mutating": False},
     {"name": "git_commit", "description": "Stage ALL changes and create a LOCAL git commit with the given summary. ALWAYS write a concise, accurate summary (what changed and why) based on your diff — never generic text like \"update files\". Uses \"Koding\" as the author unless you pass a name. IMPORTANT: commits are LOCAL ONLY — this tool NEVER pushes to GitHub or any remote, so never claim to have pushed anything. Returns an error if the workspace is not a git repo or there is nothing to commit.", "args": '{"summary": "Raise max connections to 500 and add retry logic"} or {"summary": "...", "name": "User Name"}', "mutating": True},
     {"name": "edit_file", "description": "SURGICAL edit of an existing file: replace an exact snippet (old_string) with new content (new_string). Use this for SMALL changes to existing files instead of rewriting the whole file. old_string must appear exactly once in the file (or differ only in whitespace). ONLY available in auto-apply mode. After a successful edit the result includes a diff summary.", "args": '{"path": "src/app.ts", "old_string": "const x = 1;", "new_string": "const x = 2;"}', "mutating": True},
+    {"name": "edit_lines", "description": "Edit an existing file BY LINE NUMBER — replaces lines start..end with content, so you NEVER copy the old text. This is the easiest way to change a few lines, a loop, or one statement inside a file you have read. start/end are 1-based line numbers (from read_file with \"numbers\": true); omit end to change one line; make end smaller than start to INSERT before start; negative counts from the end (-1 = last line); content \"\" deletes those lines. Pass expect (the first line being replaced, copied from the file) and the edit is refused if the numbers are stale. ONLY available in auto-apply mode.", "args": '{"path": "snake.py", "start": 42, "end": 48, "content": "    new_line_1\\n    new_line_2", "expect": "    def update(self):"}', "mutating": True},
+    {"name": "edit_section", "description": "Rewrite ONE REGION of an existing file identified by ANCHORS instead of by the old text. Everything BETWEEN start_anchor and end_anchor is replaced by content; the anchor lines themselves and everything outside them are kept exactly as they were. Use this to rewrite a whole function or block without reproducing its old body — e.g. start_anchor \"def update(self):\" (kept) and end_anchor \"def draw(self):\" (kept), content = the new body lines. Both anchors must be whole lines copied EXACTLY from the file and must each appear only once; omit start_anchor to start at the top of the file, omit end_anchor to go to the end. ONLY available in auto-apply mode.", "args": '{"path": "snake.py", "start_anchor": "def update(self):", "end_anchor": "def draw(self):", "content": "        # new body lines only"}', "mutating": True},
     {"name": "write_file", "description": "Create a NEW file. If the file already exists, only YOUR CHANGED LINES are applied and everything else in the file is preserved exactly (safe to pass the full new file content — a version that rewrites most of the file is refused). ONLY available in auto-apply mode — the file is written immediately and can be reverted by the user.", "args": '{"path": "src/app.ts", "content": "..."}', "mutating": True},
     {"name": "delete_file", "description": "Delete a file inside the workspace. ONLY available in auto-apply mode — the deletion happens immediately and can be reverted by the user.", "args": '{"path": "src/old.ts"}', "mutating": True},
     {"name": "delegate_to_subagent", "description": "Delegate a focused sub-task to a sub-agent that runs independently. The sub-agent gets its own context and tool access. Use type to spawn specialized agents: \"explore\" (fast read-only search), \"plan\" (architecture planning), \"reviewer\" (code review). Returns the sub-agent's final answer.", "args": '{"task": "Run all tests and report which ones fail", "type": "explore|plan|reviewer|general", "model": "optional - use a different model"}', "mutating": True},
@@ -521,12 +571,15 @@ TOOL_JSON_EXAMPLES = f"""Available tools — to use one, respond with ONLY a sin
 
 {{"tool": "list_files", "args": {{}}}}
 {{"tool": "read_file", "args": {{"path": "src/index.ts"}}}}
+{{"tool": "read_file", "args": {{"path": "src/index.ts", "numbers": true}}}} — line numbers in front of each line (12| code) for use with edit_lines
 {{"tool": "search_files", "args": {{"query": "function render"}}}}
 {{"tool": "run_command", "args": {{"command": "bun run build"}}}}
 {{"tool": "run_command", "args": {{"command": "npm start", "background": true}}}} — long-running commands run async; poll with __bg_status:id
 {{"tool": "run_python", "args": {{"path": "snake.py", "timeout": 15}}}} — RUN a workspace Python script to verify it (headless by default); use {{"code": "..."}} for an inline snippet
 {{"tool": "play_game", "args": {{"path": "snake.py", "frames": 120, "screenshotEvery": 20}}}} — PLAY a game headlessly: inject input, capture frames, measure pixel motion (then read_image them)
 {{"tool": "edit_file", "args": {{"path": "src/app.ts", "old_string": "const x = 1;", "new_string": "const x = 2;"}}}}
+{{"tool": "edit_lines", "args": {{"path": "snake.py", "start": 42, "end": 48, "content": "    new_line_1\\n    new_line_2"}}}} — change lines BY NUMBER (read_file with "numbers": true); no old text needed
+{{"tool": "edit_section", "args": {{"path": "snake.py", "start_anchor": "def update(self):", "end_anchor": "def draw(self):", "content": "        # the new body lines"}}}} — rewrite the region BETWEEN two anchors; the anchors themselves are kept
 {{"tool": "write_file", "args": {{"path": "src/app.ts", "content": "..."}}}} — for an EXISTING file only your changed lines are applied; the rest is preserved
 {{"tool": "delete_file", "args": {{"path": "src/old.ts"}}}}
 {{"tool": "gen_image", "args": {{"path": "assets/icon.png", "svg": "<svg ...>...</svg>"}}}} — write a project image asset (same SVG rules as draw_image)
@@ -882,7 +935,7 @@ async def describe_image(target: str) -> str:
 
 
 # ─── Git helpers ────────────────────────────────────────────────────────
-MUTATING_TOOLS = {"edit_file", "write_file", "delete_file", "gen_image"}
+MUTATING_TOOLS = {"edit_file", "edit_lines", "edit_section", "write_file", "delete_file", "gen_image"}
 
 # Tools that REUSE an existing no-op call. The identical-call guard counts
 # ALL repeats of the same call — but "already has exactly this content" is a
@@ -890,7 +943,7 @@ MUTATING_TOOLS = {"edit_file", "write_file", "delete_file", "gen_image"}
 # false give-up shipped to a user: two write_file calls, second returned
 # no-op, guard tripped with "kept failing the same way" for a call that
 # never failed).
-NOOP_OK_TOOLS = {"write_file"}
+NOOP_OK_TOOLS = {"write_file", "edit_lines", "edit_section"}
 
 
 def git_exclude_args() -> list[str]:
@@ -1026,6 +1079,30 @@ async def execute_tool(
                 f.seek(offset)
                 data = f.read(length)
             text = data.decode("utf-8", "replace")
+            # Line numbers let the model use edit_lines — a region edit located by
+            # number instead of by a byte-exact old_string. The numbering matches
+            # _split_edit_lines in utils.py (a trailing newline is not a line).
+            want_numbers = any(
+                args.get(k) is True
+                for k in ("numbers", "numbered", "lineNumbers", "line_numbers", "with_line_numbers", "withLineNumbers")
+            )
+            numbers_note = ""
+            if want_numbers and text:
+                start_line = 1
+                if offset > 0:
+                    try:
+                        with open(target, "rb") as f:
+                            start_line = f.read(offset).count(b"\n") + 1
+                    except OSError:  # noqa: S110
+                        start_line = 1
+                numbered_lines = text.split("\n")
+                if numbered_lines and numbered_lines[-1] == "":
+                    numbered_lines = numbered_lines[:-1]
+                text = "\n".join(f"{start_line + i:>6}| {line}" for i, line in enumerate(numbered_lines))
+                numbers_note = (
+                    " (line numbers are shown as `    12| code` — use them with edit_lines; "
+                    "NEVER copy a number like `12| ` into the text of an edit)"
+                )
             suffix = ""
             if offset > 0 or stat.st_size > offset + length:
                 remaining = max(0, stat.st_size - (offset + length))
@@ -1036,7 +1113,7 @@ async def execute_tool(
             actual = ""
             if resolved_from:
                 actual = f' (resolved from "{resolved_from}" — the real path is {os.path.relpath(target, root).replace(os.sep, "/")})'
-            return {"ok": True, "output": f"File {p}{suffix}{actual}:\n{text}"}
+            return {"ok": True, "output": f"File {p}{suffix}{actual}{numbers_note}:\n{text}"}
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"Could not read {p}: {e}")
 
@@ -1717,7 +1794,7 @@ async def execute_tool(
                     original_content = f.read()
             except OSError:
                 return await deny_out(f"Could not read {p} — the file may not exist. Use write_file to create it.")
-            result = apply_search_replace(original_content, old_string, new_string)
+            result = search_replace_with_number_fallback(original_content, old_string, new_string)
             if not result.get("ok") or result.get("newContent") is None:
                 return await deny_out(f"Edit failed: {result.get('error') or 'unknown error'}")
             cc = changed_line_count(original_content.replace("\r\n", "\n"), result["newContent"].replace("\r\n", "\n"))
@@ -1725,13 +1802,95 @@ async def execute_tool(
             total = cc["total"]
             if changed > max(20, int(total * 0.4)):
                 return await deny_out(
-                    f"Refusing this edit of {p}: it changes {changed} of {total} lines — that replaces most of the file instead of a targeted change. Use a SMALLER old_string that matches only the lines you are changing (include a couple of surrounding lines for uniqueness). If the USER really asked to rewrite the whole file, describe the new version in your final message and let the user apply it, instead of rewriting it yourself."
+                    f"Refusing this edit of {p}: it changes {changed} of {total} lines — that replaces most of the file instead of a targeted change. Instead of copying a huge old_string, use one of these: (1) edit_lines {{\"path\": \"{p}\", \"start\": <first line>, \"end\": <last line>, \"content\": \"<new lines>\"}} — get the numbers from read_file with \"numbers\": true, no old text needed; (2) edit_section {{\"path\": \"{p}\", \"start_anchor\": \"<line to keep above>\", \"end_anchor\": \"<line to keep below>\", \"content\": \"<new region>\"}} to rewrite a whole block between two anchors. Or use a SMALLER old_string that matches only the lines you are changing. If the USER really asked to rewrite the whole file, describe the new version in your final message and let the user apply it, instead of rewriting it yourself."
                 )
             final_content = result["newContent"].replace("\r\n", "\n").replace("\n", "\r\n") if "\r\n" in original_content else result["newContent"]
             with open(target, "w", encoding="utf-8") as f:
                 f.write(final_content)
             diff = summarize_diff(p, original_content, final_content)
             return {"ok": True, "output": f"Edited {p}.\n{diff}", "fileWrite": {"path": p, "changeType": "edited", "originalContent": original_content}}
+        except Exception as e:  # noqa: BLE001
+            return await deny_out(f"Failed to edit {p}: {e}")
+
+    if tool in ("edit_lines", "edit_section"):
+        # Why these two exist: edit_file makes the model reproduce the OLD text
+        # byte-exactly, which is the hard half of editing for a small local
+        # model — so it dodges the wall by rewriting the whole file. These
+        # tools locate the region by LINE NUMBER or by ANCHOR, so a surgical
+        # change costs the model no more than a rewrite does.
+        if not auto_apply:
+            return await deny_out(
+                f"{tool} is disabled — auto-apply mode is OFF. Include the change in your final answer "
+                "using the EDIT code-block convention instead."
+            )
+        p = _arg_str(args, "path", "file", "filePath", "file_path") or ""
+        content_arg = _arg_str(args, "content", "new_content", "newContent", "new_string", "newString", "text", "replacement")
+        if not p:
+            return await deny_out(f'{tool} requires a "path" string argument.')
+        if content_arg is None:
+            return await deny_out(
+                f'{tool} requires a "content" string argument (the NEW text for that region — pass "" to delete it).'
+            )
+        res = await resolve_target_smart(root, p)
+        if res.get("error"):
+            return await deny_out(res["error"])
+        target = res["target"]
+        resolved_note = f' (resolved from "{res["resolvedFrom"]}" — real path {os.path.relpath(target, root).replace(os.sep, "/")})' if res.get("resolvedFrom") else ""
+        if is_user_rules_path(root, target):
+            return await deny_out(f"Access denied: {p} is the USER RULES file — it is read-only for you. The user edits it themselves. Save project knowledge to your own memory file (.agent-memory.md) with update_memory instead.")
+        try:
+            try:
+                with open(target, "r", encoding="utf-8", errors="replace") as f:
+                    original_content = f.read()
+            except OSError:
+                return await deny_out(f"Could not read {p} — the file may not exist. Use write_file to create it.")
+
+            if tool == "edit_lines":
+                start = first_present(args, "start", "start_line", "startLine", "startLineNumber", "first_line", "firstLine", "from_line", "line")
+                end = first_present(args, "end", "end_line", "endLine", "last_line", "lastLine", "to_line")
+                if start is None:
+                    return await deny_out(
+                        f'edit_lines requires "start" (the 1-based line number where the change begins). '
+                        'Get exact numbers from read_file with "numbers": true. Example: '
+                        f'{{"tool": "edit_lines", "args": {{"path": "{p}", "start": 42, "end": 48, "content": "<new lines>"}}}}'
+                    )
+                expect = _arg_str(args, "expect", "expected", "first_old_line", "firstLineText")
+                result = apply_line_range(original_content, start, end, content_arg, expect)
+                where = f"lines {start}" + (f"-{end}" if end is not None and end != start else "")
+            else:
+                start_anchor = _arg_str(args, "start_anchor", "startAnchor", "after", "start", "from", "first_anchor", "firstAnchor")
+                end_anchor = _arg_str(args, "end_anchor", "endAnchor", "before", "end", "to", "last_anchor", "lastAnchor")
+                if not (start_anchor or "").strip() and not (end_anchor or "").strip():
+                    return await deny_out(
+                        f'edit_section requires "start_anchor" and/or "end_anchor" — whole lines copied from the file '
+                        'between which the old text sits, e.g. {"tool": "edit_section", "args": '
+                        f'{{"path": "{p}", "start_anchor": "def update(self):", "end_anchor": "def draw(self):", "content": "        <new body lines>"}}}}'
+                    )
+                result = apply_section_replace(original_content, start_anchor, end_anchor, content_arg)
+                where = "the region between the anchors"
+
+            if not result.get("ok") or result.get("newContent") is None:
+                return await deny_out(f"Edit failed: {result.get('error') or 'unknown error'}")
+
+            replaced = int(result.get("replaced") or 0)
+            added = int(result.get("added") or 0)
+            final_content = result["newContent"].replace("\r\n", "\n").replace("\n", "\r\n") if "\r\n" in original_content else result["newContent"]
+            if final_content == original_content:
+                return {"ok": True, "output": f"{p} already has exactly that content in {where} — no change needed."}
+            with open(target, "w", encoding="utf-8") as f:
+                f.write(final_content)
+            diff = summarize_diff(p, original_content, final_content)
+            summary = (
+                f"{tool} on {p}{resolved_note}: replaced {where} ({replaced} line(s) removed, {added} line(s) added).\n{diff}"
+            )
+            if replaced >= 15:
+                # The one thing a region edit can lose silently is text the model
+                # never read. Say exactly how much went in one go.
+                summary += (
+                    f"\nNOTE: this removed {replaced} lines in a single edit. Re-read the file (read_file) and "
+                    "confirm nothing you meant to keep is gone before you call this done."
+                )
+            return {"ok": True, "output": summary, "fileWrite": {"path": p, "changeType": "edited", "originalContent": original_content}}
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"Failed to edit {p}: {e}")
 
@@ -1781,9 +1940,13 @@ async def execute_tool(
                 if not is_small_edit and args.get("force") is not True:
                     return await deny_out(
                         f"Refusing to overwrite {p}: your version changes {changed} of {total} lines — that is a full rewrite, not an edit. "
-                        "Do NOT retry write_file with tweaked content — it will be refused again. Instead call edit_file: "
-                        'first read_file to see the real content, then {"tool": "edit_file", "args": {"path": "' + p + '", "old_string": "<the exact existing lines you want to change>", "new_string": "<the changed lines>"}}. '
-                        "Only change the lines you intend to change and include a couple of surrounding lines for uniqueness."
+                        "Do NOT retry write_file with tweaked content — it will be refused again. Instead, read the file first "
+                        '({"tool": "read_file", "args": {"path": "' + p + '", "numbers": true}}) and then change ONLY the lines that are wrong, with ONE of these: '
+                        '{"tool": "edit_lines", "args": {"path": "' + p + '", "start": <first line>, "end": <last line>, "content": "<new lines>"}} '
+                        '(by line number — no old text to copy), '
+                        '{"tool": "edit_section", "args": {"path": "' + p + '", "start_anchor": "<line to keep above>", "end_anchor": "<line to keep below>", "content": "<new region>"}} '
+                        'or {"tool": "edit_file", "args": {"path": "' + p + '", "old_string": "<the exact existing lines you want to change>", "new_string": "<the changed lines>"}}. '
+                        "Only change the lines you intend to change."
                     )
                 final_content = norm_new.replace("\n", "\r\n") if "\r\n" in orig else norm_new
                 with open(target, "w", encoding="utf-8") as f:
@@ -2449,7 +2612,7 @@ async def execute_tool(
                     return await deny_out(f"Edit #{applied_count + 1}: old_string is empty.")
                 if old_string == new_string:
                     return await deny_out(f"Edit #{applied_count + 1}: old_string and new_string are identical.")
-                result = apply_search_replace(content, old_string, new_string)
+                result = search_replace_with_number_fallback(content, old_string, new_string)
                 if not result.get("ok") or result.get("newContent") is None:
                     return await deny_out(f"Edit #{applied_count + 1} failed: {result.get('error') or 'old_string not found'}. All {applied_count} previous edits were rolled back.")
                 content = result["newContent"]
@@ -3217,6 +3380,23 @@ requested the task — everything in the tool history (tool calls, results, edit
 was done BY YOU. NEVER write "the user tried to edit" or "they encountered an error" —
 you made those tool calls and you hit those errors. The user only sends plain messages.
 
+EDITING AN EXISTING FILE — choose the tool that fits, and NEVER rewrite a whole file to change a few lines:
+1. edit_lines — change lines BY NUMBER when you know which lines are wrong and the region is more than a
+   line or two. Read the file with {{"tool": "read_file", "args": {{"path": "snake.py", "numbers": true}}}}
+   (each line comes back as `    42| code`), then call
+   {{"tool": "edit_lines", "args": {{"path": "snake.py", "start": 42, "end": 46, "content": "<the new lines>", "expect": "<the first line being replaced>"}}}}
+   You never copy the old text. Omit end to change one line; make end smaller than start to INSERT before start;
+   content "" deletes those lines. Include expect so a stale line number is refused instead of hitting the wrong place.
+2. edit_section — rewrite ONE REGION between two anchors, without reproducing the old body:
+   {{"tool": "edit_section", "args": {{"path": "snake.py", "start_anchor": "def update(self):", "end_anchor": "def draw(self):", "content": "<the lines that go between those two>"}}}}
+   Everything between the anchors is replaced; the anchor lines themselves and everything outside them are kept
+   exactly. Use this when a whole function or block is wrong and copying its old body would be the hard part.
+   The anchors must be real lines copied from the file and each must appear only once.
+3. edit_file — old_string → new_string, for a tiny change when the existing text is short.
+write_file on an existing file applies just your changed lines and REFUSES a near-full rewrite; do not fight it.
+A rewrite is only right when the user actually asked for one — then say so in one line and pass "force": true.
+After any edit, look at the diff in the tool result: only the lines you meant to change should have changed.
+
 TESTING YOUR WEB WORK (HTML/CSS/JS): you CAN see and verify what you build — you are not
 limited to writing code blind. For any web page or browser app: after writing the files,
 call preview_start {{"entry": "index.html"}} to open a live preview window of the page,
@@ -3616,7 +3796,9 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     "[TRUNCATED CALL] Your last tool call was cut off mid-JSON (you likely ran out of output tokens), "
                     f"so it was NOT executed — no file was written or changed ({t_paths}). Do NOT retry the same full call. "
                     "Instead: write files in SMALLER pieces — create the file with just the first part via write_file, then "
-                    "append the rest with edit_file (old_string = the file's last existing line). Keep every single call "
+                    "append the rest with edit_lines (read_file with \"numbers\": true, then "
+                    '{"tool": "edit_lines", "args": {"path": "<file>", "start": <last line + 1>, "end": <last line>, "content": "<next part>"}} — '
+                    "that inserts new lines without copying the file back). Keep every single call "
                     "well under the output limit. If even one part is too big, split it again."
                 )})
                 _cb(opts, "onStage", "agent:working")
@@ -3756,8 +3938,9 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 if mutation_failed_ever and not files_touched_this_run:
                     retry_msg = (
                         "Your write/edit attempts FAILED (see the tool results above) — NO file was changed this run. "
-                        "Do NOT claim success. Either fix the problem with a tool call (edit_file with a small old_string "
-                        'taken from the current file, or multi_edit with {"path": ..., "edits": [{"old_string": ..., "new_string": ...}]}), '
+                        "Do NOT claim success. Either fix the problem with a tool call (edit_lines by line number, "
+                        'edit_section between two anchors, edit_file with a small old_string taken from the current file, '
+                        'or multi_edit with {"path": ..., "edits": [{"old_string": ..., "new_string": ...}]}), '
                         "or if you genuinely cannot proceed, tell the user honestly what failed and stop."
                     )
                 else:
@@ -4214,7 +4397,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     # Success-based mutation tracking: only a tool result that
                     # actually changed (or correctly no-op'd) the file counts.
                     if tc["tool"] in MUTATING_TOOLS or tc["tool"] == "multi_edit":
-                        mp = str(tc["args"].get("path") or "").replace("\\", "/").lower()
+                        mp = str(tc["args"].get("path") or tc["args"].get("file") or "").replace("\\", "/").lower()
                         if mp:
                             mutated_attempted.add(mp)
                             if result["ok"] and "Refusing to overwrite" not in str(result["output"]):
@@ -4252,7 +4435,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                         # rewrite refusals: the model has no ground truth, so
                         # it keeps re-rolling full-file rewrites that get
                         # refused; seeing the real content flips it to edit_file.
-                        wants_recovery = tc["tool"] in ("edit_file", "multi_edit", "replace_in_file") or (
+                        wants_recovery = tc["tool"] in ("edit_file", "edit_lines", "edit_section", "multi_edit", "replace_in_file") or (
                             tc["tool"] == "write_file" and "Refusing to overwrite" in str(result["output"])
                         )
                         # Count failures PER PATH across the run (a read_file
@@ -4260,7 +4443,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                         # streak, which used to hide the pattern and starve
                         # auto-recovery). Requires ≥2 failures of mutation
                         # tools on the SAME path.
-                        if tc["tool"] in ("edit_file", "multi_edit", "replace_in_file", "write_file"):
+                        if tc["tool"] in ("edit_file", "edit_lines", "edit_section", "multi_edit", "replace_in_file", "write_file"):
                             fp = str(tc["args"].get("path") or "").replace("\\", "/").lower()
                             if fp:
                                 mut_fail_counts[fp] = mut_fail_counts.get(fp, 0) + 1
@@ -4323,11 +4506,11 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             if mutation_failed_ever and mutated_ok:
                 mut_recovered_last = True
             for tc in calls_to_run:
-                if tc["tool"] in ("write_file", "edit_file", "delete_file", "multi_edit"):
+                if tc["tool"] in ("write_file", "edit_file", "edit_lines", "edit_section", "delete_file", "multi_edit"):
                     touched = str(tc["args"].get("path") or "").replace("\\", "/").lower()
                     if touched and touched in mutated_ok:
                         files_touched_this_run.add(touched)
-                if tc["tool"] in ("write_file", "edit_file", "delete_file", "multi_edit"):
+                if tc["tool"] in ("write_file", "edit_file", "edit_lines", "edit_section", "delete_file", "multi_edit"):
                     touched_path = str(tc["args"].get("path") or "").replace("\\", "/").lower()
                     if touched_path in mutated_ok:
                         step = f"{tc['tool']}: {tc['args'].get('path') or tc['args'].get('from') or 'unknown'}"
@@ -4369,7 +4552,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             game_edit = next(
                 (
                     tc for tc in calls_to_run
-                    if tc["tool"] in ("write_file", "edit_file", "multi_edit", "replace_in_file", "rename_file")
+                    if tc["tool"] in ("write_file", "edit_file", "edit_lines", "edit_section", "multi_edit", "replace_in_file", "rename_file")
                     and str(tc["args"].get("path") or tc["args"].get("from") or "").lower().endswith(".py")
                 ),
                 None,

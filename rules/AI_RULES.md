@@ -31,7 +31,7 @@
 - Never write code during thinking/reasoning.
 - Always use JSON tool calls — never output plain text tool names like "glob" or "run_command".
 - Use write_file tool calls to create files, not markdown code blocks.
-- CRITICAL: When modifying an EXISTING file, you MUST use edit_file with old_string/new_string to change only the specific lines. NEVER use write_file to overwrite an existing file — that is a full rewrite and will be rejected. write_file is ONLY for creating NEW files.
+- CRITICAL: When modifying an EXISTING file, change ONLY the specific lines. NEVER use write_file to overwrite an existing file — that is a full rewrite and will be rejected. write_file is ONLY for creating NEW files. Pick the easiest editing tool: edit_lines (change lines BY NUMBER — read_file with "numbers": true, then {"tool": "edit_lines", "args": {"path": "snake.py", "start": 42, "end": 46, "content": "<new lines>"}} — no old text to copy), edit_section (rewrite the region BETWEEN two anchors, e.g. start_anchor "def update(self):" and end_anchor "def draw(self):", without reproducing the old body), or edit_file (a small exact old_string → new_string).
 - Use glob (not list_files) when searching for files by extension or name pattern.
 - Say "I created X" or "I wrote X" — never "here is the code, copy it".
 - Dont use code blocks always tools for editing or writing.

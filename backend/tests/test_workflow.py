@@ -504,6 +504,49 @@ class TestAgentLoopWorkflow:
         assert "line1 = 1" in content, "edit replaced the whole file instead of a targeted line"
         assert "step0" not in content, "refused write_file content must never land on disk"
 
+    def test_rewrite_refusal_recovers_via_edit_lines(self, tmp_path):
+        # The whole point of edit_lines: after a rewrite is refused, the model
+        # changes the line BY NUMBER instead of having to reproduce the old
+        # text. No auto-recovery content injection needed — the tool itself is
+        # the easy path.
+        body = "\n".join(f"line{i} = {i}" for i in range(80)) + "\n"
+        (tmp_path / "game.py").write_text(body, encoding="utf-8")
+        full_rewrite = "# rewritten\n" + "\n".join(f"step{i}" for i in range(80)) + "\n"
+        responses = [
+            '{"tool": "write_file", "args": {"path": "game.py", "content": ' + json.dumps(full_rewrite) + '}}',
+            '{"tool": "read_file", "args": {"path": "game.py", "numbers": true}}',
+            '{"tool": "edit_lines", "args": {"path": "game.py", "start": 1, "end": 1, "content": "line0 = 42", "expect": "line0 = 0"}}',
+            "Done — changed line 1 and left the rest alone.",
+        ]
+        result, rounds = _run_loop(str(tmp_path), responses)
+        content = (tmp_path / "game.py").read_text(encoding="utf-8")
+        assert content.startswith("line0 = 42\n"), f"edit_lines did not land: {content[:60]!r}"
+        assert "line1 = 1\n" in content and "line79 = 79" in content, "edit_lines touched more than the requested line"
+        assert "step0" not in content, "refused rewrite content landed on disk"
+        assert "I got stuck" not in result, f"run got stuck instead of using edit_lines: {result!r}"
+        assert rounds >= 3
+
+    def test_edit_section_rewrites_one_function_and_keeps_the_rest(self, tmp_path):
+        original = (
+            "def update(self):\n"
+            "    self.x += 1\n"
+            "    self.y += 1\n"
+            "\n"
+            "def draw(self):\n"
+            "    print(self.x)\n"
+        )
+        (tmp_path / "snake.py").write_text(original, encoding="utf-8")
+        responses = [
+            '{"tool": "read_file", "args": {"path": "snake.py"}}',
+            '{"tool": "edit_section", "args": {"path": "snake.py", "start_anchor": "def update(self):", "end_anchor": "def draw(self):", "content": "    self.x += 9\\n"}}',
+            "Rewrote update() and left draw() untouched.",
+        ]
+        result, rounds = _run_loop(str(tmp_path), responses)
+        content = (tmp_path / "snake.py").read_text(encoding="utf-8")
+        assert content == "def update(self):\n    self.x += 9\ndef draw(self):\n    print(self.x)\n", f"unexpected result: {content!r}"
+        assert "self.y += 1" not in content, "the old body should have been replaced"
+        assert rounds >= 3 and "I got stuck" not in result
+
     def test_workspace_tools_are_sandboxed(self, tmp_path):
         # write_file outside the workspace must be refused
         responses = [

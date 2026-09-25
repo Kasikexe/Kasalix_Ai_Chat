@@ -459,9 +459,8 @@ function getStageInfo(stage?: string): StageInfo {
 /** Compact inline row for a single timeline event (thinking or tool call) */
 function TimelineRow({ event, isStreaming, isLast }: { event: TimelineEvent; isStreaming?: boolean; isLast: boolean }) {
  const [expanded, setExpanded] = useState(false);
- const hasResult = event.type === 'tool' && typeof event.result === 'string' && event.result.trim().length > 0;
- // edit_file / multi_edit results carry a ±diff — render it colored
- const resultIsDiff = hasResult && event.type === 'tool' && (event.tool === 'edit_file' || event.tool === 'multi_edit' || event.tool === 'write_file') && /^[+-] /m.test(event.result!);
+ const hasResult = event.type === 'tool' && typeof event.result === 'string' && event.result.trim().length > 0;  // edit tools carry a ±diff — render it colored
+  const resultIsDiff = hasResult && event.type === 'tool' && (event.tool === 'edit_file' || event.tool === 'edit_lines' || event.tool === 'edit_section' || event.tool === 'multi_edit' || event.tool === 'write_file') && /^[+-] /m.test(event.result!);
  const [open, setOpen] = useState(false);
 
  if (event.type === 'thinking') {
@@ -507,7 +506,8 @@ function TimelineRow({ event, isStreaming, isLast }: { event: TimelineEvent; isS
    read_rules: ClipboardList, update_memory: Brain, git_status: GitBranch, git_diff: FileDiff,
    git_commit: GitBranch, ask_user: HelpCircle, rename_file: PenLine, create_directory: FolderPlus,
    file_exists: FileText, read_url: Link2, diff_files: FileDiff, replace_in_file: Scissors,
-   count_lines: Ruler, glob: Search, multi_edit: Scissors, delegate_to_subagent: Bot,
+   count_lines: Ruler, glob: Search, multi_edit: Scissors, edit_lines: Scissors, edit_section: Scissors,
+   delegate_to_subagent: Bot,
    read_image: Eye, find_references: Search, refactor_rename: PenLine, gen_image: ImageIcon, draw_image: Palette,
  };
  const ToolIcon = toolIcons[event.tool] || Wrench;
