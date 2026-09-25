@@ -1,0 +1,13 @@
+# Runtime dependencies (mirrors [project].dependencies in pyproject.toml)
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx>=0.27
+pydantic>=2.8
+cryptography>=43
+argon2-cffi>=23
+resvg-py>=0.4
+
+# Build tooling (PyInstaller bundles the app into a self-contained backend.exe)
+pyinstaller>=6.0
+# Web search engine (handles DuckDuckGo anti-bot challenges; used by app/search.py)
+ddgs>=9.0

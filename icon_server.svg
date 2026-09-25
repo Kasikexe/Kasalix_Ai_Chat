@@ -1,0 +1,14 @@
+<svg version="1.2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800">
+	<defs>
+		<image  width="800" height="800" id="img1" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAyAAAAMgAQMAAADhvpQrAAAAAXNSR0IB2cksfwAAAANQTFRFAAAAp3o92gAAAS1JREFUeJztzUERAAAMAqDZv/Ra+PCgALmCSCQSiUQikUgkEolEIpFIJBKJRCKRSCQSiUQikUgkEolEIpFIJBKJRCKRSCQSiUQikUgkEolEIpFIJBKJRCKRSCQSiUQikUgkEolEIpFIJBKJRCKRSCQSiUQikUgkEolEIpFIJBKJRCKRSCQSiUQikUgkEolEIpFIJBKJRCKRSCQSiUQikUgkEolEIpFIJBKJRCKRSCQSiUQikUgkEolEIpFIJBKJRCKRSCQSiUQikUgkEolEIpFIJBKJRCKRSCQSiUQikUgkEolEIpFIJBKJRCKRSCQSiUQikUgkEolEIpFIJBKJRCKRSCQSiUQikUgkEolEIpFIJBKJRCKRSCQSiUQikUgkEolEIpFIJBKJRCKR7CQPIHEDIbMPz1oAAAAASUVORK5CYII="/>
+	</defs>
+	<style>
+		.s0 { fill: #ffffff } 
+		.s1 { fill: #000000 } 
+	</style>
+	<use id="Background" href="#img1" x="0" y="0"/>
+	<path id="KASALI" class="s0" aria-label="KASALI"  d="m146.7 428h14.8l-0.1-35.6 29 35.6h18.8l-32.2-39.1 30.1-36.6h-17.9l-27.8 33.9v-33.9h-14.7zm63 0h14.9l5.7-17.2h29.1l5.6 17.2h15.6l-25.7-75.7h-19.2zm24.8-29.7l10.5-31.9 10.4 31.9zm97.8-42.1c-4.5-3.3-11.8-4.9-18.8-4.9-17.8 0-28.9 9.4-28.9 22.7 0 11.1 6 16.2 13.7 19.4l13 5.4c5.6 2.3 8.2 4.3 8.2 8.3 0 6-4.8 8.7-12.6 8.7-6.8 0-15.3-2.7-20.8-7v14.7c4.3 3.5 13.2 5.7 20.4 5.7 18.1 0 28-9.2 28-23.4 0-10.3-5.8-15.8-15-19.7l-12.2-5.1c-5.1-2.1-7.6-4-7.6-8.1 0-5.5 4.7-8.2 13.4-8.2 4.1 0 10.1 1.1 15.8 5zm4.4 71.9h15l5.7-17.3h29l5.7 17.3h15.6l-25.8-75.7h-19.1zm24.7-29.7l10.6-31.9 10.3 31.9zm53.3 29.7h46.2l3.5-13.4h-34.9v-62.3h-14.8zm56.6 0h14.7v-75.7h-14.7z"/>
+	<path id="x" class="s0" aria-label="x"  d="m512 465l46.2-46 24.9 46h48l-40.6-67.6 66.6-63.2h-46l-41.8 42.1-21.6-42.1h-48l37.6 63.7-71.4 67.1zm-8.4 0l46.1-46 24.9 46h48l-40.5-67.6 66.6-63.2h-46l-41.8 42.1-21.6-42.1h-48l37.6 63.7-71.4 67.1z"/>
+	<path id="x" class="s1" aria-label="x"  d="m512.3 459l41.6-41.4 22.4 41.4h43.2l-36.5-60.8 59.9-56.9h-41.4l-37.6 37.9-19.5-37.9h-43.2l33.9 57.3-64.3 60.4z"/>
+	<path id="SERVER" class="s0" aria-label="SERVER"  d="m229.8 440.6c-2.9-2-8-3-13-3-13 0-22.3 5.6-24.1 13.5-1.5 6.5 2.3 9.5 7.4 11.4l8.8 3.2c3.7 1.4 5.3 2.5 4.8 4.9-0.8 3.6-4.6 5.2-10.3 5.2-4.9 0-10.7-1.6-14.2-4.2l-1.9 8.7c2.6 2.1 8.8 3.4 14 3.4 13.2 0 21.6-5.4 23.5-13.8 1.4-6.1-2.1-9.4-8.3-11.7l-8.2-3c-3.4-1.3-5-2.4-4.5-4.8 0.7-3.2 4.5-4.8 10.9-4.8 2.9 0 7.2 0.6 10.8 2.9zm-0.9 42.5h38.5l-0.9-7.9h-25.1l2.5-11.2h18.6l4.2-7.8h-21l2.2-9.9h24.1l4.4-7.9h-37.5zm44 0h10.7l3.9-17.4h6.1l8.2 17.4h12.2l-8.8-18.4c8.1-1.9 12.7-6.9 14-13 1.7-7.6-2.9-13.3-14.2-13.3h-22.1zm19-36.9h10.5c5 0 6.6 2.7 5.9 5.9-0.8 3.5-3.6 6.1-8.8 6.1h-10.3zm41 36.9h13.9l28.5-44.7h-11.7l-21.5 35.5-5.2-35.5h-12.1zm38 0h38.5l-0.9-8h-25.1l2.5-11.1h18.5l4.3-7.9h-21.1l2.3-9.8h24.1l4.4-8h-37.5zm44 0h10.7l3.9-17.4h6.1l8.2 17.4h12.2l-8.8-18.3c8.1-1.9 12.7-6.9 14-13.1 1.7-7.5-2.9-13.3-14.2-13.3h-22.1zm19-36.8h10.5c5 0 6.6 2.6 5.9 5.9-0.8 3.4-3.6 6.1-8.8 6.1h-10.3z"/>
+</svg>

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -13,7 +13,6 @@ const RESOURCES_DIR = app.isPackaged
 
 const BACKEND_DIR = path.join(RESOURCES_DIR, 'backend');
 const CERTS_DIR = path.join(RESOURCES_DIR, 'certs');
-const RELEASE_DIR = path.join(RESOURCES_DIR, 'release');
 
 // ─── Stable data location ────────────────────────────────────────
 // The backend writes its runtime data (accounts, conversations, speed tests,
@@ -33,6 +32,58 @@ function getAppDataRoot() {
 const APP_DATA_ROOT = getAppDataRoot();
 const DATA_DIR = path.join(APP_DATA_ROOT, 'data');
 const GENERATED_IMAGES_DIR = path.join(APP_DATA_ROOT, 'generated_images');
+// Release downloads (update installers, manual EXE/APK downloads) must live in
+// the STABLE data root, not resourcesPath: a portable exe extracts resources
+// to a random temp dir that Windows wipes on close — installers saved there
+// vanish between runs and the updater "forgets" them.
+const RELEASE_DIR = path.join(APP_DATA_ROOT, 'release');
+
+// ─── Ollama concurrency settings (read from the backend's settings.json) ──
+// Read straight from disk instead of waiting for the backend HTTP API, so the
+// env vars are known even when Ollama auto-starts before the backend is up.
+// Same clamp/validate rules as the backend's coerce helpers.
+function readOllamaTuning() {
+  try {
+    const settingsPath = path.join(DATA_DIR, 'settings.json');
+    if (!fs.existsSync(settingsPath)) return {};
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    const clamp = (v) => {
+      const n = parseInt(v, 10);
+      return Number.isFinite(n) && n > 0 ? Math.min(n, 16) : 0;
+    };
+    const ka = String(raw.ollamaKeepAlive || '').trim();
+    const kv = String(raw.kvCacheType || '').trim();
+    return {
+      numParallel: clamp(raw.ollamaNumParallel),
+      maxLoadedModels: clamp(raw.ollamaMaxLoadedModels),
+      keepAlive: /^-?\d+(\.\d+)?(ms|s|m|h)?$/.test(ka) ? ka : '',
+      kvCacheType: /^(f16|f32|q8_0|q4_0)$/.test(kv) ? kv : 'f16',
+      kvCacheOffload: raw.kvCacheOffload !== false,
+    };
+  } catch { return {}; }
+}
+
+function buildOllamaEnv() {
+  // Mirrors the backend's _build_ollama_env: the GUI spawns Ollama before
+  // the backend may exist (auto-start), so the FULL tuning must come from
+  // here — dropping the KV settings silently reverted cache quantization.
+  const t = readOllamaTuning();
+  const env = {};
+  if (t.numParallel) env.OLLAMA_NUM_PARALLEL = String(t.numParallel);
+  if (t.maxLoadedModels) env.OLLAMA_MAX_LOADED_MODELS = String(t.maxLoadedModels);
+  if (t.keepAlive) env.OLLAMA_KEEP_ALIVE = t.keepAlive;
+  if (t.kvCacheType) {
+    if (t.kvCacheType === 'f32') {
+      // f32 = explicit full-precision override, nothing to set
+    } else {
+      env.LLAMA_ARG_CACHE_TYPE_K = t.kvCacheType;
+      env.LLAMA_ARG_CACHE_TYPE_V = t.kvCacheType;
+      if (t.kvCacheType !== 'f16') env.OLLAMA_FLASH_ATTENTION = '1';
+    }
+  }
+  if (t.kvCacheOffload === false) env.LLAMA_ARG_KV_OFFLOAD = '0';
+  return env;
+}
 // ─── Branding / upstream repo ────────────────────────────────────
 // Where release downloads come from. Override with the KASALIX_REPO
 // env var ("owner/name") when running a rebranded fork.
@@ -57,16 +108,34 @@ function getLocalIPs() {
     for (const iface of interfaces[name] || []) {
       if (
         iface.family === 'IPv4' && !iface.internal &&
+        // Skip link-local (APIPA 169.254.x.x) — unusable for sharing
+        !iface.address.startsWith('169.254.') &&
         !name.toLowerCase().includes('docker') &&
         !name.toLowerCase().includes('virtual') &&
         !name.toLowerCase().includes('vmware') &&
         !name.toLowerCase().includes('vbox')
       ) {
-        ips.push({ address: iface.address, netmask: iface.netmask, interface: name });
+        ips.push({ address: iface.address, netmask: iface.netmask, interface: friendlyInterfaceName(name) });
       }
     }
   }
   return ips;
+}
+
+// Human-friendly interface label: the raw adapter names ("Ethernet 2",
+// "Wi-Fi 3") don't tell the user which IP to share. Tailscale/VPN are
+// especially confusing — they only work for devices on that VPN.
+function friendlyInterfaceName(name) {
+  const lower = (name || '').toLowerCase();
+  if (lower.includes('tailscale')) return 'Tailscale VPN';
+  if (lower.includes('zerotier')) return 'ZeroTier VPN';
+  if (lower.includes('wireguard')) return 'WireGuard VPN';
+  if (lower.includes('openvpn') || lower.includes('tun') || lower.includes('tap')) return 'VPN';
+  if (lower.includes('wi-fi') || lower.includes('wifi') || lower.includes('wlan')) return 'Wi-Fi';
+  if (lower.includes('ethernet') || lower.includes('eth')) return 'Ethernet';
+  if (lower.includes('bluetooth')) return 'Bluetooth';
+  if (lower.includes('loopback')) return 'Loopback';
+  return name;
 }
 
 // ─── CPU Measurement (cross-platform) ───────────────────────────
@@ -107,53 +176,144 @@ function getCpuUsage() {
   };
 }
 
-// ─── GPU Measurement (async, non-blocking) ───────────────────────
-function getGpuInfo(callback) {
+// True after backendRequest has confirmed the running backend's protocol
+let _modeSynced = false;
+
+// ─── GPU Measurement (async, non-blocking, multi-vendor) ─────────
+// NVIDIA: nvidia-smi. AMD: rocm-smi (ROCm) or WMI fallback (name + VRAM only,
+// no live utilization). Result is cached and refreshed by the poller.
+let _lastGpuInfo = null;
+
+function parseNvidiaSmi(stdout, callback) {
+  const parts = stdout.trim().split(', ');
+  const info = {
+    gpuUtil: parseFloat(parts[0]) || 0,
+    memUsed: parseInt(parts[1]) || 0,
+    memTotal: parseInt(parts[2]) || 0,
+    name: parts[3] || 'Unknown',
+    driverVersion: parts[4] || '',
+    vendor: 'nvidia',
+  };
+  _lastGpuInfo = info;
+  callback(info);
+}
+
+function queryNvidia(callback) {
   exec(
     'nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,name,driver_version --format=csv,noheader,nounits',
     { encoding: 'utf-8', timeout: 2000, windowsHide: true },
     (error, stdout) => {
-      if (error || !stdout) {
-        callback(null);
-        return;
-      }
-      const parts = stdout.trim().split(', ');
-      callback({
-        gpuUtil: parseFloat(parts[0]) || 0,
-        memUsed: parseInt(parts[1]) || 0,
-        memTotal: parseInt(parts[2]) || 0,
-        name: parts[3] || 'Unknown',
-        driverVersion: parts[4] || '',
-      });
+      if (error || !stdout) { callback(null); return; }
+      parseNvidiaSmi(stdout, callback);
     }
   );
 }
 
-// ─── Cached GPU Info (updated asynchronously) ───────────────────
-let _lastGpuInfo = null;
-
-function getGpuInfo(callback) {
+function queryAmd(callback) {
+  // rocm-smi: utilization + used VRAM (MiB)
   exec(
-    'nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,name,driver_version --format=csv,noheader,nounits',
+    'rocm-smi --showuse --showmemuse vram --json',
     { encoding: 'utf-8', timeout: 2000, windowsHide: true },
-    (error, stdout) => {
-      if (error || !stdout) {
-        _lastGpuInfo = null;
-        callback(null);
-        return;
+    (err, stdout) => {
+      if (!err && stdout) {
+        try {
+          const j = JSON.parse(stdout);
+          const cardKey = Object.keys(j).find((k) => k !== '0' && typeof j[k] === 'object');
+          const card = j[cardKey] || j['0'];
+          if (card) {
+            const utilRaw = (card['GPU use (%)'] ?? card['gpuUse_percent'] ?? '0').toString().replace('%', '');
+            const usedRaw = (card['VRAM Total Used (B)'] ?? card['vramTotalUsed_bytes'] ?? '0').toString();
+            const totalRaw = (card['VRAM Total Allocated (B)'] ?? card['vramTotalAllocated_bytes'] ?? '0').toString();
+            const info = {
+              gpuUtil: parseFloat(utilRaw) || 0,
+              memUsed: Math.round(parseInt(usedRaw) / (1024 * 1024)) || 0,
+              memTotal: Math.round(parseInt(totalRaw) / (1024 * 1024)) || 0,
+              name: 'AMD GPU',
+              driverVersion: '',
+              vendor: 'amd',
+            };
+            _lastGpuInfo = info;
+            callback(info);
+            return;
+          }
+        } catch { /* fall through to WMI */ }
       }
-      const parts = stdout.trim().split(', ');
-      const info = {
-        gpuUtil: parseFloat(parts[0]) || 0,
-        memUsed: parseInt(parts[1]) || 0,
-        memTotal: parseInt(parts[2]) || 0,
-        name: parts[3] || 'Unknown',
-        driverVersion: parts[4] || '',
-      };
-      _lastGpuInfo = info;
-      callback(info);
+      queryAmdWmi(callback);
     }
   );
+}
+
+function queryAmdWmi(callback) {
+  // Fallback: identify the AMD card via WMI + registry (name + VRAM only —
+  // no live utilization available without ROCm tooling).
+  //
+  // WMI's AdapterRAM is a 32-bit field that caps at 4 GB, so real VRAM comes
+  // from the display-driver registry key's HardwareInformation.qwMemorySize
+  // (a QWORD with the true value — 16 GB cards report 16 GB there).
+  exec(
+    'powershell -NoProfile -Command "Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM,DriverVersion | ConvertTo-Json -Compress"',
+    { encoding: 'utf-8', timeout: 4000, windowsHide: true },
+    (err, stdout) => {
+      if (err || !stdout) { _lastGpuInfo = null; callback(null); return; }
+      // Also pull true VRAM from the registry (runs in parallel with parsing).
+      exec(
+        'powershell -NoProfile -Command "Get-ItemProperty \'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0*\' -ErrorAction SilentlyContinue | Select-Object DriverDesc, \'' +
+        'HardwareInformation.qwMemorySize' + '\' | ConvertTo-Json -Compress"',
+        { encoding: 'utf-8', timeout: 4000, windowsHide: true },
+        (regErr, regStdout) => {
+          let vramByName = {};
+          if (!regErr && regStdout) {
+            try {
+              const entries = JSON.parse(regStdout);
+              for (const e of (Array.isArray(entries) ? entries : [entries])) {
+                if (e && e.DriverDesc && e['HardwareInformation.qwMemorySize']) {
+                  vramByName[e.DriverDesc] = Number(e['HardwareInformation.qwMemorySize']);
+                }
+              }
+            } catch {}
+          }
+          try {
+            const cards = JSON.parse(stdout);
+            const list = Array.isArray(cards) ? cards : [cards];
+            // Prefer a dedicated GPU: filter out basic-display/virtual adapters and
+            // integrated graphics ("Radeon(TM) Graphics" / Intel UHD/Iris are iGPU names).
+            const isIntegrated = (name) => /radeon\(tm\) graphics|uhd graphics|iris|vega\(tm\) graphics|graphics$|basic|virtual|remote/i.test(name || '');
+            const dedicated = list
+              .filter((c) => c && c.Name && !isIntegrated(c.Name))
+              .sort((a, b) => (b.AdapterRAM || 0) - (a.AdapterRAM || 0));
+            const gpu = dedicated[0] || list.filter((c) => c && c.Name && !/basic|virtual|remote/i.test(c.Name))[0];
+            if (!gpu) { _lastGpuInfo = null; callback(null); return; }
+            // True VRAM: registry QWORD first (exact), WMI AdapterRAM as fallback
+            // (32-bit — caps at 4 GB).
+            const regBytes = vramByName[gpu.Name] || 0;
+            const memTotal = regBytes > 0
+              ? Math.round(regBytes / (1024 * 1024))
+              : Math.round((gpu.AdapterRAM || 0) / (1024 * 1024));
+            const info = {
+              gpuUtil: 0,
+              memUsed: 0,
+              memTotal,
+              name: gpu.Name,
+              driverVersion: gpu.DriverVersion || '',
+              vendor: /amd|radeon/i.test(gpu.Name) ? 'amd' : 'unknown',
+              estimateOnly: true,
+            };
+            _lastGpuInfo = info;
+            callback(info);
+          } catch { _lastGpuInfo = null; callback(null); }
+        }
+      );
+    }
+  );
+}
+
+function getGpuInfo(callback) {
+  queryNvidia((nvidia) => {
+    if (nvidia) { callback(nvidia); return; }
+    queryAmd((amd) => {
+      callback(amd); // may be null — renderer hides the GPU card
+    });
+  });
 }
 
 // ─── System Stats ───────────────────────────────────────────────
@@ -211,6 +371,7 @@ async function getRunningModels() {
   } catch { return []; }
 }
 
+<<<<<<< Updated upstream
 // ─── Bun Runtime Detection ────────────────────────────────────────
 // Bun may be installed but not on the current process PATH (fresh install).
 // We check PATH first, then fall back to the well-known install locations.
@@ -225,6 +386,27 @@ function resolveBunPath() {
   ];
   for (const c of candidates) {
     if (c && fs.existsSync(c)) return c;
+=======
+// Resolve how to launch the backend. The backend is the self-contained
+// Python exe (backend.exe — PyInstaller build). Returns { cmd, args, cwd }.
+function resolveBackendCommand() {
+  // 1. Packaged: backend/dist/backend/backend.exe next to the resources
+  const candidates = [
+    path.join(RESOURCES_DIR, 'backend', 'dist', 'backend', 'backend.exe'),
+    path.join(RESOURCES_DIR, 'backend', 'backend.exe'),
+    // Flat layout: exe dropped directly into the backend resources folder
+    path.join(BACKEND_DIR, 'backend.exe'),
+  ];
+  for (const c of candidates) {
+    if (c && fs.existsSync(c)) {
+      return { cmd: c, args: [], cwd: path.dirname(c) };
+    }
+  }
+  // 2. Dev: an in-repo built exe (backend/dist/backend/backend.exe)
+  const devPyExe = path.join(__dirname, '..', 'backend', 'dist', 'backend', 'backend.exe');
+  if (fs.existsSync(devPyExe)) {
+    return { cmd: devPyExe, args: [], cwd: path.dirname(devPyExe) };
+>>>>>>> Stashed changes
   }
   return null;
 }
@@ -299,6 +481,7 @@ async function startServer(httpMode) {
     }
   }
 
+<<<<<<< Updated upstream
   // Ensure backend dependencies exist. The portable exe ships with a bundled
   // node_modules (see extraResources in package.json), but if it's missing
   // (dev run, older build, or manual copy) install it on the fly so the
@@ -339,6 +522,42 @@ async function startServer(httpMode) {
         stage: 'done',
         message: 'Backend dependencies ready',
       });
+=======
+  // The Python backend exe is self-contained — no dependency bootstrap needed.
+  const backendCmd = resolveBackendCommand();
+  if (!backendCmd) {
+    return {
+      success: false,
+      error: 'Backend executable not found (backend.exe). ' +
+        'Build it with server-app-installer/build-setup.bat or backend/build/build/backend.spec via PyInstaller.',
+    };
+  }
+
+  // Windows Firewall: make sure the server port is reachable from other
+  // devices. The installer adds this rule, but re-assert it here (idempotent,
+  // best-effort) so a dev build or a rule deleted by the user doesn't cause
+  // mysterious "device on my LAN can't connect" reports. On many systems the
+  // default inbound policy already allows this — the netsh call just makes it
+  // explicit. Failures are logged and ignored: the server runs fine locally
+  // regardless.
+  if (os.platform() === 'win32') {
+    try {
+      const exePath = backendCmd.cmd;
+      exec(
+        `netsh advfirewall firewall delete rule name="Kasalix AI Chat Server" & ` +
+        `netsh advfirewall firewall add rule name="Kasalix AI Chat Server" dir=in action=allow program="${exePath}" protocol=TCP localport=${port} profile=any`,
+        { windowsHide: true, timeout: 8000 },
+        (err, _stdout, stderr) => {
+          if (err) {
+            console.log('[firewall] Could not update firewall rule (non-fatal):', (stderr || err.message).trim().slice(0, 200));
+          } else {
+            console.log('[firewall] Inbound rule ready for port', port);
+          }
+        }
+      );
+    } catch (e) {
+      console.log('[firewall] Rule setup skipped:', e.message);
+>>>>>>> Stashed changes
     }
   }
 
@@ -370,6 +589,8 @@ async function startServer(httpMode) {
       });
 
       let startupLog = '';
+      // Reset the one-time protocol-sync flag on each server start
+      _modeSynced = false;
 
       serverProcess.stdout.on('data', (data) => {
         const text = data.toString();
@@ -455,6 +676,67 @@ function getServerStatus() {
   };
 }
 
+// ─── Self-update helpers ─────────────────────────────────────────
+// Deterministic update: the app exits FIRST (before-quit stops the backend
+// and releases every file lock), then a detached helper runs the silent
+// installer. The installer itself relaunches the app on success
+// (.onInstSuccess in setup.nsi), so nothing races the running exe.
+function launchReleaseInstaller(installerPath) {
+  const { spawn } = require('child_process');
+  try {
+    const bat = path.join(os.tmpdir(), 'kasalix-update-' + Date.now() + '.bat');
+    // The installer requires admin, so run it via PowerShell's elevated
+    // Start-Process (UAC prompt appears when the app itself is not
+    // elevated; -Wait keeps the helper bat alive until install finishes).
+    const verbElevate = '-Verb Run' + 'As';
+    const psCmd = "Start-Process -FilePath '" + installerPath + "' -ArgumentList '/S' "
+      + verbElevate + " -Wait";
+    const CRLF = String.fromCharCode(13, 10);
+    const batText = [
+      '@echo off',
+      'timeout /t 2 /nobreak >>nul',
+      'powershell -NoProfile -ExecutionPolicy Bypass -Command "' + psCmd + '"',
+      'del "%~f0"',
+    ].join(CRLF);
+    fs.writeFileSync(bat, batText, 'utf-8');
+    const child = spawn('cmd.exe', ['/d', '/c', bat], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.unref();
+  } catch (e) {
+    console.log('[update] Could not arm installer:', e.message);
+    return;
+  }
+  // Quit so the installer can replace the running app files.
+  setTimeout(() => {
+    try { app.quit(); } catch {}
+  }, 500);
+}
+
+/** Find a previously downloaded installer in the release directory.
+ *  Returns { name, path } for the newest matching file, or null.
+ *  Used by get-latest-release (banner "Install now" state) and install-release. */
+function findReleaseInstaller() {
+  try {
+    if (!fs.existsSync(RELEASE_DIR)) return null;
+    const installer = fs.readdirSync(RELEASE_DIR, { withFileTypes: true })
+      .filter(e => e.isFile())
+      .map(e => {
+        try {
+          const full = path.join(RELEASE_DIR, e.name);
+          return { name: e.name, path: full, mtime: fs.statSync(full).mtimeMs };
+        } catch { return null; }
+      })
+      .filter(f => f && /\.exe$/i.test(f.name) && !/\.blockmap$/i.test(f.name))
+      .sort((a, b) => b.mtime - a.mtime)[0];
+    return installer || null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── IPC Handlers ────────────────────────────────────────────────
 function setupIPC() {
   // External links (GitHub feedback) → system browser
@@ -497,21 +779,15 @@ function setupIPC() {
   });
 
   ipcMain.handle('check-ollama', async () => {
+    // A pure liveness probe — deliberately does NOT write the ownership
+    // flag. Ownership means "this app spawned Ollama (with its settings)";
+    // the tray autostart instance must stay external so the backend's
+    // auto-apply can restart it with the saved tuning.
     try {
       const http = require('http');
-      const path = require('path');
-      const os = require('os');
       return new Promise((resolve) => {
         const req = http.get('http://localhost:11434/api/tags', (res) => {
-          const available = res.statusCode >= 200 && res.statusCode < 400;
-          if (available) {
-            // Write ownership flag so backend knows the app manages Ollama
-            try {
-              const flagPath = path.join(os.tmpdir(), 'kasalix-ollama-owned');
-              fs.writeFileSync(flagPath, String(process.pid));
-            } catch {}
-          }
-          resolve({ available });
+          resolve({ available: res.statusCode >= 200 && res.statusCode < 400 });
         });
         req.on('error', () => resolve({ available: false }));
         req.setTimeout(2000, () => { req.destroy(); resolve({ available: false }); });
@@ -576,8 +852,13 @@ function setupIPC() {
 
     return new Promise((resolve) => {
       try {
+        const ollamaEnv = buildOllamaEnv();
+        if (Object.keys(ollamaEnv).length) {
+          console.log('[start-ollama] Tuning env:', JSON.stringify(ollamaEnv));
+        }
         const child = spawn(cmd, ['serve'], {
           stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, ...ollamaEnv },
           ...(useShell ? { shell: true } : { windowsHide: true }),
         });
 
@@ -612,12 +893,15 @@ function setupIPC() {
             if (await isOllamaUp()) {
               console.log('[start-ollama] Ollama is up after', i + 1, 'seconds');
               settle({ success: true });
-              // Write ownership flag for backend to detect
+              // Write ownership flag for backend to detect — JSON with the
+              // tuning env so a fresh backend can report the ACTIVE tuning
+              // in /api/ollama/status (an env-less "owned" flag made the
+              // GUI show Auto defaults after any restart).
               try {
                 const flagPath = require('path').join(require('os').tmpdir(), 'kasalix-ollama-owned');
                 const flagDir = require('path').dirname(flagPath);
                 if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
-                fs.writeFileSync(flagPath, String(process.pid));
+                fs.writeFileSync(flagPath, JSON.stringify({ pid: child.pid, env: ollamaEnv }));
               } catch {}
               return;
             }
@@ -754,6 +1038,8 @@ function setupIPC() {
               fs.writeFileSync(path.join(RELEASE_DIR, 'latest.yml'), ymlContent, 'utf-8');
             } catch { /* yml is optional for auto-updater */ }
 
+            // Install is explicit: the renderer calls install-release after
+            // the download completes (banner updater / download view).
             resolve({ success: true, path: destPath, size: totalBytes, version: releaseInfo.tag_name });
           });
           fileStream.on('error', (err) => {
@@ -768,29 +1054,21 @@ function setupIPC() {
     }
   });
 
-  /** Get list of files in the release directory */
-  ipcMain.handle('get-release-files', () => {
-    try {
-      if (!fs.existsSync(RELEASE_DIR)) return { files: [] };
-      const entries = fs.readdirSync(RELEASE_DIR, { withFileTypes: true });
-      const files = entries
-        .filter(e => e.isFile())
-        .map(e => {
-          const stat = fs.statSync(path.join(RELEASE_DIR, e.name));
-          return { name: e.name, size: stat.size, modified: stat.mtimeMs };
-        })
-        .sort((a, b) => b.modified - a.modified);
-      return { files };
-    } catch (err) {
-      return { files: [], error: err.message };
+  /** Run a previously downloaded installer (no re-download) */
+  ipcMain.handle('install-release', async () => {
+    const found = findReleaseInstaller();
+    if (!found) {
+      return { success: false, error: 'No downloaded installer found' };
     }
+    launchReleaseInstaller(found.path);
+    return { success: true, path: found.path, name: found.name };
   });
 
-  /** Get the latest GitHub release version */
-  ipcMain.handle('check-github-release', async () => {
-    try {
-      const https = require('https');
-      return await new Promise((resolve) => {
+  /** Latest GitHub release + whether an installer is already downloaded */
+  ipcMain.handle('get-latest-release', async () => {
+    const https = require('https');
+    const release = await new Promise((resolve) => {
+      try {
         const req = https.get(GITHUB_API, {
           headers: { 'User-Agent': 'Kasalix-Server/1.0', 'Accept': 'application/vnd.github.v3+json' },
         }, (res) => {
@@ -800,8 +1078,8 @@ function setupIPC() {
             try {
               const r = JSON.parse(data);
               resolve({
-                version: r.tag_name,
-                name: r.name,
+                version: (r.tag_name || '').replace(/^v/i, ''),
+                name: r.name || '',
                 assets: (r.assets || []).map(a => ({ name: a.name, size: a.size })),
                 publishedAt: r.published_at,
               });
@@ -810,8 +1088,13 @@ function setupIPC() {
         });
         req.on('error', () => resolve(null));
         req.setTimeout(10000, () => { req.destroy(); resolve(null); });
-      });
-    } catch { return null; }
+      } catch { resolve(null); }
+    });
+    const installer = findReleaseInstaller();
+    return {
+      release,
+      downloadedInstaller: installer ? { name: installer.name, path: installer.path } : null,
+    };
   });
 
   // App info
@@ -827,26 +1110,6 @@ function setupIPC() {
     };
   });
 
-  // ─── Icon Picker ────────────────────────────────
-  ipcMain.handle('pick-icon', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
-      title: 'Choose Server Icon',
-      filters: [
-        { name: 'Icons', extensions: ['ico', 'png'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
-      properties: ['openFile'],
-    });
-    if (result.canceled || !result.filePaths.length) {
-      return { success: false };
-    }
-    const iconPath = result.filePaths[0];
-    // Apply immediately
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      try { mainWindow.setIcon(iconPath); } catch {}
-    }
-    return { success: true, path: iconPath };
-  });
 
   // ─── GUI Settings Persistence ────────────────────
   const SETTINGS_FILE = path.join(app.getPath('userData'), 'gui-settings.json');
@@ -882,9 +1145,15 @@ function setupIPC() {
         reqHeaders['Content-Length'] = Buffer.byteLength(payload);
       }
       const port = serverMode.port || 3001;
-      // Try the currently tracked protocol first, then fall back to the other
-      // if the connection fails (stale mode or externally-started backend).
-      const protocols = serverMode.https ? ['https', 'http'] : ['http', 'https'];
+      // Try the currently tracked protocol first. We deliberately do NOT
+      // probe the other protocol on request errors: an HTTPS handshake
+      // against a plain-HTTP backend makes uvicorn log
+      // "WARNING: Invalid HTTP request received" on every poll. Exception:
+      // a one-time sync after startup (external start with a different
+      // mode), which probes the other protocol at most once.
+      const primary = serverMode.https ? 'https' : 'http';
+      const secondary = serverMode.https ? 'http' : 'https';
+      const protocols = _modeSynced ? [primary] : [primary, secondary];
 
       const attempt = (idx) => {
         if (idx >= protocols.length) {
@@ -904,7 +1173,11 @@ function setupIPC() {
           let body = '';
           res.on('data', (chunk) => body += chunk);
           res.on('end', () => {
-            try { resolve(JSON.parse(body)); }
+            try {
+              const parsed = JSON.parse(body);
+              if (idx === 0) _modeSynced = true; // primary protocol confirmed
+              resolve(parsed);
+            }
             catch { attempt(idx + 1); } // Non-JSON (e.g. wrong-protocol error page) — try the other protocol
           });
         });
@@ -917,36 +1190,6 @@ function setupIPC() {
       attempt(0);
     });
   }
-
-  /** Authenticate with the settings password */
-  ipcMain.handle('auth-settings', async (_event, password) => {
-    try {
-      return await backendRequest('/api/settings/auth', { method: 'POST', body: { password } });
-    } catch { return { error: 'Failed to authenticate' }; }
-  });
-
-  /** Change the settings password */
-  ipcMain.handle('change-settings-password', async (_event, currentPassword, newPassword) => {
-    try {
-      return await backendRequest('/api/settings/password', {
-        method: 'POST',
-        body: { currentPassword, newPassword },
-        headers: { 'Cookie': 'settings_auth=1' },
-      });
-    } catch { return { error: 'Failed to change password' }; }
-  });
-
-  /** Reset the settings password back to the default (letmein) */
-  ipcMain.handle('reset-settings-password', async () => {
-    try {
-      const pwDir = DATA_DIR;
-      fs.mkdirSync(pwDir, { recursive: true });
-      fs.writeFileSync(path.join(pwDir, 'settings_password.txt'), 'letmein', 'utf-8');
-      return { success: true, message: 'Password reset to: letmein' };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  });
 
   /** Get registered users */
   ipcMain.handle('get-users', async () => {
@@ -965,6 +1208,13 @@ function setupIPC() {
     try {
       return await backendRequest('/api/models');
     } catch { return { models: [] }; }
+  });
+
+  /** Per-category "where it's used" descriptions for the models view */
+  ipcMain.handle('get-model-usage-map', async () => {
+    try {
+      return await backendRequest('/api/models/usage-map');
+    } catch { return { usage: null }; }
   });
 
   /** Pull a model from Ollama registry */
@@ -1169,37 +1419,9 @@ function setupIPC() {
   // ─── Bun / Ollama Install ──────────────────────────
   /** Check whether the Bun runtime is installed */
   ipcMain.handle('check-bun', async () => {
-    return { installed: resolveBunPath() !== null };
-  });
-
-  /** Install Bun silently using the official installer script */
-  ipcMain.handle('install-bun', async () => {
-    return new Promise((resolve) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('install-progress', { component: 'bun', stage: 'download', message: 'Downloading Bun installer...' });
-      }
-      // Official Bun Windows installer: irm bun.sh/install.ps1 | iex
-      // Use spawn with an arg array so the pipe is passed literally to
-      // PowerShell (no fragile cmd.exe nested-quote handling).
-      const ps = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', 'irm bun.sh/install.ps1 | iex'], {
-        windowsHide: true,
-        shell: false,
-        timeout: 600000,
-      });
-      let stderr = '';
-      ps.stderr.on('data', (d) => { stderr += d.toString(); });
-      ps.on('error', (err) => {
-        resolve({ success: false, installed: false, error: err.message });
-      });
-      ps.on('close', () => {
-        const installed = resolveBunPath() !== null;
-        resolve({
-          success: installed,
-          installed,
-          error: installed ? undefined : (stderr.trim() || 'Bun install finished but bun.exe was not found.'),
-        });
-      });
-    });
+    // Bun is no longer required — the Python backend exe is self-contained.
+    // Kept as a stub so the renderer's startup checklist still passes.
+    return { installed: true };
   });
 
   /** Download and silently install Ollama using its official Windows installer */
@@ -1360,16 +1582,6 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'public', 'index.html'));
 
-  // Apply saved icon after window is ready
-  try {
-    const settingsPath = path.join(app.getPath('userData'), 'gui-settings.json');
-    const savedData = fs.readFileSync(settingsPath, 'utf-8');
-    const saved = JSON.parse(savedData);
-    if (saved.iconPath && fs.existsSync(saved.iconPath)) {
-      mainWindow.setIcon(saved.iconPath);
-    }
-  } catch {}
-
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -1393,14 +1605,6 @@ function createWindow() {
           models = await getRunningModels();
           clearTimeout(timeout);
         } catch { models = []; }
-      }
-
-      // Check if Bun is available (first time only)
-      if (!global._bunChecked) {
-        global._bunChecked = true;
-        if (!resolveBunPath() && mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('bun-not-found');
-        }
       }
 
       mainWindow.webContents.send('dashboard-update', { stats, ips, serverStatus, models });

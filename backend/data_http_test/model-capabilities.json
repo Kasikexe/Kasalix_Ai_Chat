@@ -1,0 +1,33 @@
+{
+  "version": 3,
+  "models": {
+    "legraphista/Orpheus:latest": {
+      "tools": true,
+      "thinking": false
+    },
+    "feadxus/flux2-klein-9b-uncensored:Q4_K_M": {
+      "tools": true,
+      "thinking": false
+    },
+    "qwen3:8b": {
+      "tools": true,
+      "thinking": true
+    },
+    "hf.co/WANG-CC/flux2-klein-9b-uncensored-text-encoder-Q8_0-GGUF:Q8_0": {
+      "tools": false,
+      "thinking": false
+    },
+    "gpt-oss:20b": {
+      "tools": true,
+      "thinking": true
+    },
+    "orcarouter/Qwen3.8-27B-Uncensored:q2_K": {
+      "tools": true,
+      "thinking": true
+    },
+    "orcarouter/Qwen3.8-27B-Uncensored:iq3_m": {
+      "tools": true,
+      "thinking": true
+    }
+  }
+}
