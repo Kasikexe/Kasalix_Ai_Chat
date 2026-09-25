@@ -30,6 +30,20 @@ active_runs: dict[str, dict[str, Any]] = {}
 
 IMAGE_DATA_RE = re.compile(r"\[image:data:image/[a-z]+;base64,[A-Za-z0-9+/=]+\]")
 
+# What counts as a CLOUD failure. This used to match "ollama error" anywhere in
+# the message, so every local Ollama failure told the user "Cloud provider
+# unavailable. Falling back to local models." while they were already on local
+# models — a capability error like `400 ... does not support tools` on a local
+# model was reported as a cloud outage. Only cloud-specific causes qualify now.
+CLOUD_FAILURE_RE = re.compile(
+    r"cloud|api[ _-]?key|authentication|unauthorized|ollama\.com|getaddrinfo",
+    re.IGNORECASE,
+)
+
+
+def looks_like_cloud_failure(message: str) -> bool:
+    return bool(CLOUD_FAILURE_RE.search(message or ""))
+
 
 async def read_json_object(request: Request) -> dict[str, Any] | None:
     """Parse a request body that MUST be a JSON object.
@@ -310,7 +324,7 @@ async def chat_route(request: Request) -> Any:
                     else:
                         message = str(e) or "Unknown error"
                         log_error("[chat] Pipeline error:", message)
-                        is_cloud_error = bool(re.search(r"ollama error|cloud|fetch failed|ECONNREFUSED|ENOTFOUND|exhausted retries", message, re.I))
+                        is_cloud_error = looks_like_cloud_failure(message)
                         if is_cloud_error:
                             emit({"type": "stage", "stage": "cloud:unavailable"})
                         emit({"type": "error", "error": message})

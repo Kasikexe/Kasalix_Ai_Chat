@@ -817,6 +817,10 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
         resolved = await get_resolved_model("chat_thinking")
         if resolved["model"] and resolved["model"] != model:
             log_info(f"[pipeline] Auto-thinking: {model} can't think → using {resolved['model']} (source: {resolved['source']})")
+            # Say so in the reply: the swap used to be silent, so testing a
+            # non-thinking model looked like it "answered" when another model
+            # did, and the thinking the user saw came from that other model.
+            on_chunk(f"_⚙️ {model} can't think — answering this one with {resolved['model']}._\n\n")
             model = resolved["model"]
 
     # Cloud routing was probed and failed — the model name may still be a

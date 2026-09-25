@@ -593,8 +593,12 @@ export function useChat(
               (m) => !(m.role === 'assistant' && m.content === '')
             );
             notify(e);
-            // Show toast for cloud errors so the user knows what happened
-            if (/ollama error|cloud|fetch failed|ECONNREFUSED|ENOTFOUND|exhausted retries/i.test(err)) {
+            // Show the cloud-fallback toast only for genuinely cloud-specific
+            // failures. This used to match "ollama error" anywhere, so a local
+            // model error (e.g. "does not support tools") claimed the cloud
+            // provider was unavailable and that we were falling back to local
+            // models — while already running local models.
+            if (/cloud|api[ _-]?key|authentication|unauthorized|ollama\.com|getaddrinfo/i.test(err)) {
               import('./useToast').then(({ useToast }) => {
                 window.dispatchEvent(new CustomEvent('cloud-unavailable'));
               }).catch(() => {});

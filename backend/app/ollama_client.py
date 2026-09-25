@@ -9,14 +9,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 import httpx
 
-from .capabilities import supports_thinking
+from .capabilities import (
+    mark_thinking_unsupported,
+    mark_tools_unsupported,
+    supports_thinking,
+    supports_tools,
+)
 from .config import get_data_dir, ollama_base_url
-from .logger import error as log_error, info as log_info
+from .logger import error as log_error, info as log_info, warn as log_warn
 from .models import Message, ToolLoopMessage
 
 
@@ -154,6 +160,48 @@ def _build_options(opts: StreamOptions, body: dict[str, Any]) -> None:
 
 class OllamaError(Exception):
     """Ollama API error — message matches the TS `Ollama error (status): text`."""
+
+
+def _unsupported_tools_error(message: str) -> bool:
+    return bool(re.search(r"does not support tools|no tool support|tools are not supported", message, re.I))
+
+
+def _unsupported_thinking_error(message: str) -> bool:
+    return bool(re.search(r"does not support thinking|thinking is not supported", message, re.I))
+
+
+async def _request_with_capability_heal(
+    model: str,
+    body: dict[str, Any],
+    call: Callable[[], Awaitable[Any]],
+) -> Any:
+    """Run one chat request, healing an over-eager capability guess.
+
+    Ollama REJECTS THE WHOLE REQUEST when a model's template has no tool or
+    thinking support: `400 ... does not support tools`. One wrong guess about a
+    model's capabilities therefore cost the user the entire reply (empty answer
+    plus a misleading "cloud provider unavailable" toast). Now the offending
+    optional field is dropped, remembered for next time, and the request is
+    retried — the answer always wins over the metadata.
+    """
+    for _ in range(3):
+        try:
+            return await call()
+        except OllamaError as e:
+            message = str(e)
+            dropped = ""
+            if body.get("tools") and _unsupported_tools_error(message):
+                body.pop("tools", None)
+                dropped = "tool definitions"
+                await mark_tools_unsupported(model)
+            elif body.get("think") and _unsupported_thinking_error(message):
+                body.pop("think", None)
+                dropped = "thinking"
+                await mark_thinking_unsupported(model)
+            if not dropped:
+                raise
+            log_warn(f"[ollama] {model} rejected {dropped} — retrying without them ({message[:120]})")
+    return await call()
 
 
 class GenerationRepetitionError(OllamaError):
@@ -361,7 +409,11 @@ async def stream_chat(
         f"[ollama] Model: {model}, think: {body.get('think', 'n/a')}, "
         f"temp: {opts.temperature if opts.temperature is not None else 'default'}, endpoint: {endpoint}"
     )
-    await _stream_response(endpoint, body, opts, log_line, on_chunk, collect_tool_calls=False)
+
+    async def _run() -> tuple[str, list[dict[str, Any]], dict[str, int]]:
+        return await _stream_response(endpoint, body, opts, log_line, on_chunk, collect_tool_calls=False)
+
+    await _request_with_capability_heal(model, body, _run)
 
 
 async def stream_chat_with_tools(
@@ -377,8 +429,22 @@ async def stream_chat_with_tools(
         "model": model,
         "messages": convert_messages_for_ollama(messages),
         "stream": True,
-        "tools": tools,
     }
+    # Only hand tool definitions to a model that accepts them — Ollama 400s the
+    # ENTIRE request for a model whose template has no tool support, and that
+    # used to wipe out the answer. The local capability probe describes THIS
+    # machine's Ollama, so a custom (cloud) endpoint keeps its tools: a model
+    # hosted remotely may not be installed here, and a wrong guess is healed
+    # below anyway.
+    if tools:
+        # Local Ollama: consult the probe. Custom (cloud) endpoint: keep the
+        # tools — the probe describes THIS machine's models, and a model hosted
+        # remotely may not be installed here at all. The heal below catches a
+        # wrong guess either way.
+        if opts.base_url or await supports_tools(model):
+            body["tools"] = tools
+        else:
+            log_info(f"[ollama] {model} has no tool support — this round runs without tool definitions")
     _build_options(opts, body)
     num_ctx = await _get_default_num_ctx()
     if num_ctx and not body["options"].get("num_ctx"):
@@ -388,12 +454,16 @@ async def stream_chat_with_tools(
 
     endpoint = opts.base_url or ollama_base_url()
     log_line = (
-        f"[ollama] Tool round — model: {model}, tools: {len(tools)}, "
+        f"[ollama] Tool round — model: {model}, tools: {len(body.get('tools') or [])}, "
         f"think: {body.get('think', 'n/a')}, endpoint: {endpoint}"
     )
-    content, tool_calls, metrics = await _stream_response(
-        endpoint, body, opts, log_line, on_chunk, collect_tool_calls=True
-    )
+
+    async def _run_round() -> tuple[str, list[dict[str, Any]], dict[str, int]]:
+        return await _stream_response(
+            endpoint, body, opts, log_line, on_chunk, collect_tool_calls=True
+        )
+
+    content, tool_calls, metrics = await _request_with_capability_heal(model, body, _run_round)
     tps = 0.0
     if metrics.get("eval_count") and metrics.get("eval_duration_ns"):
         tps = metrics["eval_count"] / (metrics["eval_duration_ns"] / 1e9)
@@ -431,16 +501,20 @@ async def chat(
         f"temp: {opts.temperature if opts.temperature is not None else 'default'}, endpoint: {endpoint}"
     )
 
-    timeout = 120.0 if opts.api_key else None
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        res = await client.post(f"{endpoint}/api/chat", json=body, headers=headers)
-    if res.status_code >= 400:
-        if res.status_code in (401, 403):
-            is_cloud = endpoint.startswith("https") and "localhost" not in endpoint and "127.0.0.1" not in endpoint
-            hint = " — your cloud API key is invalid, expired or revoked. Check it in Settings → Cloud." if is_cloud else ""
-            raise OllamaError(f"Ollama error ({res.status_code}): Authentication failed{hint}")
-        raise OllamaError(f"Ollama error ({res.status_code}): {res.text[:500] or res.reason_phrase}")
-    data = res.json()
-    if data.get("error"):
-        raise OllamaError(data["error"])
+    async def _post() -> dict[str, Any]:
+        timeout = 120.0 if opts.api_key else None
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.post(f"{endpoint}/api/chat", json=body, headers=headers)
+        if res.status_code >= 400:
+            if res.status_code in (401, 403):
+                is_cloud = endpoint.startswith("https") and "localhost" not in endpoint and "127.0.0.1" not in endpoint
+                hint = " — your cloud API key is invalid, expired or revoked. Check it in Settings → Cloud." if is_cloud else ""
+                raise OllamaError(f"Ollama error ({res.status_code}): Authentication failed{hint}")
+            raise OllamaError(f"Ollama error ({res.status_code}): {res.text[:500] or res.reason_phrase}")
+        data = res.json()
+        if data.get("error"):
+            raise OllamaError(data["error"])
+        return data
+
+    data = await _request_with_capability_heal(model, body, _post)
     return (data.get("message") or {}).get("content") or ""
