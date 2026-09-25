@@ -25,7 +25,7 @@ from .logger import error as log_error, info as log_info, warn as log_warn
 from .memory import get_memory
 from .model_assignments import get_model_assignment, get_resolved_model
 from .ollama_client import OllamaError, StreamOptions, get_models, stream_chat, stream_chat_with_tools
-from .search import get_web_context, set_source_sink
+from .search import decide_search, get_web_context, set_source_sink
 from .settings_store import get_cloud_settings
 from .tools import detect_tool, execute_tool, get_all_tools, is_probably_math_expression
 from .models import Message
@@ -238,6 +238,65 @@ def extract_search_topic(message: str) -> str | None:
     if not text or _REFERENCE_ONLY_RE.match(text):
         return None
     return text
+
+
+MAX_SEARCH_QUERY_CHARS = 300
+
+
+def usable_search_query(query: str | None) -> str | None:
+    """A query worth sending to a search engine, or None.
+
+    Guards the mistake a model can still make — handing back the words of the
+    request ("it", "search it up") instead of the subject it refers to.
+    """
+    text = " ".join(str(query or "").split()).strip("\"'")
+    if not text:
+        return None
+    text = text[:MAX_SEARCH_QUERY_CHARS].strip()
+    if not text or extract_search_topic(text) is None:
+        return None
+    return text
+
+
+def _no_search(reason: str, source: str) -> dict[str, Any]:
+    return {"context": None, "query": None, "source": source, "reason": reason}
+
+
+async def plan_search(
+    messages: list[Message],
+    user_text: str,
+    model: str,
+    base_url: str | None = None,
+    api_key: str | None = None,
+) -> dict[str, Any]:
+    """Decide whether to search and what for. Never raises.
+
+    The model decides (it can tell what a follow-up refers to, which no keyword
+    list can); the keyword heuristic decides only when the model is unavailable,
+    or when the model asks for a lookup but writes no usable query.
+    """
+    try:
+        decision = await decide_search(messages, model, base_url=base_url, api_key=api_key)
+    except Exception as e:  # noqa: BLE001
+        # decide_search already swallows model failures; this covers everything
+        # else. A search decision must never be able to kill a chat turn.
+        log_warn(f"[search] Search decision crashed ({type(e).__name__}: {e}) — deciding with keywords")
+        decision = None
+    if decision is not None:
+        if not decision["search"]:
+            return _no_search("the model decided no lookup is needed", "model")
+        query = usable_search_query(decision.get("query"))
+        if query:
+            return {"context": None, "query": query, "source": "model", "reason": ""}
+        query = resolve_search_query(user_text, messages)
+        if query:
+            return {"context": None, "query": query, "source": "model+keywords", "reason": ""}
+        return _no_search("the model wanted a lookup but no subject could be found", "model")
+
+    query = resolve_search_query(user_text, messages)
+    if query:
+        return {"context": None, "query": query, "source": "keywords", "reason": ""}
+    return _no_search("no search was warranted by the keywords", "keywords")
 
 
 def previous_topic(history: list[Message] | None, current: str) -> str | None:
@@ -1101,39 +1160,48 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
     user_text = re.sub(r"\[image:[^\]]+\]", "", last_user.get("content", "") if last_user else "").strip()
 
     needs_file_listing = intent["wantsFileInfo"] or (intent["wantsCode"] and planning_enabled)
-    # The message alone decides WHETHER to search; what gets searched is a
-    # subject that may come from an earlier turn (see resolve_search_query).
-    search_query = None if intent["hasImage"] else resolve_search_query(user_text, messages)
-    should_search = search_query is not None
-    if should_search and search_query != user_text:
-        log_info(f'[pipeline] Search subject resolved to: "{search_query}"')
+
+    async def _search_task() -> dict[str, Any]:
+        """Decide, then search — alongside the other context work, not after it."""
+        if intent["hasImage"]:
+            return _no_search("the turn has an image", "skip")
+        try:
+            plan = await plan_search(
+                messages,
+                user_text,
+                model,
+                base_url=_cloud_endpoint.get() or None,
+                api_key=_cloud_api_key.get() or None,
+            )
+        except Exception as e:  # noqa: BLE001
+            # Deciding is optional; answering is not. Never let it break a turn.
+            log_error("[pipeline] Search planning failed:", e)
+            return _no_search(f"search planning failed ({type(e).__name__})", "error")
+        if not plan["query"]:
+            return plan
+        if on_stage:
+            on_stage("search:web")
+        log_info(f'[pipeline] Web search: "{plan["query"]}" (decided by {plan["source"]})')
+        plan["context"] = await get_web_context(plan["query"])
+        return plan
 
     if needs_file_listing and workspace_path and on_stage:
         on_stage("reading:workspace")
-    if should_search and on_stage:
-        on_stage("search:web")
 
     async def _file_listing_task() -> str:
         result = await list_workspace_files(workspace_path)
         log_info(f"[pipeline] Workspace file listing: {result[:200]}...")
         return result
 
-    file_listing, memory_context, web_context = await asyncio.gather(
+    file_listing, memory_context, search_plan = await asyncio.gather(
         _file_listing_task() if (needs_file_listing and workspace_path) else _noop_str(),
         build_memory_context(user_id),
-        get_web_context(search_query) if should_search else _noop_none(),
+        _search_task(),
     )
+    web_context = search_plan["context"]
 
-    if user_text and not should_search and not intent["hasImage"]:
-        if needs_web_search(user_text):
-            # It wanted to search but had nothing to search for ("search it up"
-            # as the first message). Better to answer than to search the words.
-            log_info(
-                f'[pipeline] Skipped web search — "{user_text[:60]}" carries no subject '
-                "of its own and no earlier turn to borrow one from"
-            )
-        else:
-            log_info(f'[pipeline] Skipped web search (heuristic) for: "{user_text[:60]}..."')
+    if user_text and not search_plan["query"] and search_plan["source"] != "skip":
+        log_info(f'[pipeline] No web search ({search_plan["source"]}): {search_plan["reason"]}')
 
     def with_context(content: str) -> str:
         result = content
@@ -1502,10 +1570,6 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
 
 async def _noop_str() -> str:
     return ""
-
-
-async def _noop_none() -> None:
-    return None
 
 
 from .capabilities import supports_thinking as _supports_thinking  # noqa: E402

@@ -18,11 +18,15 @@ import pytest
 _TMP = tempfile.mkdtemp(prefix="kasalix-subject-test-")
 os.environ["DATA_DIR"] = _TMP
 
+from app import search as search_mod  # noqa: E402
 from app.pipeline import (  # noqa: E402
     extract_search_topic,
     needs_web_search,
+    plan_search,
     resolve_search_query,
+    usable_search_query,
 )
+from app.search import decide_search, parse_search_decision  # noqa: E402
 
 TOPIC = "What is the current population of Czechia"
 
@@ -149,6 +153,11 @@ class TestPipelineUsesTheSubject:
 
         seen: list[str] = []
 
+        async def fake_decision(*_args, **_kwargs):
+            # "The model is unavailable" — exactly the case these tests cover:
+            # the keyword path is what decides when the model cannot.
+            return None
+
         async def fake_search(query):
             seen.append(query)
             return None
@@ -157,6 +166,7 @@ class TestPipelineUsesTheSubject:
             on_chunk("ok")
             return {"content": "ok", "toolCalls": [], "metrics": {}}
 
+        monkeypatch.setattr(pipeline, "decide_search", fake_decision)
         monkeypatch.setattr(pipeline, "get_web_context", fake_search)
         monkeypatch.setattr(pipeline, "stream_chat_with_tools", fake_model)
 
@@ -191,6 +201,284 @@ class TestPipelineUsesTheSubject:
     def test_plain_question_is_unchanged_end_to_end(self, monkeypatch):
         seen = self._run(TOPIC, [], monkeypatch)
         assert seen == [TOPIC]
+
+
+class TestDecisionParsing:
+    def test_plain_json(self):
+        assert parse_search_decision('{"search": true, "query": "czechia population"}') == {
+            "search": True,
+            "query": "czechia population",
+        }
+        assert parse_search_decision('{"search": false, "query": ""}') == {
+            "search": False,
+            "query": "",
+        }
+
+    def test_json_wrapped_in_prose_or_fences(self):
+        raw = 'Sure!\n```json\n{"search": true, "query": "messi goals"}\n```\nHope that helps.'
+        assert parse_search_decision(raw) == {"search": True, "query": "messi goals"}
+
+    def test_string_booleans_are_understood(self):
+        assert parse_search_decision('{"search": "true", "query": "x"}')["search"] is True
+        assert parse_search_decision('{"search": "no", "query": ""}')["search"] is False
+
+    def test_unusable_replies_are_rejected_rather_than_guessed(self):
+        assert parse_search_decision("I think you should search for it.") is None
+        assert parse_search_decision('{"search": "maybe", "query": "x"}') is None
+        assert parse_search_decision('{"query": "x"}') is None
+        assert parse_search_decision("") is None
+        assert parse_search_decision("{not json}") is None
+
+    def test_missing_query_with_a_yes_is_kept_as_a_yes(self):
+        assert parse_search_decision('{"search": true}') == {"search": True, "query": ""}
+
+
+class TestModelDecision:
+    def _stub_model(self, monkeypatch, reply: str | None, error: bool = False, delay: float = 0.0):
+        async def fake_stream(model, messages, on_chunk, options):
+            if delay:
+                await asyncio.sleep(delay)
+            if error:
+                raise RuntimeError("model gone")
+            on_chunk(reply or "")
+
+        monkeypatch.setattr(search_mod, "stream_chat", fake_stream)
+
+    def test_the_conversation_is_what_the_model_sees(self, monkeypatch):
+        captured: dict = {}
+
+        async def fake_stream(model, messages, on_chunk, options):
+            captured["prompt"] = messages[0]["content"]
+            captured["model"] = model
+            on_chunk('{"search": true, "query": "czechia population 2026"}')
+
+        monkeypatch.setattr(search_mod, "stream_chat", fake_stream)
+        decision = asyncio.run(
+            decide_search(
+                [
+                    {"role": "user", "content": TOPIC},
+                    {"role": "assistant", "content": "About 10.9 million."},
+                    {"role": "user", "content": "search it up"},
+                ],
+                "test-model",
+            )
+        )
+        assert decision == {"search": True, "query": "czechia population 2026"}
+        assert captured["model"] == "test-model"
+        # The model must SEE the earlier turn, or "it" is unanswerable.
+        assert TOPIC in captured["prompt"]
+        assert "search it up" in captured["prompt"]
+
+    def test_image_markers_never_leak_into_the_prompt(self, monkeypatch):
+        captured: dict = {}
+
+        async def fake_stream(model, messages, on_chunk, options):
+            captured["prompt"] = messages[0]["content"]
+            on_chunk('{"search": false, "query": ""}')
+
+        monkeypatch.setattr(search_mod, "stream_chat", fake_stream)
+        asyncio.run(
+            decide_search([{"role": "user", "content": "hi [image:abc.png]"}], "test-model")
+        )
+        assert "[image" not in captured["prompt"]
+
+    def test_a_broken_model_means_no_decision(self, monkeypatch):
+        self._stub_model(monkeypatch, None, error=True)
+        assert asyncio.run(decide_search(history(TOPIC), "test-model")) is None
+
+    def test_a_slow_model_times_out_instead_of_stalling_the_turn(self, monkeypatch):
+        self._stub_model(monkeypatch, '{"search": true, "query": "x"}', delay=5.0)
+        monkeypatch.setattr(search_mod, "SEARCH_DECISION_TIMEOUT_S", 0.05)
+        assert asyncio.run(decide_search(history(TOPIC), "test-model")) is None
+
+    def test_garbage_output_means_no_decision(self, monkeypatch):
+        self._stub_model(monkeypatch, "I would search for the population.")
+        assert asyncio.run(decide_search(history(TOPIC), "test-model")) is None
+
+    def test_an_empty_conversation_costs_nothing(self, monkeypatch):
+        async def explode(*_args, **_kwargs):
+            raise AssertionError("the model must not be called with nothing to read")
+
+        monkeypatch.setattr(search_mod, "stream_chat", explode)
+        assert asyncio.run(decide_search([], "test-model")) is None
+
+
+class TestPlanSearch:
+    """Who decides, and what wins when the model and the keywords disagree."""
+
+    def _plan(self, monkeypatch, decision, message, history_msgs=None):
+        async def fake_decision(*_args, **_kwargs):
+            return decision
+
+        monkeypatch.setattr("app.pipeline.decide_search", fake_decision)
+        return asyncio.run(
+            plan_search(
+                [*(history_msgs or []), {"role": "user", "content": message}],
+                message,
+                "test-model",
+            )
+        )
+
+    def test_the_models_query_wins(self, monkeypatch):
+        plan = self._plan(
+            monkeypatch,
+            {"search": True, "query": "czechia population 2026"},
+            "can you search it up for me please",
+        )
+        assert plan["query"] == "czechia population 2026"
+        assert plan["source"] == "model"
+
+    def test_the_model_can_say_no_where_keywords_would_have_searched(self, monkeypatch):
+        # "current population" trips every keyword rule there is.
+        plan = self._plan(monkeypatch, {"search": False, "query": ""}, TOPIC)
+        assert plan["query"] is None
+        assert plan["source"] == "model"
+
+    def test_a_model_that_wants_a_search_but_writes_no_usable_query(self, monkeypatch):
+        plan = self._plan(
+            monkeypatch,
+            {"search": True, "query": "it"},
+            "search it up",
+            history(TOPIC),
+        )
+        assert plan["query"] == TOPIC
+        assert plan["source"] == "model+keywords"
+
+    def test_no_decision_falls_back_to_the_keywords(self, monkeypatch):
+        plan = self._plan(monkeypatch, None, TOPIC)
+        assert plan["query"] == TOPIC
+        assert plan["source"] == "keywords"
+
+    def test_no_decision_and_nothing_to_search(self, monkeypatch):
+        plan = self._plan(monkeypatch, None, "thanks")
+        assert plan["query"] is None
+        assert plan["reason"]
+
+    def test_an_unusable_query_is_rejected_by_the_guard(self):
+        assert usable_search_query("it") is None
+        assert usable_search_query("  ") is None
+        assert usable_search_query(None) is None
+        assert usable_search_query('  "czechia population"  ') == "czechia population"
+        assert len(usable_search_query("x " * 500) or "") <= 300
+
+
+class TestModelDecisionEndToEnd:
+    def test_a_pronoun_follow_up_is_searched_where_keywords_would_not(self, monkeypatch):
+        """"and its population?" matches no keyword rule at all — only a model
+        can see what it refers to. This is the whole point of the change."""
+        import app.pipeline as pipeline
+
+        message = "and what about that one?"
+        assert needs_web_search(message) is False  # the keyword path never searches this
+
+        seen: list[str] = []
+
+        async def fake_decision(messages, model, **kwargs):
+            return {"search": True, "query": "czechia population 2026"}
+
+        async def fake_search(query):
+            seen.append(query)
+            return None
+
+        async def fake_model(model, messages, tools, on_chunk, options):
+            on_chunk("ok")
+            return {"content": "ok", "toolCalls": [], "metrics": {}}
+
+        monkeypatch.setattr(pipeline, "decide_search", fake_decision)
+        monkeypatch.setattr(pipeline, "get_web_context", fake_search)
+        monkeypatch.setattr(pipeline, "stream_chat_with_tools", fake_model)
+
+        asyncio.run(
+            pipeline.run_pipeline(
+                {
+                    "model": "test-model",
+                    "messages": [
+                        {"role": "user", "content": TOPIC},
+                        {"role": "assistant", "content": "About 10.9 million."},
+                        {"role": "user", "content": message},
+                    ],
+                    "mode": "chat",
+                    "onChunk": lambda *_: None,
+                }
+            )
+        )
+        assert seen == ["czechia population 2026"]
+
+    def test_the_keyword_path_at_best_search_its_own_pronouns(self, monkeypatch):
+        """The contrast that motivates the change: a message with a keyword the
+        rules recognise still gives them nothing to search FOR."""
+        message = "and its population?"
+        assert needs_web_search(message) is True
+        assert resolve_search_query(message, history(TOPIC)) == "its population"
+
+        async def no_decision(*_args, **_kwargs):
+            return None
+
+        monkeypatch.setattr("app.pipeline.decide_search", no_decision)
+        plan = asyncio.run(
+            plan_search(
+                [*(history(TOPIC)), {"role": "user", "content": message}],
+                message,
+                "test-model",
+            )
+        )
+        # Without the model, that useless query is what reaches the search engine.
+        assert plan["query"] == "its population"
+        assert plan["source"] == "keywords"
+
+    def test_the_decision_failure_hurts_nothing(self, monkeypatch):
+        """A model that cannot decide must not stop the reply."""
+        import app.pipeline as pipeline
+
+        async def broken_decision(*_args, **_kwargs):
+            raise RuntimeError("decision layer exploded")
+
+        async def fake_model(model, messages, tools, on_chunk, options):
+            on_chunk("Hello!")
+            return {"content": "Hello!", "toolCalls": [], "metrics": {}}
+
+        monkeypatch.setattr(pipeline, "decide_search", broken_decision)
+        monkeypatch.setattr(pipeline, "stream_chat_with_tools", fake_model)
+
+        # plan_search wraps the decision, so an exploding layer is caught by the
+        # fallback rather than killing the turn.
+        reply = asyncio.run(
+            pipeline.run_pipeline(
+                {
+                    "model": "test-model",
+                    "messages": [                    {"role": "user", "content": "hello there"}],
+                    "mode": "chat",
+                    "onChunk": lambda *_: None,
+                }
+            )
+        )
+        assert "Hello" in reply
+
+    def test_even_a_broken_planner_cannot_stop_the_reply(self, monkeypatch):
+        """The second layer: an exception escaping plan_search itself."""
+        import app.pipeline as pipeline
+
+        async def exploding_plan(*_args, **_kwargs):
+            raise RuntimeError("planning layer exploded")
+
+        async def fake_model(model, messages, tools, on_chunk, options):
+            on_chunk("Still here.")
+            return {"content": "Still here.", "toolCalls": [], "metrics": {}}
+
+        monkeypatch.setattr(pipeline, "plan_search", exploding_plan)
+        monkeypatch.setattr(pipeline, "stream_chat_with_tools", fake_model)
+
+        reply = asyncio.run(
+            pipeline.run_pipeline(
+                {
+                    "model": "test-model",
+                    "messages": [{"role": "user", "content": "hello there"}],
+                    "mode": "chat",
+                    "onChunk": lambda *_: None,
+                }
+            )
+        )
+        assert "Still here" in reply
 
 
 if __name__ == "__main__":  # pragma: no cover

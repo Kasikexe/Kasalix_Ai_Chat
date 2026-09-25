@@ -719,7 +719,13 @@ class TestSourcesReachTheClient:
             on_chunk("About 10.9 million.")
             return {"content": "About 10.9 million.", "toolCalls": [], "metrics": {}}
 
+        # The decision runs on a model; the keyword path (message = the topic)
+        # is what this test wants, so the decision is scripted as unavailable.
+        async def fake_decision(*_args, **_kwargs):
+            return None
+
         monkeypatch.setattr(pipeline, "stream_chat_with_tools", fake_model)
+        monkeypatch.setattr(pipeline, "decide_search", fake_decision)
 
         async def fake_key():
             return GOOD_KEY
@@ -763,7 +769,11 @@ class TestSourcesReachTheClient:
             on_chunk("About 10.9 million.")
             return {"content": "About 10.9 million.", "toolCalls": [], "metrics": {}}
 
+        async def fake_decision(*_args, **_kwargs):
+            return None
+
         monkeypatch.setattr(pipeline, "stream_chat_with_tools", fake_model)
+        monkeypatch.setattr(pipeline, "decide_search", fake_decision)
 
         async def fake_key():
             return GOOD_KEY

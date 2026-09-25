@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import asyncio
 import html as html_lib
+import json
 import re
 import time
 from contextvars import ContextVar
 from typing import Any, Callable
 
 import httpx
+
+from .attachments import strip_image_markers
 
 from .logger import error as log_error, info as log_info, warn as log_warn
 from .model_assignments import get_resolved_model
@@ -411,6 +414,141 @@ async def _gather_web_results(
         if p["content"]:
             log_info(f"[search]   {p['url'][:80]} ({len(p['content'])} chars)")
     return "duckduckgo", results, None, page_pairs
+
+
+# ─── Search decision (model-driven) ─────────────────────────────────────────
+# Whether to look something up, and what to look for, is a judgement about
+# meaning — "and its population?" needs a lookup, "and its colour?" does not.
+# A keyword list cannot do that, so a model decides: it sees the recent
+# conversation and returns the QUERY it would search for, or nothing. It runs
+# on the conversation's own model, which is already loaded and about to run
+# anyway, so this costs one short round-trip instead of a second model load.
+#
+# Any failure below (model gone, too slow, output that is not the agreed JSON)
+# returns None and the caller falls back to the keyword heuristic — a chat turn
+# must never depend on this decision succeeding.
+
+SEARCH_DECISION_TIMEOUT_S = 20.0
+_DECISION_MAX_TURNS = 8
+_DECISION_MAX_CHARS = 700
+_DECISION_MAX_OUTPUT_TOKENS = 120
+
+SEARCH_DECISION_INSTRUCTIONS = """You decide whether an assistant should look something up on the web before answering the user's newest message.
+
+Search when the answer depends on facts outside the assistant's own knowledge, or on facts that change over time: news and current events, prices, statistics, releases, schedules, weather, who currently holds a position, whether something is still true, anything that happened after its training data, or any time the user asks it to look something up.
+
+Do NOT search for: greetings and small talk, opinions, advice, writing or coding help, arithmetic, questions about this conversation itself, or things that are settled and do not change (definitions, history, well-known facts).
+
+If the newest message refers back to something said earlier — "search it up", "look that up", "and its population?" — the query must name THAT topic, never the words of the request.
+
+Reply with ONLY a JSON object and nothing else:
+{"search": true, "query": "short search-engine keywords"}
+{"search": false, "query": ""}
+
+The query is short keywords for a search engine — not a sentence, not a question, no "please" — in the language of the conversation."""
+
+
+def _decision_transcript(messages: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for message in list(messages or [])[-_DECISION_MAX_TURNS:]:
+        role = message.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        text = strip_image_markers(str(message.get("content") or "")).strip()
+        if not text:
+            continue
+        text = " ".join(text.split())[:_DECISION_MAX_CHARS]
+        lines.append(f"{'User' if role == 'user' else 'Assistant'}: {text}")
+    return "\n".join(lines)
+
+
+def parse_search_decision(raw: str) -> dict[str, Any] | None:
+    """The decision inside a model reply, or None if there isn't a usable one.
+
+    Tolerant on purpose: models wrap JSON in prose and fences, and some emit
+    "true" as a string. Anything that still isn't a clear yes/no is rejected so
+    the caller falls back rather than guessing.
+    """
+    match = re.search(r"\{.*?\}", raw or "", re.DOTALL)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    wants = data.get("search")
+    if isinstance(wants, str):
+        lowered = wants.strip().lower()
+        if lowered in ("true", "yes", "1"):
+            wants = True
+        elif lowered in ("false", "no", "0"):
+            wants = False
+        else:
+            # "maybe"/"unknown" is not a decision — reject it so the caller
+            # falls back instead of silently treating it as "do not search".
+            return None
+    if not isinstance(wants, bool):
+        return None
+    return {"search": wants, "query": str(data.get("query") or "").strip()}
+
+
+async def decide_search(
+    messages: list[dict[str, Any]],
+    model: str,
+    base_url: str | None = None,
+    api_key: str | None = None,
+) -> dict[str, Any] | None:
+    """Ask ``model`` whether to search, and what for.
+
+    Returns ``{"search": bool, "query": str}``, or None when the model could not
+    answer usefully — the caller then decides with the keyword heuristic.
+    """
+    transcript = _decision_transcript(messages)
+    if not transcript:
+        return None
+    prompt = (
+        f"{SEARCH_DECISION_INSTRUCTIONS}\n\n"
+        f"Conversation so far (oldest first; the last line is the newest message):\n{transcript}"
+    )
+    chunks: list[str] = []
+    started = time.monotonic()
+    try:
+        await asyncio.wait_for(
+            stream_chat(
+                model,
+                [{"role": "system", "content": prompt}],
+                chunks.append,
+                StreamOptions(
+                    think=False,
+                    max_tokens=_DECISION_MAX_OUTPUT_TOKENS,
+                    base_url=base_url,
+                    api_key=api_key,
+                ),
+            ),
+            timeout=SEARCH_DECISION_TIMEOUT_S,
+        )
+    except Exception as e:  # noqa: BLE001
+        log_warn(
+            f"[search] Search decision unavailable ({type(e).__name__}: {e}) — "
+            "deciding with keywords"
+        )
+        return None
+    reply = "".join(chunks)
+    decision = parse_search_decision(reply)
+    elapsed_ms = round((time.monotonic() - started) * 1000)
+    if decision is None:
+        log_warn(
+            f"[search] Search decision was not usable ({reply.strip()[:80]!r}) — "
+            "deciding with keywords"
+        )
+        return None
+    log_info(
+        f"[search] Decision: search={decision['search']} "
+        f"query={decision['query']!r} ({elapsed_ms} ms, {model})"
+    )
+    return decision
 
 
 async def get_web_context(query: str) -> str | None:

@@ -690,6 +690,11 @@ class TestWebSearchSourcesReachTheClient:
         import app.pipeline as pipeline
         from app import search
 
+        async def fake_decision(*_args, **_kwargs):
+            # The model decides searches now — scripted here so this test stays
+            # about the SSE event rather than about the decision.
+            return {"search": True, "query": "czechia population"}
+
         async def fake_search(_query):
             search.report_sources(
                 [
@@ -703,9 +708,9 @@ class TestWebSearchSourcesReachTheClient:
             on_chunk("About 10.9 million.")
             return {"content": "About 10.9 million.", "toolCalls": [], "metrics": {}}
 
+        monkeypatch.setattr(pipeline, "decide_search", fake_decision)
         monkeypatch.setattr(pipeline, "get_web_context", fake_search)
         monkeypatch.setattr(pipeline, "stream_chat_with_tools", fake_model)
-        monkeypatch.setattr(pipeline, "needs_web_search", lambda _text: True)
 
         r = client.post(
             "/api/chat/",
@@ -749,8 +754,11 @@ class TestWebSearchSourcesReachTheClient:
             on_chunk("Hello!")
             return {"content": "Hello!", "toolCalls": [], "metrics": {}}
 
+        async def fake_decision(*_args, **_kwargs):
+            return {"search": False, "query": ""}
+
+        monkeypatch.setattr(pipeline, "decide_search", fake_decision)
         monkeypatch.setattr(pipeline, "stream_chat_with_tools", fake_model)
-        monkeypatch.setattr(pipeline, "needs_web_search", lambda _text: False)
 
         r = client.post(
             "/api/chat/",
