@@ -16,15 +16,30 @@ import { attachedImageRefs, attachmentFilename, stripImageMarkers } from '../uti
 type LightboxImage = { src: string; alt?: string; filename?: string; downloadHref?: string };
 
 /**
- * Compact label for a web-search source: the domain, which is what actually
- * identifies the page. Falls back to the title when the URL can't be parsed.
+ * Labels for the web-search source chips: the domain, which is what actually
+ * identifies a site. When one domain appears more than once the first path
+ * segment is added, so two pages on the same site are tellable apart instead of
+ * rendering as what looks like the same link twice.
  */
-function sourceLabel(source: { title: string; url: string }): string {
+function sourceChips(sources: { title: string; url: string }[]): { label: string; url: string }[] {
+ const parsed = sources.map((source) => {
  try {
- return new URL(source.url).hostname.replace(/^www\./, '');
+ const url = new URL(source.url);
+ return {
+ label: url.hostname.replace(/^www\./, ''),
+ segment: url.pathname.split('/').filter(Boolean)[0] || '',
+ url: source.url,
+ };
  } catch {
- return source.title || source.url;
+ return { label: source.title || source.url, segment: '', url: source.url };
  }
+ });
+ const seen = new Map<string, number>();
+ parsed.forEach((p) => seen.set(p.label, (seen.get(p.label) || 0) + 1));
+ return parsed.map((p) => ({
+ label: (seen.get(p.label) || 0) > 1 && p.segment ? `${p.label}/${p.segment}` : p.label,
+ url: p.url,
+ }));
 }
 
 const languageExtensions: Record<string, string> = {
@@ -933,7 +948,7 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  <Globe size={11} className="text-[#7b9fc6]" />
  Sources
  </span>
- {message.sources.map((source) => (
+ {sourceChips(message.sources).map((source) => (
  <button
  key={source.url}
  onClick={() => openExternal(source.url)}
@@ -941,7 +956,7 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  className="inline-flex max-w-[16rem] items-center gap-1 rounded-md border border-white/5 bg-white/[0.04] px-2 py-0.5 text-[11px] text-gray-400 hover:border-white/10 hover:text-gray-200 transition-colors"
  >
  <Link2 size={10} className="flex-shrink-0 opacity-60" />
- <span className="truncate">{sourceLabel(source)}</span>
+ <span className="truncate">{source.label}</span>
  </button>
  ))}
  </div>

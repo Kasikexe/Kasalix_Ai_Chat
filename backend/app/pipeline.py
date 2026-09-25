@@ -17,7 +17,7 @@ from typing import Any, Callable
 import httpx
 
 from .ai_rules import with_ai_rules
-from .attachments import image_data_urls
+from .attachments import image_data_urls, strip_image_markers
 from .cloud_auth import verify_cloud_key
 from .content_guard import DANGEROUS_REPLY, find_dangerous_request
 from .imagegen import sanitize_svg, save_artwork
@@ -83,7 +83,7 @@ def needs_web_search(user_message: str) -> bool:
     follow-ups, and self-referential questions; run for explicit searches and
     time-sensitive / external-factual queries."""
     trimmed = user_message.strip()
-    if not trimmed or len(trimmed) < 15:
+    if not trimmed:
         return False
     lower = trimmed.lower()
 
@@ -113,12 +113,21 @@ def needs_web_search(user_message: str) -> bool:
         return False
 
     explicit = re.search(
-        r"\b(search|look\s*up|find\s*(?:me)?|google|look\s*into|research|check\s*(?:online|the\s*web|internet)|what(?:'s| is| are) (?:on|in|about|the latest)|tell me about)\b",
+        r"\b(search(?:\s+up)?|look\s*up|look\s+(?:it|that|this|them|those)\s+up|"
+        r"find\s*(?:me)?|google(?:\s+it)?|look\s*into|research|"
+        r"check\s*(?:online|the\s*web|internet)|"
+        r"what(?:'s| is| are) (?:on|in|about|the latest)|tell me about)\b",
         lower,
         re.IGNORECASE,
     )
     if explicit:
+        # Honoured at ANY length. "search it up" is 12 characters, so it used
+        # to fall through the length gate below and the follow-up silently
+        # never searched at all.
         return True
+
+    if len(trimmed) < 15:
+        return False
 
     factual = re.search(
         r"\b(current|latest|recent|news|update|today'?s|tonight|tomorrow|yesterday|population|weather|price|cost|distance|temperature|forecast|schedule|deadline|release|announcement|election|president|ceo|founder|invented|discovered|stock|rate|gdp|salary|rank|record|statistic|index|benchmark)\b",
@@ -131,6 +140,141 @@ def needs_web_search(user_message: str) -> bool:
         re.IGNORECASE,
     )
     return bool(factual or time_word)
+
+
+# ─── Search subject resolution ──────────────────────────────────────────────
+# The trigger and the query used to be the same string: the raw message. That
+# broke follow-ups in both directions — "can you search it up for me" was sent
+# to the search engine verbatim (words like "can you" and "for me" included),
+# while "search it up" was too short to search at all. A message now yields a
+# SUBJECT: command words and politeness are stripped, and when nothing but a
+# reference is left ("it", "that", "the same thing") the subject is borrowed
+# from the earlier turn that reference points at.
+
+_FRAMING_PREFIX_RE = re.compile(
+    r"^(?:(?:hey|hi|hello|ok|okay|so|now|well|please|pls|just|actually|also|and|but|umm|uh)[\s,]+)*"
+    r"(?:(?:can|could|would|will|do)\s+(?:you|u)\s+(?:please\s+|kindly\s+)?|"
+    r"i\s+(?:want|need|'?d\s+like)\s+(?:you\s+)?to\s+|"
+    r"go\s+ahead\s+and\s+|try\s+to\s+)*",
+    re.IGNORECASE,
+)
+
+# Only stripped at the START of a message. Mid-sentence "search" is a topic
+# word ("how does a binary search work") and must survive untouched. So must a
+# bare verb directly in front of a noun — "search algorithms explained" and
+# "google maps vs apple maps" are topics, not commands, so those forms require a
+# determiner, preposition or pronoun after the verb (lookaheads below).
+_COMMAND_PREFIX_RE = re.compile(
+    r"^(?:"
+    r"search\s+(?:the\s+)?(?:web|internet|online)\s+for\s+|"
+    r"search\s+(?:it|that|this|them|those)\s*up\b\s*|"
+    r"search\s*up\s+|"
+    r"search\s+for\s+|"
+    r"search\s+(?=(?:the|it|that|this|them|those|about)\b)|"
+    r"google\s+it\b\s*|"
+    r"google\s+for\s+|"
+    r"google\s+(?=(?:the|it|that|this|them|those)\b)|"
+    r"look\s+(?:it|that|this|them|those)\s+up\b\s*|"
+    r"look\s+up\s+|"
+    r"look\s+into\s+|"
+    r"find\s+(?:me\s+|us\s+|out\s+)?|"
+    r"research\s+(?=(?:the|it|that|this|them|those|about)\b)|"
+    r"check\s+(?:online|the\s+web|the\s+internet)\s*(?:for\s+)?"
+    r")",
+    re.IGNORECASE,
+)
+
+# Left over after a command is removed: "search for me the population of X"
+# leaves "me the population of X". Only ever applied to a message that had a
+# command in it, so a query legitimately starting with "me" is untouched.
+_LEADING_FILLER_RE = re.compile(r"^(?:for\s+)?(?:me|us)\b[\s,]*", re.IGNORECASE)
+
+_TRAILING_NOISE_RE = re.compile(
+    r"(?:\s*[,.]?\s*(?:please|pls|thanks|thank\s+you|for\s+me|for\s+us|real\s+quick|"
+    r"right\s+now|now|online|on\s+the\s+web|on\s+the\s+internet|if\s+you\s+can|"
+    r"for\s+me\s+please))+$",
+    re.IGNORECASE,
+)
+
+# Nothing but a pointer at something already said — searching these words
+# verbatim is exactly the "search it up" failure.
+_REFERENCE_ONLY_RE = re.compile(
+    r"^(?:it|that|this|them|those|these|him|her|its|"
+    r"(?:it|that|this|them|those)\s+up|"
+    r"the\s+(?:thing|stuff|above|topic|subject|previous\s+one|same(?:\s+thing)?)|"
+    r"that\s+(?:thing|stuff)|"
+    r"more(?:\s+(?:info|information|details))?|same|again)\s*[.!?]*$",
+    re.IGNORECASE,
+)
+
+
+def _plain_text(content: str) -> str:
+    return strip_image_markers(content or "").strip()
+
+
+def strip_search_command(message: str) -> str:
+    """Remove framing and search commands from the front, noise from the back."""
+    text = _plain_text(message)
+    previous = None
+    while previous != text:
+        previous = text
+        text = _FRAMING_PREFIX_RE.sub("", text).strip()
+        stripped = _COMMAND_PREFIX_RE.sub("", text).strip()
+        if stripped != text:
+            text = stripped
+            text = _LEADING_FILLER_RE.sub("", text).strip()
+    previous = None
+    while previous != text:
+        previous = text
+        text = _TRAILING_NOISE_RE.sub("", text).strip(" ,.")
+    # Stray punctuation often survives a command removal ("search it up?");
+    # a query never needs to start or end with it.
+    return text.strip(" \t\r\n,.:;?!-\u2013\u2014\u2026")
+
+
+def extract_search_topic(message: str) -> str | None:
+    """The searchable subject of a message, or None when it has none of its own."""
+    text = strip_search_command(message)
+    if not text or _REFERENCE_ONLY_RE.match(text):
+        return None
+    return text
+
+
+def previous_topic(history: list[Message] | None, current: str) -> str | None:
+    """The subject an earlier turn was about — what "it" points at.
+
+    Only user messages are considered: an assistant reply is long, may be a
+    refusal, and is a summary of the topic rather than the topic. Reference-only
+    turns are skipped so "search it up" after another "search it up" still finds
+    the real subject instead of borrowing a command.
+    """
+    skipped_current = False
+    for message in reversed(list(history or [])):
+        if message.get("role") != "user":
+            continue
+        text = _plain_text(message.get("content", ""))
+        if not skipped_current and text == current:
+            skipped_current = True
+            continue
+        topic = extract_search_topic(text)
+        if topic:
+            return topic
+    return None
+
+
+def resolve_search_query(message: str, history: list[Message] | None = None) -> str | None:
+    """What to actually search for, or None to answer without searching.
+
+    Triggered by needs_web_search on the raw message; the query is then the
+    message's own subject, or the earlier turn it refers back to.
+    """
+    current = _plain_text(message)
+    if not current or not needs_web_search(current):
+        return None
+    topic = extract_search_topic(current)
+    if topic:
+        return topic
+    return previous_topic(history, current)
 
 
 def needs_thinking(user_message: str) -> bool:
@@ -957,7 +1101,12 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
     user_text = re.sub(r"\[image:[^\]]+\]", "", last_user.get("content", "") if last_user else "").strip()
 
     needs_file_listing = intent["wantsFileInfo"] or (intent["wantsCode"] and planning_enabled)
-    should_search = not intent["hasImage"] and len(user_text) > 0 and needs_web_search(user_text)
+    # The message alone decides WHETHER to search; what gets searched is a
+    # subject that may come from an earlier turn (see resolve_search_query).
+    search_query = None if intent["hasImage"] else resolve_search_query(user_text, messages)
+    should_search = search_query is not None
+    if should_search and search_query != user_text:
+        log_info(f'[pipeline] Search subject resolved to: "{search_query}"')
 
     if needs_file_listing and workspace_path and on_stage:
         on_stage("reading:workspace")
@@ -972,11 +1121,19 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
     file_listing, memory_context, web_context = await asyncio.gather(
         _file_listing_task() if (needs_file_listing and workspace_path) else _noop_str(),
         build_memory_context(user_id),
-        get_web_context(user_text) if should_search else _noop_none(),
+        get_web_context(search_query) if should_search else _noop_none(),
     )
 
     if user_text and not should_search and not intent["hasImage"]:
-        log_info(f'[pipeline] Skipped web search (heuristic) for: "{user_text[:60]}..."')
+        if needs_web_search(user_text):
+            # It wanted to search but had nothing to search for ("search it up"
+            # as the first message). Better to answer than to search the words.
+            log_info(
+                f'[pipeline] Skipped web search — "{user_text[:60]}" carries no subject '
+                "of its own and no earlier turn to borrow one from"
+            )
+        else:
+            log_info(f'[pipeline] Skipped web search (heuristic) for: "{user_text[:60]}..."')
 
     def with_context(content: str) -> str:
         result = content
