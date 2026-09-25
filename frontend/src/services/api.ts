@@ -1,4 +1,4 @@
-import type { Conversation, ConversationMode, Message, OllamaModel, FileEntry, MemoryData } from '../types';
+import type { Conversation, ConversationMode, Message, OllamaModel, FileEntry, MemoryData, SearchSource } from '../types';
 
 // ─── Server URL Configuration ────────────────────────────
 // On desktop (Electron / browser dev), the Vite proxy handles '/api' -> 'localhost:3001'.
@@ -656,6 +656,8 @@ streamChat(
     onModelInfo?: (model: string, source: string) => void;
     /** Fired when the reply finishes with Ollama's real generation stats */
     onMetrics?: (m: { evalCount: number; evalDurationMs: number; tokensPerSecond: number }) => void;
+    /** Pages a web search used for this reply — shown as source links */
+    onSources?: (sources: SearchSource[]) => void;
     /** Agent mode: fired when the planning phase produces a plan */
     onPlan?: (plan: string) => void;
     /** Agent mode: the model's own words between tool calls */
@@ -767,6 +769,7 @@ streamChat(
             case 'model_info': callbacks.onModelInfo?.(parsed.model, parsed.source); break;
             case 'plan': callbacks.onPlan?.(parsed.plan); break;
             case 'metrics': callbacks.onMetrics?.({ evalCount: parsed.evalCount, evalDurationMs: parsed.evalDurationMs, tokensPerSecond: parsed.tokensPerSecond }); break;
+            case 'sources': callbacks.onSources?.(Array.isArray(parsed.sources) ? parsed.sources : []); break;
             case 'done': callbacks.onDone(); return true;
             case 'error': callbacks.onError(parsed.error); return true;
           }

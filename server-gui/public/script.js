@@ -409,11 +409,11 @@ let usageRefreshInterval = null;
 async function refreshCloudUsage() {
   try {
     const usage = await API.getCloudUsage();
+    updateUsageSummary(usage);
     if (!usage || (!usage.monthlyLimit && usage.totalRequests === 0)) {
       // No data — hide card
       $('cloudUsageCard').style.display = 'none';
       $('cloudUsageCost').style.display = 'none';
-      $('costBreakdownCard').style.display = 'none';
       return;
     }
 
@@ -462,14 +462,10 @@ async function refreshCloudUsage() {
       costEl.style.display = 'none';
     }
 
-    // ─── Cost breakdown by model ───
-    updateCostBreakdown(usage);
   } catch (e) {
     console.error('[cloud-usage] Refresh failed:', e);
     const card = $('cloudUsageCard');
     if (card) card.style.display = 'none';
-    const costCard = $('costBreakdownCard');
-    if (costCard) costCard.style.display = 'none';
   }
 }
 
@@ -487,42 +483,15 @@ function formatCost(amount) {
   return '$' + amount.toFixed(2);
 }
 
-/** Render cost breakdown by model in the API Keys tab */
-function updateCostBreakdown(usage) {
-  const card = $('costBreakdownCard');
-  const list = $('costBreakdownList');
-  const badge = $('costTotalBadge');
-  if (!card || !list) return;
-
-  const breakdown = usage.costBreakdown || [];
-  if (breakdown.length === 0) {
-    card.style.display = 'none';
-    return;
-  }
-
-  card.style.display = 'block';
-
-  // Total cost badge
-  const totalCost = usage.totalEstimatedCost || 0;
-  badge.textContent = formatCost(totalCost);
-  badge.className = 'cost-total-badge' + (totalCost > 10 ? ' high' : totalCost > 50 ? ' danger' : '');
-
-  // Render each model row
-  list.innerHTML = breakdown.map(item => {
-    const tokens = formatTokenCount(item.inputTokens + item.outputTokens);
-    const inputTokens = formatTokenCount(item.inputTokens);
-    const outputTokens = formatTokenCount(item.outputTokens);
-    const cost = item.totalCost > 0 ? formatCost(item.totalCost) : '—';
-    const requests = (usage.byModel && usage.byModel[item.model]) || 0;
-    return `
-      <div class="cost-row">
-        <span class="cost-model-name" title="${esc(item.model)}">${esc(item.model)}</span>
-        <span class="cost-tokens" title="In: ${inputTokens} / Out: ${outputTokens}">${tokens} tok</span>
-        <span class="cost-amount">${cost}</span>
-        <span class="cost-requests">${requests} req</span>
-      </div>
-    `;
-  }).join('');
+/** Compact summary shown in the collapsed Usage Limit card header */
+function updateUsageSummary(usage) {
+  const el = $('usageLimitSummary');
+  if (!el) return;
+  const used = (usage && usage.totalRequests) || 0;
+  const limit = (usage && usage.monthlyLimit) || 0;
+  const usedLabel = limit > 0 ? `${used} / ${limit} requests` : `${used} requests`;
+  const tokenPart = usage && usage.totalTokens > 0 ? ` · ~${formatTokenCount(usage.totalTokens)} tokens` : '';
+  el.textContent = usedLabel + ' this month' + tokenPart;
 }
 
 // Refresh usage every 15 seconds when server is running
@@ -1883,10 +1852,21 @@ window.showToast = showToast;
 // ══════════════════════════════════════════════════════
 // API Keys View
 // ══════════════════════════════════════════════════════
+// The cloud endpoint is no longer user-configurable — it is always ollama.com.
+const DEFAULT_CLOUD_ENDPOINT = 'https://ollama.com';
+
+// Description shown under the routing mode buttons for the selected mode.
+const MODE_NOTES = {
+  auto: 'Tries cloud first, then falls back to local models when the cloud is unavailable.',
+  local: 'Only local Ollama models — the cloud is never contacted.',
+  cloud: 'Only Ollama Cloud — no fallback to local models.',
+};
+
 let apiKeysState = {
   cloudMode: 'auto', // 'auto' | 'local' | 'cloud'
   cloudApiKey: '',
   cloudEndpoint: '',
+  tavilyApiKey: '',
 };
 
 async function enterApiKeysView() {
@@ -1897,6 +1877,7 @@ async function enterApiKeysView() {
       if (settings.cloudMode) apiKeysState.cloudMode = settings.cloudMode;
       if (settings.cloudApiKey !== undefined) apiKeysState.cloudApiKey = settings.cloudApiKey;
       if (settings.cloudEndpoint !== undefined) apiKeysState.cloudEndpoint = settings.cloudEndpoint;
+      if (settings.tavilyApiKey !== undefined) apiKeysState.tavilyApiKey = settings.tavilyApiKey;
     }
   } catch {}
   // Load usage limits
@@ -1908,6 +1889,7 @@ async function enterApiKeysView() {
       if (limitInput) limitInput.value = usage.monthlyLimit || '';
       if (budgetInput) budgetInput.value = usage.tokenBudget || '';
     }
+    updateUsageSummary(usage);
   } catch {}
   renderApiKeysView();
 }
@@ -1917,13 +1899,37 @@ function renderApiKeysView() {
   document.querySelectorAll('.apikeys-mode-btn').forEach((btn) => {
     btn.classList.toggle('selected', btn.dataset.mode === apiKeysState.cloudMode);
   });
+  // Update the description under the routing mode buttons
+  const noteEl = $('modeNote');
+  if (noteEl) noteEl.textContent = MODE_NOTES[apiKeysState.cloudMode] || '';
   // Update inputs
   const keyInput = $('cloudApiKeyInput');
-  const endpointInput = $('cloudEndpointInput');
   if (keyInput) keyInput.value = apiKeysState.cloudApiKey;
-  if (endpointInput) endpointInput.value = apiKeysState.cloudEndpoint;
-  // Update key status indicator
+  const tavilyInput = $('tavilyApiKeyInput');
+  if (tavilyInput) tavilyInput.value = apiKeysState.tavilyApiKey;
+  // Update key status indicators
   updateApiKeyStatus();
+  updateTavilyKeyStatus();
+}
+
+function updateTavilyKeyStatus() {
+  const statusEl = $('tavilyKeyStatus');
+  if (!statusEl) return;
+  const dotEl = $('tavilyKeyDot');
+  const textEl = $('tavilyKeyStatusText');
+  const maskedEl = $('tavilyKeyMasked');
+  const key = apiKeysState.tavilyApiKey || '';
+  if (key) {
+    statusEl.classList.add('has-key');
+    if (dotEl) dotEl.className = 'dot dot-online';
+    if (textEl) textEl.textContent = 'Key configured';
+    if (maskedEl) maskedEl.textContent = key.length > 8 ? key.slice(0, 5) + '••••••••' + key.slice(-4) : '••••••••';
+  } else {
+    statusEl.classList.remove('has-key');
+    if (dotEl) dotEl.className = 'dot dot-offline';
+    if (textEl) textEl.textContent = 'No key configured';
+    if (maskedEl) maskedEl.textContent = '';
+  }
 }
 
 function updateApiKeyStatus() {
@@ -1956,6 +1962,22 @@ document.querySelectorAll('.apikeys-mode-btn').forEach((btn) => {
   });
 });
 
+// ─── Collapsible cards ────────────────────────────────────────
+function setCardOpen(card, open) {
+  if (!card) return;
+  card.classList.toggle('open', !!open);
+  const toggle = card.querySelector('.card-toggle');
+  if (toggle) toggle.setAttribute('aria-expanded', String(!!open));
+}
+
+document.querySelectorAll('.card.collapsible').forEach((card) => {
+  const toggle = card.querySelector('.card-toggle');
+  if (!toggle) return;
+  toggle.addEventListener('click', () => {
+    setCardOpen(card, !card.classList.contains('open'));
+  });
+});
+
 // Toggle API key visibility
 $('toggleApiKeyVisibility').addEventListener('click', () => {
   const input = $('cloudApiKeyInput');
@@ -1973,24 +1995,22 @@ $('apikeysSaveBtn').addEventListener('click', async () => {
   status.className = 'save-status';
 
   apiKeysState.cloudApiKey = ($('cloudApiKeyInput').value || '').trim();
-  apiKeysState.cloudEndpoint = ($('cloudEndpointInput').value || '').trim();
-
-  // Auto-fill endpoint to ollama.com if API key is set but endpoint is empty
-  if (apiKeysState.cloudApiKey && !apiKeysState.cloudEndpoint) {
-    apiKeysState.cloudEndpoint = 'https://ollama.com';
-    $('cloudEndpointInput').value = 'https://ollama.com';
-  }
+  apiKeysState.tavilyApiKey = ($('tavilyApiKeyInput')?.value || '').trim();
+  // The endpoint field was removed from the UI — always keep a valid endpoint.
+  apiKeysState.cloudEndpoint = apiKeysState.cloudEndpoint || DEFAULT_CLOUD_ENDPOINT;
 
   const res = await API.saveApiKeySettings({
     cloudMode: apiKeysState.cloudMode,
     cloudApiKey: apiKeysState.cloudApiKey,
     cloudEndpoint: apiKeysState.cloudEndpoint,
+    tavilyApiKey: apiKeysState.tavilyApiKey,
   });
 
   if (res && !res.error) {
     status.textContent = '✓ Saved';
     status.className = 'save-status ok';
     updateApiKeyStatus();
+    updateTavilyKeyStatus();
     refreshModePill();
     // Save usage limits
     const monthlyLimit = parseInt($('cloudUsageLimitInput')?.value) || 0;
@@ -2004,38 +2024,37 @@ $('apikeysSaveBtn').addEventListener('click', async () => {
   }
 });
 
-// Connection test button
+// Connection test button — verifies the key against the cloud endpoint itself.
+// The backend probes {endpoint}/api/chat with a model that cannot exist, so a
+// valid key answers 404/200 while a dead one answers 401/403. Nothing is saved
+// here: press Save to keep the key.
 $('testApiKeyBtn').addEventListener('click', async () => {
   const resultEl = $('testResult');
   const btn = $('testApiKeyBtn');
   btn.disabled = true;
   resultEl.textContent = 'Testing…';
   resultEl.className = 'apikeys-test-result test-testing';
-  // Collect current values
   const key = ($('cloudApiKeyInput').value || '').trim();
-  const endpoint = ($('cloudEndpointInput').value || '').trim();
+  const endpoint = apiKeysState.cloudEndpoint || DEFAULT_CLOUD_ENDPOINT;
   if (!key) {
     resultEl.textContent = '❌ No API key entered';
     resultEl.className = 'apikeys-test-result test-error';
     btn.disabled = false;
     return;
   }
-  // Save first, then attempt a quick request through the backend
-  await API.saveApiKeySettings({
-    cloudMode: apiKeysState.cloudMode,
-    cloudApiKey: key,
-    cloudEndpoint: endpoint,
-  });
-  apiKeysState.cloudApiKey = key;
-  apiKeysState.cloudEndpoint = endpoint;
   try {
-    // Use getSettings as a lightweight connectivity check
-    const res = await API.getSettings();
-    if (res && !res.error) {
-      resultEl.textContent = '✓ Settings reachable — key saved';
+    const res = await API.testCloudKey({ cloudApiKey: key, cloudEndpoint: endpoint });
+    if (res && res.ok) {
+      const bits = [res.message || 'API key verified'];
+      if (res.modelCount) bits.push(`${res.modelCount} cloud models available`);
+      if (res.latencyMs) bits.push(`${res.latencyMs} ms`);
+      resultEl.textContent = '✓ ' + bits.join(' · ');
       resultEl.className = 'apikeys-test-result test-success';
     } else {
-      resultEl.textContent = '⚠ Key saved but backend unreachable';
+      const fallback = res && res.kind === 'endpoint'
+        ? 'Could not reach the cloud endpoint'
+        : 'API key verification failed';
+      resultEl.textContent = '❌ ' + ((res && res.message) || fallback);
       resultEl.className = 'apikeys-test-result test-error';
     }
   } catch (e) {
@@ -2043,7 +2062,52 @@ $('testApiKeyBtn').addEventListener('click', async () => {
     resultEl.className = 'apikeys-test-result test-error';
   }
   btn.disabled = false;
-  setTimeout(() => { resultEl.textContent = ''; }, 5000);
+  setTimeout(() => { resultEl.textContent = ''; }, 15000);
+});
+
+// Tavily (web search) connection test — a real Tavily request, so it spends the
+// cheapest 1-credit search. Nothing is saved here; press Save to keep the key.
+$('testTavilyKeyBtn').addEventListener('click', async () => {
+  const resultEl = $('tavilyTestResult');
+  const btn = $('testTavilyKeyBtn');
+  btn.disabled = true;
+  resultEl.textContent = 'Testing… (uses 1 Tavily credit)';
+  resultEl.className = 'apikeys-test-result test-testing';
+  const key = ($('tavilyApiKeyInput').value || '').trim();
+  if (!key) {
+    resultEl.textContent = '❌ No API key entered';
+    resultEl.className = 'apikeys-test-result test-error';
+    btn.disabled = false;
+    return;
+  }
+  try {
+    const res = await API.testTavilyKey({ tavilyApiKey: key });
+    if (res && res.ok) {
+      const bits = [res.message || 'Tavily API key works'];
+      if (res.credits) bits.push(`${res.credits} credit${res.credits === 1 ? '' : 's'} used`);
+      if (res.latencyMs) bits.push(`${res.latencyMs} ms`);
+      resultEl.textContent = '✓ ' + bits.join(' · ');
+      resultEl.className = 'apikeys-test-result test-success';
+    } else {
+      resultEl.textContent = '❌ ' + ((res && res.message) || 'Tavily key verification failed');
+      resultEl.className = 'apikeys-test-result test-error';
+    }
+  } catch (e) {
+    resultEl.textContent = '❌ ' + (e.message || 'Connection failed');
+    resultEl.className = 'apikeys-test-result test-error';
+  }
+  btn.disabled = false;
+  setTimeout(() => { resultEl.textContent = ''; }, 15000);
+});
+
+// Toggle Tavily key visibility
+$('toggleTavilyKeyVisibility').addEventListener('click', () => {
+  const input = $('tavilyApiKeyInput');
+  if (input.type === 'password') {
+    input.type = 'text';
+  } else {
+    input.type = 'password';
+  }
 });
 
 // Cloud unavailable notification — called from dashboard update or backend events

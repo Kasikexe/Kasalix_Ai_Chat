@@ -8,6 +8,7 @@ from the FastAPI router so services can import it without circular imports
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -31,6 +32,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "cloudMode": "auto",
     "cloudApiKey": "",
     "cloudEndpoint": "",
+    "tavilyApiKey": "",
     "kvCacheOffload": True,
     "kvCacheType": "f16",
     "defaultNumCtx": 0,
@@ -87,6 +89,16 @@ async def get_cloud_settings() -> dict[str, str]:
         "cloudApiKey": parsed.get("cloudApiKey") or "",
         "cloudEndpoint": parsed.get("cloudEndpoint") or "",
     }
+
+
+async def get_tavily_api_key() -> str:
+    """Tavily (web search) API key.
+
+    The value saved in Settings wins so the GUI stays authoritative; the
+    TAVILY_API_KEY env var is only a fallback for headless/ops setups.
+    """
+    parsed = read_settings_cached()
+    return (parsed.get("tavilyApiKey") or os.environ.get("TAVILY_API_KEY") or "").strip()
 
 
 def coerce_num_setting(v: Any, maximum: int = 16) -> int:

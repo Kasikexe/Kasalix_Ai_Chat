@@ -392,112 +392,127 @@
       </div>
     </div>
     <div class="apikeys-content">
-      <!-- Model Routing Mode -->
-      <div class="card">
-        <div class="card-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          Model Routing Mode
-        </div>
-        <p class="apikeys-desc">Choose how the server routes model requests between local (Ollama) and cloud providers.</p>
-        <div class="apikeys-mode-grid">
-          <button class="apikeys-mode-btn" data-mode="auto">
-            <span class="mode-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span>
-            <span class="mode-label">Auto</span>
-            <span class="mode-desc">Try cloud first, fall back to local if unavailable</span>
-          </button>
-          <button class="apikeys-mode-btn" data-mode="local">
-            <span class="mode-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span>
-            <span class="mode-label">Local Only</span>
-            <span class="mode-desc">Only use local Ollama models, no cloud fallback</span>
-          </button>
-          <button class="apikeys-mode-btn" data-mode="cloud">
-            <span class="mode-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg></span>
-            <span class="mode-label">Cloud Only</span>
-            <span class="mode-desc">Only use Ollama Cloud, no fallback to local</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Cloud API Key -->
-      <div class="card">
-        <div class="card-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
-          Ollama Cloud API Key
-        </div>
-        <p class="apikeys-desc">Enter your API key for cloud-based Ollama or compatible cloud provider.</p>
-        <!-- Key status indicator -->
-        <div class="apikeys-key-status" id="apiKeyStatus">
-          <span class="dot dot-offline" id="apiKeyDot"></span>
-          <span id="apiKeyStatusText">No key configured</span>
-          <span class="apikeys-key-masked" id="apiKeyMasked"></span>
-        </div>
-        <div class="apikeys-field">
-          <label class="apikeys-label">API Key</label>
-          <div class="apikeys-input-row">
-            <input type="password" id="cloudApiKeyInput" class="apikeys-input" placeholder="sk-... or your API key" />
-            <button class="btn btn-small btn-ghost" id="toggleApiKeyVisibility" title="Show/Hide API key"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      <!-- One collapsible window for everything cloud-related -->
+      <div class="card collapsible open" id="ollamaCard">
+        <button class="card-toggle" id="ollamaToggle" aria-expanded="true" aria-controls="ollamaBody">
+          <span class="card-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            Ollama (AI Models)
+          </span>
+          <span class="card-summary" id="apiKeyStatus">
+            <span class="dot dot-offline" id="apiKeyDot"></span>
+            <span id="apiKeyStatusText">No key configured</span>
+          </span>
+          <svg class="card-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="card-body" id="ollamaBody">
+          <!-- Model Routing Mode -->
+          <div class="apikeys-section">
+            <div class="card-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              Model Routing Mode
+            </div>
+            <p class="apikeys-desc">Choose how the server routes model requests between local (Ollama) and cloud providers.</p>
+            <div class="apikeys-mode-btns" role="group" aria-label="Model routing mode">
+              <button class="apikeys-mode-btn" data-mode="auto" title="Try cloud first, fall back to local if unavailable">
+                <span class="mode-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span>
+                <span class="mode-label">Auto</span>
+              </button>
+              <button class="apikeys-mode-btn" data-mode="local" title="Only use local Ollama models, no cloud fallback">
+                <span class="mode-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span>
+                <span class="mode-label">Local</span>
+              </button>
+              <button class="apikeys-mode-btn" data-mode="cloud" title="Only use Ollama Cloud, no fallback to local">
+                <span class="mode-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg></span>
+                <span class="mode-label">Cloud</span>
+              </button>
+            </div>
+            <p class="apikeys-mode-note" id="modeNote"></p>
           </div>
-          <p class="apikeys-hint">Your API key is stored locally and never shared.</p>
-        </div>
-        <!-- Connection test -->
-        <div class="apikeys-test-row">
-          <button class="btn btn-small btn-ghost" id="testApiKeyBtn">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-            Test Connection
-          </button>
-          <span class="apikeys-test-result" id="testResult"></span>
+
+          <!-- Ollama Cloud API Key -->
+          <div class="apikeys-section">
+            <div class="card-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+              Ollama Cloud API Key
+            </div>
+            <div class="apikeys-field">
+              <label class="apikeys-label" for="cloudApiKeyInput">API Key</label>
+              <div class="apikeys-input-row">
+                <input type="password" id="cloudApiKeyInput" class="apikeys-input" placeholder="sk-... or your API key" />
+                <button class="btn btn-small btn-ghost" id="toggleApiKeyVisibility" title="Show/Hide API key"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+              </div>
+              <p class="apikeys-hint">Your API key is stored locally and never shared.</p>
+              <p class="apikeys-hint apikeys-key-masked" id="apiKeyMasked"></p>
+            </div>
+            <div class="apikeys-test-row">
+              <button class="btn btn-small btn-ghost" id="testApiKeyBtn">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                Test Connection
+              </button>
+              <span class="apikeys-test-result" id="testResult"></span>
+            </div>
+          </div>
+
+          <!-- Usage Limit -->
+          <div class="apikeys-section">
+            <div class="card-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="10"/></svg>
+              Usage Limit
+              <span class="card-title-note" id="usageLimitSummary">—</span>
+            </div>
+            <p class="apikeys-desc">Set soft limits for cloud API usage. When approaching the limit, a warning appears in the server log.</p>
+            <div class="apikeys-field">
+              <label class="apikeys-label" for="cloudUsageLimitInput">Monthly Request Limit</label>
+              <input type="number" id="cloudUsageLimitInput" class="apikeys-input" placeholder="0 = unlimited" min="0" />
+              <p class="apikeys-hint">Maximum cloud API requests per month. Resets on the 1st. Set to 0 for unlimited.</p>
+            </div>
+            <div class="apikeys-field">
+              <label class="apikeys-label" for="cloudTokenBudgetInput">Token Budget (estimated)</label>
+              <input type="number" id="cloudTokenBudgetInput" class="apikeys-input" placeholder="0 = unlimited" min="0" />
+              <p class="apikeys-hint">Estimated token budget for the month. Set to 0 for unlimited.</p>
+            </div>
+            <div class="apikeys-test-row">
+              <button class="btn btn-small btn-ghost" id="resetUsageBtn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Reset Usage Counters
+              </button>
+              <span class="apikeys-test-result" id="resetUsageResult"></span>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Usage Limits -->
-      <div class="card">
-        <div class="card-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="10"/></svg>
-          Usage Limits
-        </div>
-        <p class="apikeys-desc">Set soft limits for cloud API usage. When approaching the limit, a warning appears in the server log.</p>
-        <div class="apikeys-field">
-          <label class="apikeys-label">Monthly Request Limit</label>
-          <input type="number" id="cloudUsageLimitInput" class="apikeys-input" placeholder="0 = unlimited" min="0" />
-          <p class="apikeys-hint">Maximum cloud API requests per month. Resets on the 1st. Set to 0 for unlimited.</p>
-        </div>
-        <div class="apikeys-field">
-          <label class="apikeys-label">Token Budget (estimated)</label>
-          <input type="number" id="cloudTokenBudgetInput" class="apikeys-input" placeholder="0 = unlimited" min="0" />
-          <p class="apikeys-hint">Estimated token budget for the month. Set to 0 for unlimited.</p>
-        </div>
-        <div class="apikeys-test-row">
-          <button class="btn btn-small btn-ghost" id="resetUsageBtn">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Reset Usage Counters
-          </button>
-          <span class="apikeys-test-result" id="resetUsageResult"></span>
-        </div>
-      </div>
-
-      <!-- Cost Breakdown -->
-      <div class="card" id="costBreakdownCard" style="display:none">
-        <div class="card-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="10"/></svg>
-          Cost Breakdown
-          <span class="cost-total-badge" id="costTotalBadge"></span>
-        </div>
-        <div class="cost-breakdown-list" id="costBreakdownList"></div>
-        <div class="cost-note">
-          <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg></span> Cost is estimated from token usage × model pricing. Actual costs may vary.
-        </div>
-      </div>
-
-      <!-- Cloud Endpoint (optional) -->
-      <div class="card">
-        <div class="card-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-          Ollama Cloud Endpoint
-        </div>
-        <p class="apikeys-desc">Ollama Cloud endpoint for running models on ollama.com hardware.</p>
-        <div class="apikeys-field">
-          <label class="apikeys-label">Endpoint URL</label>
-          <input type="text" id="cloudEndpointInput" class="apikeys-input" placeholder="https://ollama.com" />
-          <p class="apikeys-hint">Default: https://ollama.com — leave empty if using only local models.</p>
+      <!-- Tavily API (web search) -->
+      <div class="card collapsible open" id="tavilyCard">
+        <button class="card-toggle" id="tavilyToggle" aria-expanded="true" aria-controls="tavilyBody">
+          <span class="card-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            Tavily API (Web Search)
+          </span>
+          <span class="card-summary" id="tavilyKeyStatus">
+            <span class="dot dot-offline" id="tavilyKeyDot"></span>
+            <span id="tavilyKeyStatusText">No key configured</span>
+          </span>
+          <svg class="card-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="card-body" id="tavilyBody">
+          <p class="apikeys-desc">Powers web search. Tavily returns page snippets directly, which is far more reliable than scraping — the free tier is a monthly credit allowance and a basic search costs 1 credit. Without a key, search falls back to DuckDuckGo.</p>
+          <div class="apikeys-field">
+            <label class="apikeys-label" for="tavilyApiKeyInput">API Key</label>
+            <div class="apikeys-input-row">
+              <input type="password" id="tavilyApiKeyInput" class="apikeys-input" placeholder="tvly-..." />
+              <button class="btn btn-small btn-ghost" id="toggleTavilyKeyVisibility" title="Show/Hide API key"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+            </div>
+            <p class="apikeys-hint">Free key at tavily.com. Stored locally and never shared — press Save to keep it.</p>
+            <p class="apikeys-hint apikeys-key-masked" id="tavilyKeyMasked"></p>
+          </div>
+          <div class="apikeys-test-row">
+            <button class="btn btn-small btn-ghost" id="testTavilyKeyBtn">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              Test Connection
+            </button>
+            <span class="apikeys-test-result" id="tavilyTestResult"></span>
+          </div>
         </div>
       </div>
     </div>

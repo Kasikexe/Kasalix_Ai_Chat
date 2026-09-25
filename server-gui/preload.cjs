@@ -78,6 +78,8 @@ contextBridge.exposeInMainWorld('serverAPI', {
   // ─── API Keys / Cloud Mode ────────────────────────
   saveApiKeySettings: (payload) => ipcRenderer.invoke('save-api-key-settings', payload),
   getApiKeySettings: () => ipcRenderer.invoke('get-api-key-settings'),
+  testCloudKey: (payload) => ipcRenderer.invoke('test-cloud-key', payload),
+  testTavilyKey: (payload) => ipcRenderer.invoke('test-tavily-key', payload),
   fetchCloudModels: () => ipcRenderer.invoke('fetch-cloud-models'),
 
   // ─── Cloud Usage ────────────────────────────────────────

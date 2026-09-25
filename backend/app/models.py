@@ -18,6 +18,9 @@ class Message(TypedDict, total=False):
     content: str
     timestamp: float
     thinking: str  # reasoning text from qwen3/deepseek-r1 style models
+    # Pages a web search actually used for this reply ({title, url}), shown by
+    # the clients as source links under the answer.
+    sources: list[dict[str, str]]
 
 
 class AgentResumeState(TypedDict, total=False):

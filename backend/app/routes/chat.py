@@ -147,7 +147,7 @@ async def chat_route(request: Request) -> Any:
         # Mutable state holder so the pipeline callbacks can update the
         # response accumulated so far (nonlocal reassignment isn't allowed
         # inside lambdas). Shared by the generator and save_partial.
-        state = {"full_response": "", "full_thinking": "", "current_stage": "", "partial_saved": False}
+        state = {"full_response": "", "full_thinking": "", "current_stage": "", "partial_saved": False, "sources": []}
         signal = asyncio.Event()
 
         if active_conv_id:
@@ -163,7 +163,7 @@ async def chat_route(request: Request) -> Any:
                 add_message(
                     active_conv_id,
                     owner_id,
-                    make_message("assistant", state["full_response"] + " [stopped]", thinking=state["full_thinking"] or None),
+                    make_message("assistant", state["full_response"] + " [stopped]", thinking=state["full_thinking"] or None, sources=state["sources"] or None),
                 )
             )
 
@@ -239,6 +239,19 @@ async def chat_route(request: Request) -> Any:
                 # movement function") — timeline event, not chat content.
                 emit({"type": "narration", "content": text})
 
+            def on_sources(sources: list[dict[str, str]]) -> None:
+                # Pages the web search actually used. Kept in run state so they
+                # persist with the assistant message — without that they would
+                # vanish the moment the conversation is reloaded.
+                if signal.is_set() or not sources:
+                    return
+                known = {s.get("url") for s in state["sources"]}
+                for s in sources:
+                    if s.get("url") and s["url"] not in known:
+                        known.add(s["url"])
+                        state["sources"].append({"title": s.get("title") or s["url"], "url": s["url"]})
+                emit({"type": "sources", "sources": state["sources"]})
+
             def on_resume_state(resume: dict[str, Any]) -> None:
                 nonlocal last_agent_state
                 last_agent_state = resume
@@ -279,6 +292,7 @@ async def chat_route(request: Request) -> Any:
                             "planMode": plan_mode,
                             "onResumeState": on_resume_state,
                             "onMetrics": on_metrics,
+                            "onSources": on_sources,
                             "onModelInfo": lambda m, source: emit({"type": "model_info", "model": m, "source": source}),
                             "conversationId": active_conv_id,
                             "resumeState": resume_state,
@@ -293,7 +307,7 @@ async def chat_route(request: Request) -> Any:
                         await add_message(
                             active_conv_id,
                             owner_id,
-                            make_message("assistant", state["full_response"], thinking=state["full_thinking"] or None),
+                            make_message("assistant", state["full_response"], thinking=state["full_thinking"] or None, sources=state["sources"] or None),
                         )
                     if active_conv_id and not signal.is_set():
                         final_state = (

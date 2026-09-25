@@ -218,6 +218,69 @@ header button, header .status-badge { -webkit-app-region: no-drag; }
 
 .card-title svg { color: var(--accent); }
 
+/* ═══ Collapsible cards ═══ */
+.card.collapsible { padding: 0; }
+
+.card-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.card-toggle .card-title { margin-bottom: 0; }
+
+.card-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.card-summary.has-key { color: var(--green); }
+
+.card-toggle svg.card-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.card-toggle:hover svg.card-chevron { color: var(--text); }
+.card.collapsible.open svg.card-chevron { transform: rotate(180deg); }
+
+.card.collapsible .card-body { display: none; padding: 0 14px 14px; }
+.card.collapsible.open .card-body { display: block; }
+
+/* ═══ API Keys: sections inside the single Ollama window ═══ */
+.apikeys-section {
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+}
+
+.apikeys-section:first-child { padding-top: 0; border-top: none; }
+.apikeys-section:last-child { padding-bottom: 0; }
+
+.card-title-note {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 /* ═══ Server Controls ═══ */
 .server-controls {
   display: flex;
@@ -1146,30 +1209,41 @@ header button, header .status-badge { -webkit-app-region: no-drag; }
 
 .apikeys-mode-btns {
   display: flex;
+  align-items: stretch;
   gap: 6px;
 }
 
 .apikeys-mode-btn {
   flex: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 12px 8px;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 6px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.12s ease;
   color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 
 .apikeys-mode-btn:hover { border-color: var(--border-hover); color: var(--text); }
 .apikeys-mode-btn.selected { border-color: var(--accent); color: var(--text); background: var(--accent-dim); }
 
-.mode-icon { font-size: 18px; }
-.mode-label { font-size: 12px; font-weight: 500; }
-.mode-desc { font-size: 9px; color: var(--text-muted); text-align: center; }
+.apikeys-mode-note {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
+.mode-icon { display: flex; align-items: center; }
+.mode-label { font-size: 11px; font-weight: 600; }
 
 .apikeys-field {
   margin-bottom: 10px;
@@ -1206,25 +1280,14 @@ header button, header .status-badge { -webkit-app-region: no-drag; }
 
 .apikeys-input-row .apikeys-input { flex: 1; }
 
-.apikeys-key-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--text-dim);
-  margin-bottom: 8px;
-  padding: 6px 8px;
-  background: var(--bg-input);
-  border-radius: 4px;
-}
-
-.apikeys-key-status.has-key { color: var(--green); }
-
 .apikeys-key-masked {
   font-family: 'SF Mono', monospace;
   font-size: 10px;
   color: var(--text-muted);
 }
+
+.apikeys-key-masked:empty { display: none; }
+
 
 .apikeys-test-row {
   display: flex;
@@ -1241,52 +1304,6 @@ header button, header .status-badge { -webkit-app-region: no-drag; }
 .apikeys-test-result.test-success { color: var(--green); }
 .apikeys-test-result.test-error { color: var(--red); }
 .apikeys-test-result.test-testing { color: var(--text-dim); }
-
-/* ═══ Cost Breakdown ═══ */
-.cost-breakdown-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.cost-row {
-  display: grid;
-  grid-template-columns: 1fr auto auto auto;
-  gap: 8px;
-  align-items: center;
-  font-size: 11px;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.cost-row:last-child { border-bottom: none; }
-
-.cost-model { color: var(--text); font-family: 'SF Mono', monospace; font-size: 10px; }
-.cost-tokens { color: var(--text-muted); font-family: 'SF Mono', monospace; font-size: 10px; }
-.cost-amount { color: var(--text); font-family: 'SF Mono', monospace; font-size: 10px; font-weight: 500; }
-.cost-requests { color: var(--text-muted); font-size: 10px; }
-
-.cost-total-badge {
-  margin-left: auto;
-  padding: 2px 8px;
-  border-radius: 3px;
-  font-size: 11px;
-  font-weight: 600;
-  font-family: 'SF Mono', monospace;
-  background: var(--accent-dim);
-  color: var(--accent);
-}
-
-.cost-note {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 10px;
-  color: var(--text-muted);
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
 
 /* ═══ Toast Notifications ═══ */
 .toast-container {
@@ -1396,7 +1413,7 @@ button:focus-visible, .btn:focus-visible, .tab:focus-visible {
 }
 
 /* 5. Monospace font consistency */
-.mono, code, pre, .ip-address, .server-url .value, .apikeys-input, .trajectory-select, .stat-value, .cost-model, .cost-tokens, .cost-amount {
+.mono, code, pre, .ip-address, .server-url .value, .apikeys-input, .trajectory-select, .stat-value {
   font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
 }
 

@@ -434,6 +434,22 @@ export function useChat(
               notify(e);
             }
           },
+          onSources: (sources) => {
+            // Pages the web search used — attached to the streaming reply so
+            // they show (and stay) with it. Arrives before 'done'.
+            if (!sources.length) return;
+            const msgs = e.messages;
+            let assistantIdx = -1;
+            for (let i = msgs.length - 1; i >= 0; i--) {
+              if (msgs[i].role === 'assistant') { assistantIdx = i; break; }
+            }
+            if (assistantIdx >= 0) {
+              e.messages = msgs.map((m, i) =>
+                i === assistantIdx ? { ...m, sources } : m
+              );
+              notify(e);
+            }
+          },
           onDone: async () => {
             // Flush any remaining thinking buffer to the timeline (finalize the
             // live event in place if present — no duplicate row)

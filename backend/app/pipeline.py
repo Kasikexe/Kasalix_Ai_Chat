@@ -18,13 +18,14 @@ import httpx
 
 from .ai_rules import with_ai_rules
 from .attachments import image_data_urls
+from .cloud_auth import verify_cloud_key
 from .content_guard import DANGEROUS_REPLY, find_dangerous_request
 from .imagegen import sanitize_svg, save_artwork
 from .logger import error as log_error, info as log_info, warn as log_warn
 from .memory import get_memory
 from .model_assignments import get_model_assignment, get_resolved_model
 from .ollama_client import OllamaError, StreamOptions, get_models, stream_chat, stream_chat_with_tools
-from .search import get_web_context
+from .search import get_web_context, set_source_sink
 from .settings_store import get_cloud_settings
 from .tools import detect_tool, execute_tool, get_all_tools, is_probably_math_expression
 from .models import Message
@@ -709,6 +710,11 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
     on_metrics = opts.get("onMetrics")
     messages: list[Message] = list(opts["messages"])
 
+    # Every search this run makes reports the pages it used here (see
+    # search.set_source_sink) — the client shows them under the answer. Set
+    # before any search can start so child tasks inherit it.
+    set_source_sink(opts.get("onSources"))
+
     intent = await detect_intent(messages, mode)
 
     # ─── Dangerous-content guard ──────────────────────────
@@ -743,27 +749,14 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
             _cloud_api_key.set(cloud_api_key)
             log_info(f"[pipeline] Cloud routing enabled: {cloud_endpoint}")
             try:
-                # Probe with the SAME auth path as a real chat call. Verified
-                # against ollama.com: POST /api/chat with a nonexistent model
-                # returns 404 when the key is VALID (auth checked before model
-                # lookup) and 401/403 when the key is DEAD. GET endpoints lie:
-                # /v1/models is public (always 200) and /api/ps 401s even
-                # valid keys, which used to disable cloud for everyone.
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    probe_res = await client.post(
-                        cloud_endpoint + "/api/chat",
-                        headers={"Authorization": f"Bearer {cloud_api_key}", "Content-Type": "application/json"},
-                        json={"model": "auth-probe-check", "messages": [{"role": "user", "content": "ping"}], "stream": False},
-                    )
-                if probe_res.status_code in (401, 403):
-                    raise RuntimeError(
-                        f"cloud auth rejected ({probe_res.status_code}) — API key invalid, expired or revoked; check Settings → Cloud"
-                    )
-                # 404 is the EXPECTED success signal (auth passed, fake model
-                # not found). 200 also means auth passed. Anything else is a
-                # service problem — treat as unreachable.
-                if probe_res.status_code not in (200, 404):
-                    raise RuntimeError(f"probe {probe_res.status_code}")
+                # Probe with the SAME auth path as a real chat call — see
+                # app/cloud_auth.py for why the POST /api/chat probe is the only
+                # trustworthy signal (GET endpoints lie). The Server app's
+                # "Test Connection" button shares this helper, so the two can
+                # never disagree about whether a key works.
+                probe = await verify_cloud_key(cloud_endpoint, cloud_api_key)
+                if not probe["ok"]:
+                    raise RuntimeError(probe["message"])
             except Exception as probe_err:  # noqa: BLE001
                 log_warn(f"[pipeline] Cloud unreachable ({probe_err})")
                 if cloud_mode == "cloud":

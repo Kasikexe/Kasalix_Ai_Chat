@@ -7,6 +7,12 @@ export type TimelineEvent =
   | { type: 'narration'; content: string }
   | { type: 'tool'; tool: string; args: string; status?: 'running' | 'done' | 'error'; result?: string; ok?: boolean };
 
+/** A page a web search actually used, shown under the answer as a link. */
+export interface SearchSource {
+  title: string;
+  url: string;
+}
+
 export interface Message {
   role: Role;
   content: string;
@@ -32,6 +38,8 @@ export interface Message {
   activityStatus?: 'running' | 'done' | 'error';
   /** For activity messages: elapsed time */
   activityMs?: number;
+  /** Pages the web search used for this reply (source links under the answer) */
+  sources?: SearchSource[];
 }
 
 export interface Conversation {

@@ -663,6 +663,105 @@ class TestAgentLoopWorkflow:
 # ─────────────────────────────────────────────────────────────
 
 
+class TestWebSearchSourcesReachTheClient:
+    """The pages a web search used must arrive as a ``sources`` SSE event and be
+    saved with the reply — without persistence they'd vanish on reload.
+
+    The search layer itself is covered by test_tavily.py; here the network is
+    replaced so the SSE event and the stored message can be checked on their
+    own. The fake reports through the REAL sink, so the pipeline's registration
+    is exercised too.
+    """
+
+    def _stream_events(self, body: str) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        for line in body.splitlines():
+            if line.startswith("data:"):
+                payload = line[len("data:"):].strip()
+                if payload:
+                    try:
+                        events.append(json.loads(payload))
+                    except json.JSONDecodeError:
+                        pass
+        return events
+
+    def test_sources_event_and_persistence(self, client, auth, monkeypatch):
+        token, _ = auth
+        import app.pipeline as pipeline
+        from app import search
+
+        async def fake_search(_query):
+            search.report_sources(
+                [
+                    {"title": "Czechia population", "url": "https://example.com/cz"},
+                    {"title": "Another source", "url": "https://example.org/cz"},
+                ]
+            )
+            return "SEARCH CONTEXT"
+
+        async def fake_model(model, messages, tools, on_chunk, options):
+            on_chunk("About 10.9 million.")
+            return {"content": "About 10.9 million.", "toolCalls": [], "metrics": {}}
+
+        monkeypatch.setattr(pipeline, "get_web_context", fake_search)
+        monkeypatch.setattr(pipeline, "stream_chat_with_tools", fake_model)
+        monkeypatch.setattr(pipeline, "needs_web_search", lambda _text: True)
+
+        r = client.post(
+            "/api/chat/",
+            json={
+                "model": "sources-model",
+                "messages": [
+                    {"role": "user", "content": "What is the current population of Czechia"}
+                ],
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+
+        events = self._stream_events(r.text)
+        source_events = [e for e in events if e.get("type") == "sources"]
+        assert source_events, f"no sources event in the stream: {r.text[:500]}"
+        assert [s["url"] for s in source_events[0]["sources"]] == [
+            "https://example.com/cz",
+            "https://example.org/cz",
+        ]
+
+        conv_id = next(e["conversationId"] for e in events if e.get("type") == "conversationId")
+        stored = client.get(
+            f"/api/conversations/{conv_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        ).json()["conversation"]
+        assistants = [m for m in stored["messages"] if m.get("role") == "assistant"]
+        assert assistants, stored
+        assert [s["url"] for s in assistants[-1]["sources"]] == [
+            "https://example.com/cz",
+            "https://example.org/cz",
+        ]
+
+    def test_no_search_means_no_sources_event(self, client, auth, monkeypatch):
+        """A normal reply must not carry an empty sources list — the clients
+        would render a stray "Sources" label for nothing."""
+        token, _ = auth
+        import app.pipeline as pipeline
+
+        async def fake_model(model, messages, tools, on_chunk, options):
+            on_chunk("Hello!")
+            return {"content": "Hello!", "toolCalls": [], "metrics": {}}
+
+        monkeypatch.setattr(pipeline, "stream_chat_with_tools", fake_model)
+        monkeypatch.setattr(pipeline, "needs_web_search", lambda _text: False)
+
+        r = client.post(
+            "/api/chat/",
+            json={"model": "sources-model", "messages": [{"role": "user", "content": "hello there"}]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        events = self._stream_events(r.text)
+        assert not [e for e in events if e.get("type") == "sources"]
+
+
 class TestCloudRoutingWorkflow:
     """Cloud mode decisions: dead key → clean error in cloud-only, honest
     local fallback in auto."""

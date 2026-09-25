@@ -15,6 +15,18 @@ import { attachedImageRefs, attachmentFilename, stripImageMarkers } from '../uti
 /** What the shared image viewer is currently showing. */
 type LightboxImage = { src: string; alt?: string; filename?: string; downloadHref?: string };
 
+/**
+ * Compact label for a web-search source: the domain, which is what actually
+ * identifies the page. Falls back to the title when the URL can't be parsed.
+ */
+function sourceLabel(source: { title: string; url: string }): string {
+ try {
+ return new URL(source.url).hostname.replace(/^www\./, '');
+ } catch {
+ return source.title || source.url;
+ }
+}
+
 const languageExtensions: Record<string, string> = {
  javascript: '.js',
  js: '.js',
@@ -910,6 +922,28 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-pulse-soft"style={{ animationDelay: '0.4s' }} />
  </span>
  ) : null}
+ </div>
+ )}
+
+ {/* Pages the web search actually used, so the answer can be checked.
+ Only the model's replies — a user message has no search behind it. */}
+ {!isUser && !editing && message.sources && message.sources.length > 0 && (
+ <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-white/5 pt-2">
+ <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wide text-gray-500">
+ <Globe size={11} className="text-[#7b9fc6]" />
+ Sources
+ </span>
+ {message.sources.map((source) => (
+ <button
+ key={source.url}
+ onClick={() => openExternal(source.url)}
+ title={source.url}
+ className="inline-flex max-w-[16rem] items-center gap-1 rounded-md border border-white/5 bg-white/[0.04] px-2 py-0.5 text-[11px] text-gray-400 hover:border-white/10 hover:text-gray-200 transition-colors"
+ >
+ <Link2 size={10} className="flex-shrink-0 opacity-60" />
+ <span className="truncate">{sourceLabel(source)}</span>
+ </button>
+ ))}
  </div>
  )}
 

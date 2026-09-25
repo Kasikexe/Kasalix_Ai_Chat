@@ -1245,6 +1245,40 @@ function setupIPC() {
     } catch { return null; }
   });
 
+  /**
+   * Verify a cloud API key against the cloud endpoint. Nothing is saved — the
+   * backend probes the remote provider, so allow well past the 5s default.
+   */
+  ipcMain.handle('test-cloud-key', async (_event, payload) => {
+    try {
+      return await backendRequest('/api/settings/test-cloud-key', {
+        method: 'POST',
+        body: payload || {},
+        headers: { 'Cookie': 'settings_auth=1' },
+        timeout: 30000,
+      });
+    } catch {
+      return { ok: false, kind: 'endpoint', message: 'Local server did not respond' };
+    }
+  });
+
+  /**
+   * Verify a Tavily (web search) API key. Nothing is saved, and the probe is
+   * the cheapest live Tavily search — the backend handles that trade-off.
+   */
+  ipcMain.handle('test-tavily-key', async (_event, payload) => {
+    try {
+      return await backendRequest('/api/settings/test-tavily-key', {
+        method: 'POST',
+        body: payload || {},
+        headers: { 'Cookie': 'settings_auth=1' },
+        timeout: 30000,
+      });
+    } catch {
+      return { ok: false, kind: 'endpoint', message: 'Local server did not respond' };
+    }
+  });
+
   /** Fetch available cloud models from the configured cloud API endpoint */
   ipcMain.handle('fetch-cloud-models', async () => {
     try {

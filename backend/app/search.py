@@ -12,11 +12,12 @@ import asyncio
 import html as html_lib
 import re
 import time
-from typing import Any
+from contextvars import ContextVar
+from typing import Any, Callable
 
 import httpx
 
-from .logger import error as log_error, info as log_info
+from .logger import error as log_error, info as log_info, warn as log_warn
 from .model_assignments import get_resolved_model
 from .ollama_client import StreamOptions, stream_chat
 
@@ -26,6 +27,50 @@ BROWSER_UA = (
 )
 MIN_DELAY_S = 1.5
 _last_search_time = 0.0
+MAX_REPORTED_SOURCES = 8
+
+# Where to report the pages a search actually used, so the clients can show
+# them under the answer. A ContextVar (rather than an argument threaded through
+# every caller) because searches start from several places — the pipeline's
+# freshness heuristic, the agent's `web_search` tool, the tool registry in chat
+# mode — and they must all land on the same list without duplicating plumbing.
+# The run that owns the request sets the sink; see pipeline.run_pipeline.
+_SOURCE_SINK: ContextVar[Callable[[list[dict[str, str]]], None] | None] = ContextVar(
+    "web_search_source_sink", default=None
+)
+
+
+def set_source_sink(sink: Callable[[list[dict[str, str]]], None] | None) -> None:
+    """Report pages from every search made by the current run to ``sink``.
+
+    Must be called at the start of a run, before any search can happen — child
+    tasks (asyncio.gather, create_task) inherit the value set here.
+    """
+    _SOURCE_SINK.set(sink)
+
+
+def report_sources(results: list[dict[str, Any]]) -> None:
+    """Hand the distinct pages of ``results`` to the run's sink, if any."""
+    sink = _SOURCE_SINK.get()
+    if sink is None or not results:
+        return
+    seen: set[str] = set()
+    sources: list[dict[str, str]] = []
+    for r in results:
+        url = str(r.get("url") or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        title = str(r.get("title") or "").strip() or url
+        sources.append({"title": title, "url": url})
+        if len(sources) >= MAX_REPORTED_SOURCES:
+            break
+    if sources:
+        try:
+            sink(sources)
+        except Exception as e:  # noqa: BLE001
+            # Showing sources is a nicety — never let it break the answer.
+            log_warn(f"[search] Could not report sources: {e}")
 
 _SKIP_EXTENSIONS = [".pdf", ".zip", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".mp4", ".mp3", ".doc", ".docx"]
 
@@ -311,17 +356,47 @@ async def _duck_search(query: str, max_results: int = 5) -> list[dict[str, str]]
     return []
 
 
-async def get_web_context(query: str) -> str | None:
-    """Search the web and return AI-summarized context with page content."""
-    trimmed = query.strip()
-    if not trimmed:
-        return None
+async def _gather_web_results(
+    trimmed: str,
+) -> tuple[str, list[dict[str, str]], str | None, list[dict[str, str]]]:
+    """Collect search results, preferring Tavily over the DuckDuckGo scraper.
 
-    log_info(f'[search] Searching for: "{trimmed}"')
+    Tavily's snippets already carry the page content, so its path needs no page
+    fetching at all. The scraper stays as a safety net so search keeps working
+    when no key is configured, the monthly credits run out, or Tavily errors.
+
+    Returns ``(source, snippets, answer, page_pairs)``.
+    """
+    from . import tavily
+    from .settings_store import get_tavily_api_key
+
+    api_key = await get_tavily_api_key()
+    if api_key:
+        try:
+            data = await tavily.search(trimmed, api_key)
+            snippets = [
+                {"title": r["title"], "url": r["url"], "snippet": r["content"]}
+                for r in data["results"]
+            ]
+            if snippets:
+                log_info(
+                    f"[search] Tavily returned {len(snippets)} results"
+                    + (" (+answer)" if data.get("answer") else "")
+                )
+                return "tavily", snippets, data.get("answer"), []
+            log_warn("[search] Tavily returned no results — falling back to DuckDuckGo")
+        except tavily.TavilyError as e:
+            suffix = f" {e.status}" if e.status is not None else ""
+            log_warn(
+                f"[search] Tavily unavailable ({e.kind}{suffix}): {e} — "
+                "falling back to DuckDuckGo"
+            )
+    else:
+        log_info("[search] No Tavily API key configured — using the DuckDuckGo scraper")
 
     results = await _duck_search(trimmed)
     if not results:
-        return None
+        return "", [], None, []
     log_info(f"[search] DuckDuckGo returned {len(results)} results")
 
     # Fetch actual content from top result pages in PARALLEL
@@ -335,8 +410,29 @@ async def get_web_context(query: str) -> str | None:
     for p in page_pairs:
         if p["content"]:
             log_info(f"[search]   {p['url'][:80]} ({len(p['content'])} chars)")
+    return "duckduckgo", results, None, page_pairs
+
+
+async def get_web_context(query: str) -> str | None:
+    """Search the web and return AI-summarized context with page content."""
+    trimmed = query.strip()
+    if not trimmed:
+        return None
+
+    log_info(f'[search] Searching for: "{trimmed}"')
+
+    source, results, answer, page_pairs = await _gather_web_results(trimmed)
+    if not results:
+        return None
+    log_info(f"[search] Served by {source} ({len(results)} results)")
+    # Report after the refusal guard below, so the clients only ever list pages
+    # whose content actually reached the model.
+    def emit_sources() -> None:
+        report_sources(results)
 
     context_parts: list[str] = ["## Search Result Snippets\n"]
+    if answer:
+        context_parts.append(f"## Answer Summary\n{answer}")
     for r in results:
         context_parts.append(f"**{r['title']}**\nURL: {r['url']}\n{r['snippet']}")
     for pc in page_pairs:
@@ -385,10 +481,19 @@ CRITICAL RULES:
         summary = "".join(chunks)
     except Exception as e:  # noqa: BLE001
         log_error("[search] Summarization failed, using raw content:", e)
+        emit_sources()
         return f'Recent web search results for "{trimmed}":\n\n{full_context}'
 
     if _REFUSAL_RE.search(summary):
         log_info("[search] Search model refused to summarize — dropping search context for this query")
         return None
 
-    return f'\U0001f4e1 Web search results for "{trimmed}":\n\n{summary or full_context}'
+    final_context = summary or full_context
+    emit_sources()
+    # One line that answers "did the search actually reach the model?" — the
+    # provider used, the source result count and the injected context size.
+    log_info(
+        f"[search] Context ready via {source}: {len(final_context)} chars "
+        f"from {len(results)} results (answer={'yes' if answer else 'no'})"
+    )
+    return f'\U0001f4e1 Web search results for "{trimmed}":\n\n{final_context}'

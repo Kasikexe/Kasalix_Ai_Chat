@@ -7,11 +7,14 @@ import time
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
+from .. import tavily
+from ..cloud_auth import INTERACTIVE_PROBE_TIMEOUT, verify_cloud_key
 from ..deps import admin_authenticated
 from ..logger import error as log_error, info as log_info, warn as log_warn
 from ..ollama_client import invalidate_num_ctx_cache
 from ..settings_store import (
     get_cloud_settings,
+    get_tavily_api_key,
     invalidate_settings_cache,
     load_settings,
     save_settings,
@@ -55,6 +58,7 @@ async def update_settings(request: Request) -> dict:
             "cloudMode",
             "cloudApiKey",
             "cloudEndpoint",
+            "tavilyApiKey",
             "cloudModelAssignments",
             "kvCacheOffload",
             "kvCacheType",
@@ -76,6 +80,63 @@ async def update_settings(request: Request) -> dict:
         return next_settings
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"error": str(e) or "Failed to save"}, status_code=500)
+
+
+@router.post("/test-cloud-key")
+async def test_cloud_key(request: Request) -> JSONResponse:
+    """Verify a cloud API key against the cloud endpoint.
+
+    Side-effect free: nothing is saved, so a key can be validated before it is
+    trusted. ``cloudApiKey`` / ``cloudEndpoint`` in the body win over the
+    stored settings so the user can test exactly what they typed; missing
+    fields fall back to what is already configured.
+    """
+    if not admin_authenticated(request):
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — malformed body: fall back to stored settings
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    saved = await get_cloud_settings()
+    key = str(body.get("cloudApiKey") or saved.get("cloudApiKey") or "").strip()
+    endpoint = str(body.get("cloudEndpoint") or saved.get("cloudEndpoint") or "").strip()
+    result = await verify_cloud_key(
+        endpoint,
+        key,
+        timeout=INTERACTIVE_PROBE_TIMEOUT,
+        include_models=True,
+    )
+    log_info(
+        f"[settings] Cloud key test: ok={result.get('ok')} kind={result.get('kind')} "
+        f"status={result.get('status')}"
+    )
+    return JSONResponse(result)
+
+
+@router.post("/test-tavily-key")
+async def test_tavily_key(request: Request) -> JSONResponse:
+    """Verify a Tavily (web search) API key.
+
+    Side-effect free, but NOT free: the cheapest probe Tavily offers still
+    costs 1 search credit, so this only runs when the user asks for it.
+    ``tavilyApiKey`` in the body wins over the stored settings so the user can
+    test exactly what they typed.
+    """
+    if not admin_authenticated(request):
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — malformed body: fall back to stored settings
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    saved = await get_tavily_api_key()
+    key = str(body.get("tavilyApiKey") or saved or "").strip()
+    result = await tavily.verify_api_key(key)
+    log_info(f"[settings] Tavily key test: ok={result.get('ok')} kind={result.get('kind')}")
+    return JSONResponse(result)
 
 
 @router.post("/reset")
