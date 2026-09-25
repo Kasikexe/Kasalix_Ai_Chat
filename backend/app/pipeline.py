@@ -17,6 +17,7 @@ from typing import Any, Callable
 import httpx
 
 from .ai_rules import with_ai_rules
+from .attachments import image_data_urls
 from .content_guard import DANGEROUS_REPLY, find_dangerous_request
 from .imagegen import sanitize_svg, save_artwork
 from .logger import error as log_error, info as log_info, warn as log_warn
@@ -203,8 +204,12 @@ async def detect_intent(messages: list[Message], mode: str | None = None) -> dic
     if last is None or last.get("role") != "user":
         return {"hasImage": False, "wantsCode": False, "wantsFileInfo": False, "wantsTool": False}
 
-    content = last.get("content", "").lower()
-    has_image = "[image:data:image" in content
+    raw_content = last.get("content", "")
+    content = raw_content.lower()
+    # Resolves both an inline data URL and a stored [image:<filename>]
+    # reference, so a regenerated or re-sent image keeps its image-ness.
+    image_urls = image_data_urls(raw_content)
+    has_image = bool(image_urls)
 
     tool_match = await detect_tool(last.get("content", ""))
     wants_tool = tool_match is not None
@@ -280,10 +285,7 @@ async def detect_intent(messages: list[Message], mode: str | None = None) -> dic
     else:
         wants_code = any(p in content for p in code_phrases)
 
-    image_data_url: str | None = None
-    m = re.search(r"\[image:(data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+))\]", last.get("content", ""))
-    if m:
-        image_data_url = m.group(1)
+    image_data_url: str | None = image_urls[0] if image_urls else None
 
     return {
         "hasImage": has_image,

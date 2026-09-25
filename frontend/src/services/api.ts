@@ -26,6 +26,8 @@ export function getSavedServerUrl(): string | null {
 
 export function saveServerUrl(url: string): void {
   localStorage.setItem(SERVER_URL_KEY, url.trim().replace(/\/+$/, ''));
+  // Images cached from the previous server must not survive the switch.
+  clearImageCache();
 }
 
 export function clearServerUrl(): void {
@@ -214,6 +216,7 @@ export function setSessionToken(token: string): void {
 
 export function clearSessionToken(): void {
   localStorage.removeItem(TOKEN_KEY);
+  clearImageCache();
 }
 
 export function isLoggedIn(): boolean {
@@ -237,6 +240,43 @@ function authedFetch(url: string, options: RequestInit = {}): RequestInit {
   }
 
   return { ...options, headers };
+}
+
+
+// ─── Authenticated image loading ────────────────────────────
+// An <img src> cannot carry the session token, and on Android a relative
+// /api/... URL points at the WebView instead of the PC running the server. So
+// images that live behind the session are fetched with the same headers as any
+// other call and handed to the UI as blob URLs, memoized per key.
+const imageBlobUrls = new Map<string, Promise<string>>();
+
+function fetchImageBlobUrl(key: string, url: string): Promise<string> {
+  const cached = imageBlobUrls.get(key);
+  if (cached) return cached;
+  const pending = (async () => {
+    const res = await fetch(url, authedFetch(url));
+    if (!res.ok) {
+      let detail = `Image request failed (${res.status})`;
+      try {
+        const body = await res.json();
+        if (body && typeof body.error === 'string') detail = body.error;
+      } catch { /* not JSON — keep the status message */ }
+      throw new Error(detail);
+    }
+    return URL.createObjectURL(await res.blob());
+  })();
+  imageBlobUrls.set(key, pending);
+  // Never cache a failure — the image may be written a moment later.
+  pending.catch(() => imageBlobUrls.delete(key));
+  return pending;
+}
+
+/** Drop every cached image blob URL (server switch, logout). */
+export function clearImageCache(): void {
+  for (const pending of imageBlobUrls.values()) {
+    pending.then(URL.revokeObjectURL).catch(() => {});
+  }
+  imageBlobUrls.clear();
 }
 
 
@@ -787,14 +827,30 @@ streamChat(
   })();
 },
 
-  // --- Generated Images API ---
+  // --- Images ---
   getGeneratedImageUrl(filename: string): string {
-    return `/api/generated/${filename}`;
+    // Absolute base: on Android the app runs from the WebView, not the PC.
+    return `${getApiBaseUrl()}/generated/${encodeURIComponent(filename)}`;
+  },
+
+  getGeneratedImageDownloadUrl(filename: string): string {
+    return `${getApiBaseUrl()}/generated/${encodeURIComponent(filename)}/download`;
+  },
+
+  /** An image attached to a chat message (needs the session token). */
+  attachmentImageUrl(filename: string): Promise<string> {
+    return fetchImageBlobUrl(`attachment:${filename}`, `${getApiBaseUrl()}/attachments/${encodeURIComponent(filename)}`);
+  },
+
+  /** An image file inside the workspace (needs the session token). */
+  workspaceImageUrl(filePath: string, workspacePath: string): Promise<string> {
+    const query = new URLSearchParams({ path: filePath, workspacePath });
+    return fetchImageBlobUrl(`workspace:${filePath}`, `${getApiBaseUrl()}/files/raw?${query.toString()}`);
   },
 
   downloadGeneratedImage(filename: string): void {
     const a = document.createElement('a');
-    a.href = `/api/generated/${filename}/download`;
+    a.href = `${getApiBaseUrl()}/generated/${encodeURIComponent(filename)}/download`;
     a.download = filename;
     document.body.appendChild(a);
     a.click();

@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..agent import get_background_processes, resolve_pending_approval, resolve_pending_question
+from ..attachments import persist_data_urls, strip_image_markers
 from ..deps import user_id_from_request
 from ..extractor import extract_memory_from_turn
 from ..logger import error as log_error, info as log_info
@@ -28,7 +29,6 @@ router = APIRouter()
 # calls POST /chat/stop, which sets the matching abort event.
 active_runs: dict[str, dict[str, Any]] = {}
 
-IMAGE_DATA_RE = re.compile(r"\[image:data:image/[a-z]+;base64,[A-Za-z0-9+/=]+\]")
 
 # What counts as a CLOUD failure. This used to match "ollama error" anywhere in
 # the message, so every local Ollama failure told the user "Cloud provider
@@ -130,7 +130,9 @@ async def chat_route(request: Request) -> Any:
 
         last_message = messages[-1]
         if last_message.get("role") == "user" and conv_id:
-            saved_content = IMAGE_DATA_RE.sub("[image]", last_message.get("content", ""))
+            # Attached images move to disk (content-addressed) and the message
+            # keeps a small [image:<filename>] reference — see app/attachments.py.
+            saved_content = persist_data_urls(last_message.get("content", ""))
             await add_message(conv_id, owner_id, make_message("user", saved_content))
 
         active_conv_id = conv_id
@@ -307,7 +309,7 @@ async def chat_route(request: Request) -> Any:
                         try:
                             memory = await get_memory(owner_id)
                             if memory.get("enabled"):
-                                user_text = IMAGE_DATA_RE.sub("[image]", last_message.get("content", "")).strip()
+                                user_text = strip_image_markers(last_message.get("content", ""))
                                 if user_text:
                                     asyncio.create_task(extract_memory_from_turn(owner_id, user_text))
                         except Exception as e:  # noqa: BLE001
@@ -443,8 +445,7 @@ async def title(request: Request) -> dict:
         message = body.get("message")
         if not message:
             return {"title": "New Chat"}
-        cleaned = IMAGE_DATA_RE.sub("[image]", message)
-        cleaned = cleaned.replace("[image]", "").strip()[:200]
+        cleaned = strip_image_markers(message)[:200]
         if not cleaned:
             return {"title": "New Chat"}
 

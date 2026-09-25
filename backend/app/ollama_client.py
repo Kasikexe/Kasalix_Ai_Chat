@@ -15,6 +15,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 
 import httpx
 
+from .attachments import resolve_image_refs, strip_image_markers
 from .capabilities import (
     mark_thinking_unsupported,
     mark_tools_unsupported,
@@ -88,33 +89,68 @@ def clear_model_cache() -> None:
     _model_cache = None
 
 
-def convert_messages_for_ollama(messages: list[Message | ToolLoopMessage]) -> list[dict[str, Any]]:
-    import re
+# How many images a single request may carry, and how much base64 in total.
+# Images replayed from history are not free — a vision encoder re-encodes them
+# on every call — so a long conversation that attached pictures all over the
+# place must not turn each new message into a multi-megabyte prompt. When the
+# cap bites, the most recent images win.
+MAX_IMAGES_PER_REQUEST = 4
+MAX_IMAGE_BASE64_CHARS = 8_000_000
 
+
+def convert_messages_for_ollama(messages: list[Message | ToolLoopMessage]) -> list[dict[str, Any]]:
+    """Build the Ollama message list, turning image markers into real images.
+
+    Handles both forms: the inline data URL a client sends with the turn being
+    processed, and the stored ``[image:<filename>]`` reference replayed from a
+    saved conversation (see app/attachments.py). Markers are never left in the
+    text — the model would otherwise read a wall of base64 or a bare
+    ``[image]`` and answer about a picture it cannot see.
+    """
     valid_roles = {"user", "assistant", "system", "tool"}
+
+    # Pass 1: resolve every message's image payloads, in conversation order.
+    payloads_by_index: dict[int, list[str]] = {}
+    for index, msg in enumerate(messages):
+        content = msg.get("content", "")
+        if isinstance(content, str) and "[image:" in content:
+            found = resolve_image_refs(content)
+            if found:
+                payloads_by_index[index] = found
+
+    # Pass 2: keep the newest images only, within budget.
+    kept: dict[int, list[str]] = {}
+    count = 0
+    budget = MAX_IMAGE_BASE64_CHARS
+    for index in sorted(payloads_by_index, reverse=True):
+        keep: list[str] = []
+        for payload in reversed(payloads_by_index[index]):
+            if count >= MAX_IMAGES_PER_REQUEST or len(payload) > budget:
+                break
+            budget -= len(payload)
+            count += 1
+            keep.append(payload)
+        if keep:
+            kept[index] = list(reversed(keep))
+
     out: list[dict[str, Any]] = []
-    image_re = re.compile(r"\[image:(data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+))\]")
-    for msg in messages:
+    for index, msg in enumerate(messages):
         role = msg.get("role")
         if role not in valid_roles:
             continue
         content = msg.get("content", "")
-        m = image_re.search(content)
-        if m:
-            text_content = image_re.sub("", content).strip()
-            out.append(
-                {
-                    "role": role,
-                    "content": text_content or "Describe this image.",
-                    "images": [m.group(2)],
-                }
-            )
-            continue
-        base: dict[str, Any] = {"role": role, "content": content}
+        images = kept.get(index)
+        if isinstance(content, str) and "[image" in content:
+            content = strip_image_markers(content)
+            if not content:
+                content = "Describe this image." if images else "[image]"
+        entry: dict[str, Any] = {"role": role, "content": content}
+        if images:
+            entry["images"] = images
         tool_calls = msg.get("tool_calls") if "tool_calls" in msg else None
         if tool_calls:
-            base["tool_calls"] = tool_calls
-        out.append(base)
+            entry["tool_calls"] = tool_calls
+        out.append(entry)
     return out
 
 

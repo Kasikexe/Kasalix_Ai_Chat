@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from ..utils import apply_search_replace, changed_line_count, is_path_inside, is_protected_dir_name, is_protected_path
 
@@ -24,6 +24,22 @@ IGNORE_DIRS = {
 }
 
 MAX_FILE_SIZE = 1024 * 1024  # 1MB max for preview
+
+# Files the clients render inline in the file viewer instead of the
+# "Binary file — preview not available" placeholder.
+IMAGE_CONTENT_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+    ".avif": "image/avif",
+    ".svg": "image/svg+xml",
+}
+IMAGE_PREVIEW_EXTENSIONS = set(IMAGE_CONTENT_TYPES)
+MAX_RAW_IMAGE_SIZE = 24 * 1024 * 1024
 
 LANGUAGE_MAP = {
     ".ts": "typescript", ".tsx": "tsx", ".js": "javascript", ".jsx": "jsx",
@@ -123,6 +139,50 @@ async def get_content(request: Request) -> dict:
         return {"content": content, "language": _detect_language(file_path), "size": stat.st_size, "truncated": truncated, "binary": False}
     except OSError:
         return JSONResponse({"error": "Failed to read file"}, status_code=500)
+
+
+@router.get("/raw")
+async def get_raw_image(request: Request) -> Response:
+    """Raw bytes of an image inside the workspace.
+
+    A client cannot put an Authorization header on an ``<img src>``, so it
+    fetches this with its session token and turns the response into a blob URL.
+    Deliberately images-only: this hands out file bytes verbatim, so it stays
+    narrower than the text preview endpoint.
+    """
+    file_path = request.query_params.get("path")
+    if not file_path:
+        return JSONResponse({"error": "path query parameter is required"}, status_code=400)
+    workspace_root = _resolve_workspace_root(request.query_params.get("workspacePath"))
+    if not workspace_root:
+        return JSONResponse({"error": "A valid workspacePath query parameter is required"}, status_code=403)
+    resolved = os.path.abspath(file_path)
+    if is_protected_path(workspace_root, resolved):
+        return JSONResponse({"error": "Access denied: path is in a protected server directory"}, status_code=403)
+    if not (await is_path_inside(workspace_root, resolved)):
+        return JSONResponse({"error": "Access denied: path is outside the workspace"}, status_code=403)
+    ext = os.path.splitext(resolved)[1].lower()
+    if ext not in IMAGE_PREVIEW_EXTENSIONS:
+        return JSONResponse({"error": "Only image files can be previewed here"}, status_code=415)
+    try:
+        if not os.path.isfile(resolved):
+            return JSONResponse({"error": "File does not exist"}, status_code=404)
+        if os.path.getsize(resolved) > MAX_RAW_IMAGE_SIZE:
+            return JSONResponse({"error": "Image is too large to preview (24 MB limit)"}, status_code=413)
+        with open(resolved, "rb") as f:
+            data = f.read()
+    except OSError:
+        return JSONResponse({"error": "Failed to read file"}, status_code=500)
+    return Response(
+        content=data,
+        media_type=IMAGE_CONTENT_TYPES.get(ext, "application/octet-stream"),
+        headers={
+            # Short cache: the file on disk can change under us (the agent
+            # rewrites screenshots during a run).
+            "Cache-Control": "public, max-age=60",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+        },
+    )
 
 
 @router.delete("/delete")

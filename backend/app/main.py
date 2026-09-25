@@ -40,6 +40,7 @@ from .config import (
 from .deps import SESSION_PROTECTED_PATHS, session_authenticated, user_id_from_request
 from .logger import error as log_error, info as log_info, warn as log_warn
 from .routes import (
+    attachments as attachments_routes,
     auth as auth_routes,
     changelog as changelog_routes,
     chat as chat_routes,
@@ -179,6 +180,7 @@ app.include_router(plugins_routes.router, prefix="/api/plugins")
 app.include_router(cloud_usage_routes.router, prefix="/api/cloud-usage")
 app.include_router(session_logs_routes.router, prefix="/api/session-logs")
 app.include_router(auth_routes.router, prefix="/api/auth")
+app.include_router(attachments_routes.router, prefix="/api/attachments")
 
 
 # ─── Generated images ─────────────────────────────────────────

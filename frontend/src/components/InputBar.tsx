@@ -76,16 +76,44 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
     };
   }, []);
 
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  /** Validate + read one picked/pasted/dropped image into a data URL. */
+  const attachFile = (file: File, toast?: string) => {
+    if (!file.type.startsWith('image/')) {
+      toastInfo('Only image files are supported.');
+      return;
+    }
     if (file.size > 10 * 1024 * 1024) {
       toastError('Image must be under 10MB');
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => setImage(reader.result as string);
+    reader.onload = () => {
+      setImage(reader.result as string);
+      if (toast) toastSuccess(toast);
+    };
+    reader.onerror = () => toastError('Could not read that image');
     reader.readAsDataURL(file);
+  };
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) attachFile(file);
+  };
+
+  // Paste an image straight from the clipboard (Win+Shift+S, a copied
+  // screenshot, a browser image) — the fastest way in, and there was no
+  // paste path before.
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (!item.type.startsWith('image/')) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      e.preventDefault();
+      attachFile(file, 'Image pasted');
+      return;
+    }
   };
 
   // Drag & drop image support
@@ -110,22 +138,7 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
 
-    const file = files[0];
-    if (!file.type.startsWith('image/')) {
-      toastInfo('Only image files are supported.');
-      return;
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      toastError('Image must be under 10MB');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setImage(reader.result as string);
-      toastSuccess('Image attached');
-    };
-    reader.readAsDataURL(file);
+    attachFile(files[0], 'Image attached');
   };
 
   const submit = () => {
@@ -307,7 +320,7 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
             onClick={() => fileRef.current?.click()}
             disabled={disabled}
             className="flex-shrink-0 p-1.5 hover:bg-gray-700 disabled:opacity-50 rounded-lg text-gray-400"
-            title="Attach image"
+            title="Attach image (or paste one with Ctrl+V)"
           >
             <Paperclip size={16} />
           </button>
@@ -317,12 +330,13 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
             value={value}
             onChange={(e) => { setValue(e.target.value); adjust(); }}
             onKeyDown={onKey}
+            onPaste={handlePaste}
             onFocus={() => {
               setTimeout(() => {
                 ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
               }, 300);
             }}
-            placeholder={disabled ? 'Select a model first...' : 'Send a message or attach an image...'}
+            placeholder={disabled ? 'Select a model first...' : 'Send a message, attach or paste an image...'}
             rows={1}
             disabled={disabled}
             className="flex-1 min-w-0 bg-transparent text-white placeholder-gray-500 resize-none outline-none px-1.5 py-1.5 max-h-[200px] overflow-y-auto text-sm md:text-base"

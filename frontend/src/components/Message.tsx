@@ -7,6 +7,13 @@ import 'highlight.js/styles/github-dark.css';
 import { Check, Copy, Download, User, Bot, FileCode, RefreshCw, Pencil, X, Save, FilePlus2, Trash2, GitBranch, Code2, FileText, Layers, Loader2, ImageIcon, ZoomIn, Brain, ChevronDown, MessageSquare, Timer, Palette, Sparkles, Wrench, Hourglass, CheckCircle2, Globe, BookOpen, ClipboardList, FolderOpen, Settings2, Scissors, PenLine, Play, FileDiff, FolderPlus, Link2, Ruler, Eye, HelpCircle, Cloud, CloudOff, Search, Gauge, Terminal, Gamepad2, type LucideIcon } from 'lucide-react';
 import type { Message as MessageType, TimelineEvent } from '../types';
 import { openExternal } from '../utils/openExternal';
+import { api } from '../services/api';
+import { ImageLightbox } from './ImageLightbox';
+import { useImageSrc } from '../hooks/useImageSrc';
+import { attachedImageRefs, attachmentFilename, stripImageMarkers } from '../utils/attachedImages';
+
+/** What the shared image viewer is currently showing. */
+type LightboxImage = { src: string; alt?: string; filename?: string; downloadHref?: string };
 
 const languageExtensions: Record<string, string> = {
  javascript: '.js',
@@ -559,7 +566,7 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  const [editing, setEditing] = useState(false);
  const [editValue, setEditValue] = useState('');
  const [showRaw, setShowRaw] = useState(false);
- const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+ const [lightbox, setLightbox] = useState<LightboxImage | null>(null);
  const isUser = message.role === 'user';
  const stageInfo = getStageInfo(stage);
  const StageIcon = stageInfo.Icon;
@@ -575,7 +582,7 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  };
 
  const startEdit = () => {
- setEditValue(message.content.replace(/\[image:[^\]]+\]/g, '').trim());
+ setEditValue(stripImageMarkers(message.content));
  setEditing(true);
  };
 
@@ -591,10 +598,9 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  setEditing(false);
  };
 
- // Strip the [image:...] tag from display
- const displayContent = message.content
- .replace(/\[image:[^\]]+\]/g, '')
- .trim();
+ // Strip the image markers from display — the pictures render as thumbnails
+ // (and in the viewer) instead of as raw base64 in the text.
+ const displayContent = stripImageMarkers(message.content);
 
  // Extract applicable files for"Apply All"button
  const applicableFiles = useMemo(
@@ -650,7 +656,12 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  return (
  <div className="relative group my-3">
  <button
- onClick={() => setLightboxImage(src)}
+ onClick={() => setLightbox({
+ src,
+ alt,
+ filename: filename || undefined,
+ downloadHref: isGenerated && filename ? api.getGeneratedImageDownloadUrl(filename) : undefined,
+ })}
  className="block w-full"
  title={alt || 'View full size'}
  >
@@ -834,12 +845,10 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  </div>
  )}
 
- {/* Show image attachment for user messages */}
- {isUser && (message.content.includes('[image:data:image') || message.content.includes('[image]')) && (
- <div className="mb-2 text-xs text-gray-500 italic inline-flex items-center gap-1">
- <ImageIcon size={12} /> Image attached
- </div>
- )}
+ {/* Images attached to this message — the pictures themselves, not a badge.
+ Only user messages: an assistant reply that *mentions* the marker syntax
+ (documentation, code samples) must not be rendered as a broken picture. */}
+ {isUser && <MessageAttachments content={message.content} onOpen={setLightbox} />}
 
  {editing ? (
  <div className="space-y-2">
@@ -945,46 +954,74 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  </div>
  </div>
 
- {/* Image lightbox modal */}
- {lightboxImage && (
- <div
- className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center animate-fade-in"
- onClick={() => setLightboxImage(null)}
- onKeyDown={(e) => { if (e.key === 'Escape') setLightboxImage(null); }}
- tabIndex={-1}
- ref={(el) => { if (el) el.focus(); }}
- >
- <button
- className="absolute top-4 right-4 p-2 bg-gray-800/80 hover:bg-gray-700 rounded-full text-white transition-colors z-10"
- onClick={() => setLightboxImage(null)}
- title="Close"
- >
- <X size={24} />
- </button>
- <button
- className="absolute bottom-6 left-1/2 -translate-x-1/2 px-5 py-2.5 bg-[#1a3a33] hover:bg-[#24504a] rounded-xl text-white text-sm font-medium transition-all duration-200 flex items-center gap-2 active:scale-95"
- onClick={() => {
- const filename = lightboxImage.split('/').pop() || 'generated-image';
- const a = document.createElement('a');
- a.href = `/api/generated/${filename}/download`;
- a.download = filename;
- document.body.appendChild(a);
- a.click();
- document.body.removeChild(a);
- }}
- title="Download image"
- >
- <Download size={16} />
- <span>Save to folder</span>
- </button>
- <img
- src={lightboxImage}
- alt="Full size"
- className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg"
- onClick={(e) => e.stopPropagation()}
+ {/* Shared full-screen image viewer (zoom + download) */}
+ {lightbox && (
+ <ImageLightbox
+ src={lightbox.src}
+ alt={lightbox.alt}
+ filename={lightbox.filename}
+ downloadHref={lightbox.downloadHref}
+ onClose={() => setLightbox(null)}
  />
- </div>
  )}
  </div>
  );
 });
+
+/** Inline thumbnails for the pictures attached to a message. */
+function MessageAttachments({ content, onOpen }: { content: string; onOpen: (image: LightboxImage) => void }) {
+ const refs = useMemo(() => attachedImageRefs(content), [content]);
+ if (refs.length === 0) return null;
+ return (
+ <div className="mb-3 flex flex-wrap gap-2">
+ {refs.map((imageRef, index) => (
+ <AttachmentThumb key={`${index}-${imageRef.slice(0, 32)}`} imageRef={imageRef} onOpen={onOpen} />
+ ))}
+ </div>
+ );
+}
+
+/** One attached picture: photo, loading skeleton, or an "unavailable" chip. */
+function AttachmentThumb({ imageRef, onOpen }: { imageRef: string; onOpen: (image: LightboxImage) => void }) {
+ const { src, loading, error } = useImageSrc(imageRef);
+ const filename = attachmentFilename(imageRef) || undefined;
+
+ if (loading) {
+ return (
+ <div className="w-28 h-28 rounded-lg border border-gray-700 bg-gray-800/60 flex items-center justify-center animate-pulse">
+ <ImageIcon size={18} className="text-gray-600" />
+ </div>
+ );
+ }
+
+ if (!src) {
+ return (
+ <div
+ className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-700 bg-gray-800/60 text-xs text-gray-500"
+ title={error || 'Image unavailable'}
+ >
+ <ImageIcon size={13} /> Image unavailable
+ </div>
+ );
+ }
+
+ return (
+ <button
+ onClick={() => onOpen({ src, filename, alt: filename || 'Attached image' })}
+ className="group relative block overflow-hidden rounded-lg border border-gray-700 hover:border-gray-500 transition-colors cursor-zoom-in"
+ title="Click to view full size"
+ >
+ <img src={src} alt={filename || 'Attached image'} className="max-h-56 max-w-[280px] object-contain" loading="lazy" />
+ <span className="absolute inset-0 bg-black/0 group-hover:bg-black/15 flex items-center justify-center transition-colors">
+ <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 px-2 py-1 rounded-lg text-white text-[11px] flex items-center gap-1">
+ <ZoomIn size={12} /> View
+ </span>
+ </span>
+ {filename && (
+ <span className="absolute bottom-0 left-0 right-0 px-1.5 py-0.5 bg-black/55 text-[10px] text-gray-300 font-mono truncate">
+ {filename}
+ </span>
+ )}
+ </button>
+ );
+}

@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { X } from 'lucide-react';
+import { X, Download, Maximize2 } from 'lucide-react';
 import { api } from '../services/api';
+import { ImageLightbox } from './ImageLightbox';
+import { isImagePath } from '../utils/attachedImages';
 
 interface Props {
   filePath: string;
@@ -39,9 +41,27 @@ export function FileViewer({ filePath, workspacePath, onClose }: Props) {
 
   const fileName = filePath.replace(/\\/g, '/').split('/').pop() || filePath;
 
+  // Images are not text. They load through the session-authenticated raw route
+  // and render as a picture instead of "Binary file — preview not available.",
+  // which is what tapping an agent screenshot used to give you.
+  const isImage = isImagePath(filePath);
+  const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const [imageSize, setImageSize] = useState<{ w: number; h: number } | null>(null);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     setContent(null); setError(null); setBinary(false);
+    setImageSrc(null); setImageSize(null); setLightboxOpen(false);
+    if (isImage) {
+      // Never routed through the text preview: that reads the whole file to
+      // report "binary" and truncates at 1 MB anyway.
+      api.workspaceImageUrl(filePath, workspacePath).then(
+        (url) => { if (!cancelled) setImageSrc(url); },
+        (e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load image'); }
+      );
+      return () => { cancelled = true; };
+    }
     (async () => {
       try {
         const r = await api.getFileContent(filePath, workspacePath);
@@ -54,7 +74,7 @@ export function FileViewer({ filePath, workspacePath, onClose }: Props) {
       }
     })();
     return () => { cancelled = true; };
-  }, [filePath, workspacePath]);
+  }, [filePath, workspacePath, isImage]);
 
   // Basic token coloring — cheap, memoized, no external highlighter.
   const rendered = useMemo(() => {
@@ -90,6 +110,28 @@ export function FileViewer({ filePath, workspacePath, onClose }: Props) {
           </button>
         </div>
         <div className="flex-1" />
+        {imageSrc && (
+          <>
+            <span className="mr-2 text-[10px] text-gray-500 tabular-nums">
+              {imageSize ? `${imageSize.w}×${imageSize.h}` : ''}
+            </span>
+            <button
+              onClick={() => setLightboxOpen(true)}
+              className="mr-1 p-1 rounded hover:bg-gray-800 text-gray-500 hover:text-gray-200 transition-colors"
+              title="Open full size"
+            >
+              <Maximize2 size={12} />
+            </button>
+            <a
+              href={imageSrc}
+              download={fileName}
+              className="mr-2 p-1 rounded hover:bg-gray-800 text-gray-500 hover:text-gray-200 transition-colors"
+              title="Download image"
+            >
+              <Download size={12} />
+            </a>
+          </>
+        )}
         {content !== null && (
           <button
             onClick={() => setWrap((v) => !v)}
@@ -106,10 +148,22 @@ export function FileViewer({ filePath, workspacePath, onClose }: Props) {
         {error && (
           <div className="p-4 text-[11px] text-[#c44] font-mono">{error}</div>
         )}
+        {imageSrc && (
+          <div className="w-full h-full flex items-center justify-center p-4">
+            <img
+              src={imageSrc}
+              alt={fileName}
+              onLoad={(e) => setImageSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+              onClick={() => setLightboxOpen(true)}
+              title="Click to view full size"
+              className="max-w-full max-h-full object-contain rounded-lg border border-gray-800 cursor-zoom-in bg-[#11161d]"
+            />
+          </div>
+        )}
         {binary && (
           <div className="p-4 text-[11px] text-gray-500">Binary file — preview not available.</div>
         )}
-        {content === null && !error && !binary && (
+        {content === null && !error && !binary && !imageSrc && (
           <div className="p-4 text-[11px] text-gray-500 flex items-center gap-2">
             <span className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse" /> Loading…
           </div>
@@ -121,6 +175,15 @@ export function FileViewer({ filePath, workspacePath, onClose }: Props) {
           </div>
         )}
       </div>
+
+      {lightboxOpen && imageSrc && (
+        <ImageLightbox
+          src={imageSrc}
+          alt={fileName}
+          filename={fileName}
+          onClose={() => setLightboxOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -6,8 +6,8 @@
   cloud-usage, session-logs, ollama) are OPEN: the settings password was
   removed because a one-click reset made it security theater. Securing the
   host is now the operator's job (lock the PC / restrict the server).
-- /api/chat, /api/conversations, /api/files, /api/memory require a valid
-  Bearer session token.
+- /api/chat, /api/conversations, /api/files, /api/memory, /api/attachments
+  require a valid Bearer session token.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ SESSION_PROTECTED_PATHS = [
     "/api/conversations",
     "/api/files",
     "/api/memory",
+    "/api/attachments",
 ]
 
 

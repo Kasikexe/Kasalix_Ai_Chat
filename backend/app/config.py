@@ -25,6 +25,15 @@ def get_generated_images_dir() -> Path:
     return Path.cwd() / "generated_images"
 
 
+def get_attachments_dir() -> Path:
+    """Images attached to chat messages (content-addressed). Unlike generated
+    artwork this is user data, so it lives in DATA_DIR and survives updates."""
+    env = os.environ.get("ATTACHMENTS_DIR")
+    if env:
+        return Path(env)
+    return get_data_dir() / "attachments"
+
+
 def get_release_dir() -> Path:
     return Path.cwd().parent / "release"
 
