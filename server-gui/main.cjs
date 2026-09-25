@@ -371,22 +371,6 @@ async function getRunningModels() {
   } catch { return []; }
 }
 
-<<<<<<< Updated upstream
-// ─── Bun Runtime Detection ────────────────────────────────────────
-// Bun may be installed but not on the current process PATH (fresh install).
-// We check PATH first, then fall back to the well-known install locations.
-function resolveBunPath() {
-  try {
-    execSync('where bun', { stdio: 'ignore', windowsHide: true });
-    return 'bun';
-  } catch { /* not on PATH */ }
-  const candidates = [
-    path.join(os.homedir(), '.bun', 'bin', 'bun.exe'),
-    path.join(process.env.LOCALAPPDATA || '', 'bun', 'bun.exe'),
-  ];
-  for (const c of candidates) {
-    if (c && fs.existsSync(c)) return c;
-=======
 // Resolve how to launch the backend. The backend is the self-contained
 // Python exe (backend.exe — PyInstaller build). Returns { cmd, args, cwd }.
 function resolveBackendCommand() {
@@ -396,6 +380,9 @@ function resolveBackendCommand() {
     path.join(RESOURCES_DIR, 'backend', 'backend.exe'),
     // Flat layout: exe dropped directly into the backend resources folder
     path.join(BACKEND_DIR, 'backend.exe'),
+    // Stable app folder next to the exe (installer layout). Lets a rebuilt
+    // backend.exe be dropped in without repackaging the whole app.
+    path.join(APP_DATA_ROOT, 'backend', 'backend.exe'),
   ];
   for (const c of candidates) {
     if (c && fs.existsSync(c)) {
@@ -406,7 +393,6 @@ function resolveBackendCommand() {
   const devPyExe = path.join(__dirname, '..', 'backend', 'dist', 'backend', 'backend.exe');
   if (fs.existsSync(devPyExe)) {
     return { cmd: devPyExe, args: [], cwd: path.dirname(devPyExe) };
->>>>>>> Stashed changes
   }
   return null;
 }
@@ -441,7 +427,7 @@ async function startServer(httpMode) {
     }
   }
 
-  // Check if port is already in use (e.g., zombie bun from a previous stop)
+  // Check if port is already in use (e.g. a zombie backend.exe from a previous stop)
   const portInUse = await isPortInUse(parseInt(port));
   if (portInUse) {
     if (os.platform() === 'win32') {
@@ -481,48 +467,6 @@ async function startServer(httpMode) {
     }
   }
 
-<<<<<<< Updated upstream
-  // Ensure backend dependencies exist. The portable exe ships with a bundled
-  // node_modules (see extraResources in package.json), but if it's missing
-  // (dev run, older build, or manual copy) install it on the fly so the
-  // server can always start instead of failing with "ENOENT resolving package".
-  if (!fs.existsSync(path.join(BACKEND_DIR, 'node_modules'))) {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('install-progress', {
-        component: 'backend',
-        stage: 'install',
-        message: 'Installing backend dependencies (first run)...',
-      });
-    }
-    const bunCmd = resolveBunPath() || 'bun';
-    let installLog = '';
-    const depsOk = await new Promise((resolve) => {
-      const proc = spawn(bunCmd, ['install'], {
-        cwd: BACKEND_DIR,
-        windowsHide: true,
-        shell: false,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      proc.stdout.on('data', (d) => { installLog += d.toString(); });
-      proc.stderr.on('data', (d) => { installLog += d.toString(); });
-      proc.on('error', () => resolve(false));
-      proc.on('close', (code) => resolve(code === 0));
-    });
-    if (!depsOk || !fs.existsSync(path.join(BACKEND_DIR, 'node_modules'))) {
-      const tail = installLog.split('\n').filter(Boolean).slice(-4).join('; ');
-      return {
-        success: false,
-        error: 'Backend dependencies could not be installed' +
-          (tail ? ': ' + tail : '. Check that Bun is installed correctly, then try again.'),
-      };
-    }
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('install-progress', {
-        component: 'backend',
-        stage: 'done',
-        message: 'Backend dependencies ready',
-      });
-=======
   // The Python backend exe is self-contained — no dependency bootstrap needed.
   const backendCmd = resolveBackendCommand();
   if (!backendCmd) {
@@ -557,7 +501,6 @@ async function startServer(httpMode) {
       );
     } catch (e) {
       console.log('[firewall] Rule setup skipped:', e.message);
->>>>>>> Stashed changes
     }
   }
 
@@ -579,13 +522,16 @@ async function startServer(httpMode) {
 
   return new Promise((resolve) => {
     try {
-      const bunCmd = resolveBunPath() || 'bun';
-      serverProcess = spawn(bunCmd, ['run', 'src/index.ts'], {
-        cwd: BACKEND_DIR,
+      // Launch the self-contained Python backend exe directly. No shell: the
+      // install path contains spaces ("Kasalix AI Chat Server"), and shell:true
+      // would wrap it in cmd.exe — which also stole the pid the Stop button
+      // relies on (it killed cmd.exe instead of the server).
+      serverProcess = spawn(backendCmd.cmd, backendCmd.args, {
+        cwd: backendCmd.cwd,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: false,
-        shell: true,
+        windowsHide: true,
+        shell: false,
       });
 
       let startupLog = '';
@@ -650,8 +596,9 @@ function stopServer() {
       return;
     }
 
-    // On Windows with shell:true, serverProcess.pid is cmd.exe, not bun.
-    // We need /T to kill the entire process tree (cmd.exe AND bun.exe).
+    // serverProcess is backend.exe itself (spawned with shell:false), so
+    // serverProcess.pid IS the server. /T still tears down any children it
+    // spawned (e.g. a python child of the PyInstaller exe) before killing it.
     if (os.platform() === 'win32') {
       try {
         execSync(`taskkill /PID ${serverProcess.pid} /F /T 2>nul`, { windowsHide: true });

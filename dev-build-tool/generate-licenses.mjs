@@ -20,10 +20,7 @@ const PROJECTS = [
   { dir: 'server-gui', label: 'Server GUI (Electron)' },
   { dir: 'changelog-tool', label: 'Changelog tool (Node CLI)' },
   { dir: 'dev-build-tool', label: 'Dev build tool (Node)' },
-<<<<<<< Updated upstream
-=======
   { dir: 'backend', label: 'Backend (Python / FastAPI)' },
->>>>>>> Stashed changes
 ];
 
 const OUTPUT = path.join(ROOT, 'THIRD_PARTY_NOTICES.md');
@@ -101,12 +98,8 @@ const all = new Map(); // key -> package info
 const byProject = {}; // projectLabel -> Map of installed packages
 
 for (const project of PROJECTS) {
-<<<<<<< Updated upstream
-  const installed = scanNodeModules(project.dir);
-=======
   const installed =
     project.dir === 'backend' ? scanPythonVenv(project.dir) : scanNodeModules(project.dir);
->>>>>>> Stashed changes
   byProject[project.label] = installed;
   for (const [key, info] of installed) {
     if (!all.has(key)) all.set(key, info);
@@ -115,13 +108,9 @@ for (const project of PROJECTS) {
 
 const directByName = new Map();
 for (const project of PROJECTS) {
-<<<<<<< Updated upstream
-  for (const dep of readDirectDeps(project.dir)) {
-=======
   const deps =
     project.dir === 'backend' ? readDirectPyDeps(project.dir) : readDirectDeps(project.dir);
   for (const dep of deps) {
->>>>>>> Stashed changes
     if (!directByName.has(dep.name)) directByName.set(dep.name, new Set());
     directByName.get(dep.name).add(project.label);
   }
@@ -164,11 +153,7 @@ lines.push(
 );
 lines.push(
   '- Permissive license texts (MIT, ISC, BSD, Apache-2.0, …) accompany every installed copy of these packages ' +
-<<<<<<< Updated upstream
-    'inside each project\'s `node_modules` directory.',
-=======
     'inside each project\'s `node_modules` directory or Python venv (`backend/.venv`).',
->>>>>>> Stashed changes
 );
 lines.push('');
 lines.push('## Direct dependencies');
@@ -182,10 +167,6 @@ lines.push('| Package | Installed version | License | Used in |');
 lines.push('| --- | --- | --- | --- |');
 for (const project of PROJECTS) {
   const installed = byProject[project.label];
-<<<<<<< Updated upstream
-  for (const dep of readDirectDeps(project.dir)) {
-    const key = [...installed.keys()].find((k) => k.startsWith(`${dep.name}@`));
-=======
   const deps =
     project.dir === 'backend' ? readDirectPyDeps(project.dir) : readDirectDeps(project.dir);
   for (const dep of deps) {
@@ -193,7 +174,6 @@ for (const project of PROJECTS) {
     // like resvg-py install as resvg_py).
     const norm = (s) => s.toLowerCase().replace(/[-_.]/g, '');
     const key = [...installed.keys()].find((k) => norm(k.split('@')[0]) === norm(dep.name));
->>>>>>> Stashed changes
     const info = key ? installed.get(key) : null;
     const version = info ? info.version : '(not installed)';
     const license = info ? info.license : '(not installed)';
