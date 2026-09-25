@@ -1,6 +1,19 @@
 # Dependencies
 node_modules/
 
+# Python
+__pycache__/
+*.pyc
+backend/.venv/
+backend/kasalix_backend.egg-info/
+backend/dist/
+backend/build/backend/
+backend/build/warn-backend.txt
+data_test/
+data_agent_test/
+data_agent_ws/
+backend/app/__pycache__/
+
 # Build outputs
 release/
 frontend/release/
@@ -9,6 +22,7 @@ frontend/android/app/build/
 frontend/android/.gradle/
 frontend/android/build/
 frontend/android/capacitor-cordova-android-plugins/
+backend-legacy/generated_images/
 backend/generated_images/
 
 # Runtime data
@@ -51,3 +65,7 @@ server-gui/release/
 # Misc
 .http-mode
 bun.lockb
+/backend/app/__pycache__
+/backend/app/__pycache__
+/backend/app/__pycache__
+*.pyc
