@@ -1,10 +1,11 @@
-; Kasalix AI Chat Server — NSIS Installer Script
+; Kasalix AI Chat Server - NSIS Installer Script (Python backend)
 ; NSIS (Nullsoft Scriptable Install System) is open-source under the zlib/libpng license.
 ; Completely free for commercial use - no license purchase required.
 ;
-; To compile: Install NSIS from https://nsis.sourceforge.io/Download
-; Then right-click this file -> "Compile NSIS Script"
-; Or run: makensis setup.nsi
+; This variant ships the PyInstaller-built Python backend (backend.exe + _internal\)
+; instead of the Bun/TypeScript source. Build with:
+;   makensis /DVERSION=x.x.x setup.nsi
+; or via build-setup.bat.
 
 !define PRODUCT_NAME "Kasalix AI Chat Server"
 !define PRODUCT_VERSION "0.11.0"
@@ -20,12 +21,12 @@
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 !define PRODUCT_UNINST_ROOT_KEY "HKLM"
 
-; Application display name — defines $(^Name) so the uninstall entry,
+; Application display name - defines $(^Name) so the uninstall entry,
 ; MUI pages, and window titles use the real product name instead of the
 ; literal string "Name".
 Name "${PRODUCT_NAME}"
 
-; Set compression — zlib (commercially friendly license)
+; Set compression - zlib (commercially friendly license)
 SetCompressor zlib
 
 ; Request admin privileges
@@ -33,6 +34,7 @@ RequestExecutionLevel admin
 
 ; Modern UI (built-in, no extra plugins needed)
 !include "MUI2.nsh"
+!include "LogicLib.nsh"
 
 ; ---- Modern UI Settings ----
 !define MUI_ABORTWARNING
@@ -68,8 +70,9 @@ VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "${PRODUCT_NAME} Install
 VIAddVersionKey /LANG=${LANG_ENGLISH} "LegalCopyright" "${PRODUCT_PUBLISHER}"
 
 ; ---- Default installation directory ----
-; Using LOCALAPPDATA instead of Program Files because Bun needs write access
-; for lockfiles, logs, and runtime data. Program Files is read-only for non-admin users.
+; Using LOCALAPPDATA instead of Program Files because the server needs write
+; access for logs, runtime data, and generated images. Program Files is
+; read-only for non-admin users.
 InstallDir "$LOCALAPPDATA\${PRODUCT_NAME}"
 InstallDirRegKey HKLM "${PRODUCT_DIR_REGKEY}" ""
 
@@ -77,22 +80,25 @@ InstallDirRegKey HKLM "${PRODUCT_DIR_REGKEY}" ""
 ShowInstDetails show
 ShowUnInstDetails show
 
-; ══════════════════════════════════════════════════════════════
+; ================================================================
 ; Section: Main Installation
-; ══════════════════════════════════════════════════════════════
+; ================================================================
 Section "Server Files" SEC_MAIN
     SetOutPath "$INSTDIR"
 
-    ; Copy backend (runtime code + deps only — NEVER bundle the local data/ dir
-    ; or .env, otherwise every install ships the builder's accounts,
-    ; conversations, speed test results, and plaintext settings password)
-    File /r /x "node_modules" /x ".git" /x "data" /x "generated_images" /x ".env" "..\backend\*.*"
+    ; Copy the self-contained Python backend (backend.exe + _internal\ bundled
+    ; runtime). NEVER bundle any local data/ dir or .env - each install must
+    ; start with a clean slate (accounts, conversations, settings).
+    ; PyInstaller layout: backend/dist/backend with backend.exe and _internal
+    SetOutPath "$INSTDIR\backend"
+    File /r /x "data" /x ".env" "..\backend\dist\backend\*.*"
 
     ; Copy frontend dist
     SetOutPath "$INSTDIR\frontend\dist"
     File /r "..\frontend\dist\*.*"
 
-    ; Copy certificate generator (NOT the certs themselves — each install gets unique certs)
+    ; Copy certificate generator (NOT the certs themselves - each install
+    ; generates unique certs; the Python backend also auto-generates them)
     SetOutPath "$INSTDIR\certs"
     File "..\certs\generate-certs.cjs"
 
@@ -101,7 +107,7 @@ Section "Server Files" SEC_MAIN
     ; Create placeholder (empty directory won't be created by NSIS)
     File /nonfatal "..\release\.gitkeep"
 
-    ; Copy start/stop scripts (to root) — kept as fallback
+    ; Copy start/stop scripts (to root) - installed under the canonical names
     SetOutPath "$INSTDIR"
     File "run-server.bat"
     File "stop-server.bat"
@@ -133,23 +139,35 @@ Section "Server Files" SEC_MAIN
     ; Clean up stale uninstall entries from older installs (old product name)
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AI Chat Server"
 
-    ; Create shortcuts — main shortcut points to the GUI app
+    ; Create shortcuts - main shortcut points to the GUI app
     CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
     CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\${PRODUCT_NAME}.lnk" "$INSTDIR\Kasalix-AI-Chat-Server.exe" "" "$INSTDIR\Kasalix-AI-Chat-Server.exe" 0
     CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\Stop Server.lnk" "$INSTDIR\stop-server.bat" "" "$INSTDIR\stop-server.bat" 0
     CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\Uninstall.lnk" "$INSTDIR\uninstall.exe"
     CreateShortCut "$DESKTOP\${PRODUCT_NAME}.lnk" "$INSTDIR\Kasalix-AI-Chat-Server.exe" "" "$INSTDIR\Kasalix-AI-Chat-Server.exe" 0
+
+    ; Windows Firewall: allow inbound connections on the server port so other
+    ; devices on ANY network type (Ethernet, Wi-Fi, Public) can reach the
+    ; server. Without this, Windows silently drops LAN clients — they "connect
+    ; then fail". A dedicated rule scoped to the exe avoids the "allow on
+    ; public networks" prompt entirely.
+    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="Kasalix AI Chat Server"'
+    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="Kasalix AI Chat Server" dir=in action=allow program="$INSTDIR\backend\backend.exe" protocol=TCP localport=3001 profile=any'
 SectionEnd
 
-; NOTE: Bun check is handled by run-server.bat when the user starts the server.
-; The installer does not check for Bun — keeping it simple with no external plugins.
+; The Python backend is self-contained (PyInstaller) - no Bun/node_modules
+; runtime needed. Certificates are auto-generated by the backend on first run,
+; or by the Server GUI via certs\generate-certs.cjs.
 
-; ══════════════════════════════════════════════════════════════
+; ================================================================
 ; Uninstaller
-; ══════════════════════════════════════════════════════════════
+; ================================================================
 Section "Uninstall"
     ; Stop the server first (ExecWait waits for it to finish)
     ExecWait '"$INSTDIR\stop-server.bat"'
+
+    ; Remove the firewall rule added during install
+    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="Kasalix AI Chat Server"'
 
     ; Remove shortcuts
     Delete "$SMPROGRAMS\${PRODUCT_NAME}\${PRODUCT_NAME}.lnk"
@@ -182,3 +200,14 @@ Section "Uninstall"
 
     SetAutoClose true
 SectionEnd
+
+; ================================================================
+; In-app self-update: after a SUCCESSFUL SILENT install (launched by
+; the running app's updater), start the freshly installed app so the
+; update round-trips without the user clicking anything.
+; ================================================================
+Function .onInstSuccess
+  ${If} ${Silent}
+    Exec '"$INSTDIR\Kasalix-AI-Chat-Server.exe"'
+  ${EndIf}
+FunctionEnd

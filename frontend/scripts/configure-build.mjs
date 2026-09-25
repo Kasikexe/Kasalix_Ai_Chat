@@ -280,10 +280,10 @@ async function main() {
   if (!fs.existsSync(CONFIG_PATH)) {
     const defaults = {
       version: '1.0.0',
-      productName: 'AI Chat',
+      productName: 'Kasalix AI Chat',
       appId: 'com.aichat.desktop',
       iconPath: '',
-      description: 'AI Chat Desktop Application',
+      description: 'Kasalix AI Chat Client',
       author: '',
       lastBuild: null,
     };

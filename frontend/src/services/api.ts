@@ -73,6 +73,14 @@ function electronFileOp(op: string, ...args: any[]): Promise<any> {
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text();
+    // A 401 on a session-protected endpoint means our token is dead (expired,
+    // server restarted and cleared sessions, or user deleted). Clear the local
+    // auth state so the app drops to the login screen instead of limping along
+    // with every request failing — that "broken UI until restart" state.
+    if (res.status === 401) {
+      try { clearSessionToken(); } catch {}
+      window.dispatchEvent(new CustomEvent('auth:invalid'));
+    }
     throw new Error(text || `HTTP ${res.status}`);
   }
   return res.json();
@@ -359,6 +367,18 @@ export const api = {
     }
   },
 
+  // ─── Health / watchdog ─────────────────────────────────
+  /** Cheap liveness check for the backend. Fails fast (2.5s) so the UI can
+   *  distinguish "server down" from "server slow" without hanging. */
+  async getHealth(): Promise<boolean> {
+    try {
+      const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(2500) });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  },
+
   // ─── User Authentication ────────────────────────────────
   async register(username: string, password: string, rememberMe = false): Promise<{ success: boolean; error?: string }> {
     try {
@@ -581,6 +601,7 @@ streamChat(
     onError: (err: string) => void;
     /** Agent mode: fired when the AI starts a tool call */
     onAgentTool?: (call: { tool: string; args: Record<string, unknown> }) => void;
+    onToolResult?: (r: { tool: string; ok: boolean; output: string }) => void;
     /** Agent mode: fired when the AI writes/deletes a file */
     onFileWritten?: (write: { path: string; changeType: string; originalContent?: string }) => void;
     /** Fired with each reasoning chunk from thinking models (qwen3, deepseek-r1, etc.) */
@@ -593,8 +614,12 @@ streamChat(
     onApprovalRequest?: (q: { key: string; tool: string; args: Record<string, unknown> }) => void;
     /** Fired once with the model that generated the response */
     onModelInfo?: (model: string, source: string) => void;
+    /** Fired when the reply finishes with Ollama's real generation stats */
+    onMetrics?: (m: { evalCount: number; evalDurationMs: number; tokensPerSecond: number }) => void;
     /** Agent mode: fired when the planning phase produces a plan */
     onPlan?: (plan: string) => void;
+    /** Agent mode: the model's own words between tool calls */
+    onNarration?: (text: string) => void;
   },
   signal?: AbortSignal,
   mode?: ConversationMode,
@@ -609,6 +634,31 @@ streamChat(
 ): Promise<void> {
   return (async () => {
     const profile = loadProfile();
+
+  // Dead-server watchdogs. Without these, a backend that dies mid-request
+  // (crash, sleep, network change) leaves a half-open socket: fetch never
+  // resolves, isStreaming stays true forever, and the client looks frozen —
+  // sends do nothing, new chat does nothing, until the app is restarted.
+  // 1) HEADERS timeout: the server must at least answer within 45s.
+  // 2) IDLE timeout: once streaming, some SSE data must arrive within 120s
+  //    (generous — covers slow cold model loads).
+  const controller = new AbortController();
+  const onOuterAbort = () => controller.abort();
+  signal?.addEventListener('abort', onOuterAbort);
+  let headerTimer: ReturnType<typeof setTimeout> | null = setTimeout(
+    () => controller.abort(), 45000
+  );
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const armIdleWatchdog = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => controller.abort(), 120000);
+  };
+  const clearWatchdogs = () => {
+    if (headerTimer) { clearTimeout(headerTimer); headerTimer = null; }
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+  };
+
+  try {
     const res = await fetch(`${API_BASE}/chat`, authedFetch(`${API_BASE}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -630,12 +680,22 @@ streamChat(
         planMode: planMode || 'off',
         toolPermission: toolPermission || 'auto',
       }),
-      signal,
+      signal: controller.signal,
     }));
+
+    // Headers arrived — the server is alive. Switch to the idle watchdog.
+    if (headerTimer) { clearTimeout(headerTimer); headerTimer = null; }
 
 
 
       if (!res.ok || !res.body) {
+        // Dead session token (server restarted, sessions cleared): drop the
+        // local auth state so the UI falls back to login instead of failing
+        // on every send.
+        if (res.status === 401) {
+          try { clearSessionToken(); } catch {}
+          window.dispatchEvent(new CustomEvent('auth:invalid'));
+        }
         callbacks.onError(`Chat request failed: ${res.statusText}`);
         return;
       }
@@ -653,16 +713,20 @@ streamChat(
           const parsed = JSON.parse(payload);
           switch (parsed.type) {
             case 'chunk': callbacks.onChunk(parsed.content); break;
+            case 'ping': break; // keepalive — data already re-armed the idle watchdog above
             case 'conversationId': callbacks.onConversationId(parsed.conversationId); break;
             case 'stage': callbacks.onStage(parsed.stage); break;
             case 'agent_tool': callbacks.onAgentTool?.({ tool: parsed.tool, args: parsed.args || {} }); break;
+            case 'agent_tool_result': callbacks.onToolResult?.({ tool: parsed.tool, ok: !!parsed.ok, output: parsed.output || '' }); break;
             case 'file_written': callbacks.onFileWritten?.({ path: parsed.path, changeType: parsed.changeType, originalContent: parsed.originalContent }); break;
             case 'agent_command': callbacks.onAgentCommand?.({ command: parsed.command, output: parsed.output, failed: !!parsed.failed }); break;
             case 'agent_question': callbacks.onQuestion?.({ key: parsed.key, question: parsed.question }); break;
             case 'agent_approval_request': callbacks.onApprovalRequest?.({ key: parsed.key, tool: parsed.tool, args: parsed.args || {} }); break;
             case 'thinking': callbacks.onThinking?.(parsed.content); break;
+            case 'narration': callbacks.onNarration?.(parsed.content); break;
             case 'model_info': callbacks.onModelInfo?.(parsed.model, parsed.source); break;
             case 'plan': callbacks.onPlan?.(parsed.plan); break;
+            case 'metrics': callbacks.onMetrics?.({ evalCount: parsed.evalCount, evalDurationMs: parsed.evalDurationMs, tokensPerSecond: parsed.tokensPerSecond }); break;
             case 'done': callbacks.onDone(); return true;
             case 'error': callbacks.onError(parsed.error); return true;
           }
@@ -676,6 +740,7 @@ streamChat(
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          armIdleWatchdog();
           buffer += decoder.decode(value, { stream: true });
           const events = buffer.split('\n\n');
           buffer = events.pop() || '';
@@ -704,10 +769,23 @@ streamChat(
           callbacks.onDone();
         }
       } finally {
+        clearWatchdogs();
+        signal?.removeEventListener('abort', onOuterAbort);
         reader.releaseLock();
       }
-    })();
-  },
+  } catch (e) {
+    clearWatchdogs();
+    signal?.removeEventListener('abort', onOuterAbort);
+    // Surface watchdog aborts as a readable error — the catch in useChat
+    // turns it into the UI's error state and unlocks isStreaming.
+    if (e instanceof Error && e.name === 'AbortError') {
+      if (signal?.aborted) throw e; // genuine user Stop — keep AbortError semantics
+      throw new Error('The server stopped responding. Check that the backend is running.');
+    }
+    throw e;
+  }
+  })();
+},
 
   // --- Generated Images API ---
   getGeneratedImageUrl(filename: string): string {

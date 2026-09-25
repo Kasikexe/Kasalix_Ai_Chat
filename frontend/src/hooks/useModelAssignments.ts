@@ -60,6 +60,22 @@ export function useModelAssignments() {
     refresh();
   }, [refresh]);
 
+  // Re-fetch assignments when the window regains focus and on a short poll.
+  // Model assignments can change OUTSIDE this client (Server GUI → Models
+  // page, settings reset) — without this, the running client kept sending
+  // the OLD chat model until it was restarted.
+  useEffect(() => {
+    const onFocus = () => { refresh(); };
+    window.addEventListener('focus', onFocus);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') refresh();
+    }, 10_000);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.clearInterval(interval);
+    };
+  }, [refresh]);
+
   // Get the base chat model. Thinking mode is toggled on this model itself via
   // the backend think flag when it supports thinking.
   const getChatModel = useCallback((): string => {

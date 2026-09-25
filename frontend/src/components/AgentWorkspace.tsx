@@ -3,6 +3,8 @@ import { useChat } from '../hooks/useChat';
 import { ChatWindow } from './ChatWindow';
 import { InputBar } from './InputBar';
 import { FileTree } from './FileTree';
+import { FileViewer } from './FileViewer';
+import { TerminalPanel } from './TerminalPanel';
 
 import { DiffView } from './DiffView';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -131,9 +133,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     }
     setApproving(false);
     setPendingApproval(null);
-  };
-
-  const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, currentStage, stageHistory, liveDuration, currentPlan } = useChat(
+  };   const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, currentStage, stageHistory, liveDuration, liveTps, currentPlan } = useChat(
     model,
     conversation?.messages || [],
     conversation?.id,
@@ -160,6 +160,25 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
   const [planPanelOpen, setPlanPanelOpen] = useState(false);
   const [leftWidth, setLeftWidth] = useState(224);
   const dragRef = useRef<{ type: 'left'; startX: number; startSize: number } | null>(null);
+  // Activity bar: explorer | terminal — VS Code style left rail (SVG icons)
+  const [activityView, setActivityView] = useState<'explorer' | 'terminal'>('explorer');
+  // Open file viewer tabs (workspace files opened from the tree)
+  const [openFiles, setOpenFiles] = useState<string[]>([]);
+  const [activeFile, setActiveFile] = useState<string | null>(null);
+
+  const openWorkspaceFile = useCallback((path: string) => {
+    const norm = path.replace(/\\/g, '/');
+    setOpenFiles((prev) => (prev.includes(norm) ? prev : [...prev, norm]));
+    setActiveFile(norm);
+  }, []);
+
+  const closeOpenFile = useCallback((path: string) => {
+    setOpenFiles((prev) => {
+      const next = prev.filter((p) => p !== path);
+      setActiveFile((cur) => (cur === path ? next[next.length - 1] ?? null : cur));
+      return next;
+    });
+  }, []);
 
   // ─── File Modified State ───────────────────────────────────
   const [modifiedFiles, setModifiedFiles] = useState<ModifiedFile[]>(() => modifiedFilesCache.get(convKey) || []);
@@ -603,9 +622,71 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
       {/* ─── Main Layout ──────────────────────────────────── */}
       <div className="flex-1 flex overflow-hidden">
 
-        {/* ═══ LEFT PANEL: File Tree ═══ */}
+        {/* ═══ ACTIVITY BAR — VS Code-style left rail with SVG icons ═══ */}
+        {workspacePath && (
+          <div className="flex-shrink-0 w-10 border-r border-gray-800 bg-[#0b0f14] flex flex-col items-center py-2 gap-1">
+            {/* Explorer icon — folder/document glyph */}
+            <button
+              onClick={() => { setActivityView('explorer'); setLeftPanelOpen(true); }}
+              className={`p-2 rounded-md transition-colors ${activityView === 'explorer' && leftPanelOpen ? 'bg-gray-800 text-white' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/50'}`}
+              title="Explorer (files)"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 20h16a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1h-8L9.6 4.6A2 2 0 0 0 8.2 4H4a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1z" />
+                <path d="M4 20 20 7" opacity="0.35" />
+              </svg>
+            </button>
+            {/* Terminal icon — prompt glyph */}
+            <button
+              onClick={() => { setActivityView('terminal'); setLeftPanelOpen(true); }}
+              className={`p-2 rounded-md transition-colors ${activityView === 'terminal' && leftPanelOpen ? 'bg-gray-800 text-emerald-400' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/50'}`}
+              title="Terminal"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2.5" y="4" width="19" height="16" rx="2" />
+                <path d="m6.5 9 3 3-3 3" />
+                <path d="M12.5 15H17" />
+              </svg>
+            </button>
+            <div className="flex-1" />
+            {/* Open-file dots — one per viewer tab */}
+            {openFiles.length > 0 && (
+              <div className="flex flex-col items-center gap-1 pb-1">
+                {openFiles.slice(0, 5).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => { setActivityView('explorer'); setLeftPanelOpen(true); setActiveFile(f); }}
+                    className={`w-1.5 h-1.5 rounded-full transition-colors ${activeFile === f ? 'bg-[#7b9fc6]' : 'bg-gray-600 hover:bg-gray-400'}`}
+                    title={f.split('/').pop()}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ═══ LEFT PANEL: File Tree / Terminal ═══ */}
         {leftPanelOpen && workspacePath && (
           <div style={{ width: leftWidth }} className="flex-shrink-0 border-r border-gray-800 bg-gray-900/80 flex flex-col">
+            {activityView === 'terminal' ? (
+              /* ─── Terminal view ─── */
+              <>
+                <div className="flex items-center gap-1 px-2 py-2 border-b border-gray-800">
+                  <Terminal size={12} className="text-emerald-400 flex-shrink-0"/>
+                  <span className="text-xs text-gray-300 font-medium truncate flex-1">Terminal</span>
+                  <button onClick={() => setLeftPanelOpen(false)}
+                    className="p-0.5 hover:bg-gray-800 rounded text-gray-500 hover:text-gray-300 transition-colors"
+                  >
+                    <ChevronDown size={10} />
+                  </button>
+                </div>
+                <div className="flex-1 min-h-0">
+                  <TerminalPanel workspacePath={loadedPath} refreshToken={treeRefreshToken} />
+                </div>
+              </>
+            ) : (
+              /* ─── Explorer view ─── */
+              <>
             {/* Header */}
             <div className="flex items-center gap-1 px-2 py-2 border-b border-gray-800">
               <FolderOpen size={12} className="text-[#7b9fc6] flex-shrink-0"/>
@@ -630,7 +711,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
                 rootPath={loadedPath}
                 workspacePath={loadedPath}
                 refreshToken={treeRefreshToken}
-                onFileSelect={() => {}}
+                onFileSelect={(entry) => openWorkspaceFile(entry.path)}
                 onBrowseFolder={async () => {
                   try {
                     const result = await api.openFolderDialog();
@@ -643,6 +724,8 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
                 }}
               />
             </div>
+            </>
+            )}
 
             {/* Modified files */}
             <div className="border-t border-gray-800">
@@ -725,6 +808,41 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
           </div>
         )}
 
+        {/* ═══ FILE VIEWER: opened workspace files (right of tree, left of chat) ═══ */}
+        {leftPanelOpen && activityView === 'explorer' && workspacePath && activeFile && (
+          <div className="flex-shrink-0 w-[380px] min-w-[240px] border-r border-gray-800 flex flex-col">
+            {/* Tabs */}
+            <div className="flex items-stretch border-b border-gray-800 bg-gray-900/70 overflow-x-auto">
+              {openFiles.map((f) => {
+                const name = f.split('/').pop() || f;
+                const isActive = f === activeFile;
+                return (
+                  <div key={f}
+                    className={`group flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-mono cursor-pointer border-r border-gray-800 transition-colors whitespace-nowrap ${isActive ? 'bg-[#0d1117] text-gray-100 border-t border-t-[#7b9fc6]' : 'text-gray-500 hover:text-gray-300'}`}
+                    onClick={() => setActiveFile(f)}
+                  >
+                    <span className="max-w-28 truncate">{name}</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); closeOpenFile(f); }}
+                      className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-700 transition-all"
+                    >
+                      <X size={9} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex-1 min-h-0">
+              <FileViewer
+                key={activeFile}
+                filePath={activeFile}
+                workspacePath={loadedPath}
+                onClose={() => closeOpenFile(activeFile)}
+              />
+            </div>
+          </div>
+        )}
+
         {/* ═══ MAIN AREA: Chat (full width) ═══ */}
         <div className="flex-1 flex flex-col min-w-0 bg-gray-900/80">
           {/* Header */}
@@ -791,10 +909,10 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
               />
             ) : (
               <ChatWindow
-                messages={messages}
-                isStreaming={isStreaming}
-                currentStage={currentStage}
-                liveDuration={liveDuration}
+                messages={messages}                 isStreaming={isStreaming}
+                 currentStage={currentStage}
+                 liveDuration={liveDuration}
+                 liveTps={liveTps}
                 onEdit={handleEdit}
                 onDelete={deleteMessage}
                 onRegenerate={handleRegenerate}

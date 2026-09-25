@@ -21,17 +21,16 @@ contextBridge.exposeInMainWorld('serverAPI', {
   applyOllamaSettings: (payload) => ipcRenderer.invoke('apply-ollama-settings', payload),
 
   // ─── Bun / Ollama Auto-Install ───────
-  checkBun: () => ipcRenderer.invoke('check-bun'),
-  installBun: () => ipcRenderer.invoke('install-bun'),
+  // Bun is no longer required — stubs kept so the renderer checklist passes.
+  checkBun: () => Promise.resolve({ installed: true }),
+  installBun: () => Promise.resolve({ installed: true, success: true }),
+  onBunNotFound: (_callback) => () => {},
   installOllama: () => ipcRenderer.invoke('install-ollama'),
   onInstallProgress: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('install-progress', handler);
     return () => ipcRenderer.removeListener('install-progress', handler);
   },
-
-  // ─── Downloads ─────────────────────────────
-  openDownload: (url) => ipcRenderer.invoke('open-download', url),
 
   // ─── External Links ────────────────────────
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
@@ -55,12 +54,6 @@ contextBridge.exposeInMainWorld('serverAPI', {
     ipcRenderer.on('server-status', handler);
     return () => ipcRenderer.removeListener('server-status', handler);
   },
-  onBunNotFound: (callback) => {
-    const handler = () => callback();
-    ipcRenderer.on('bun-not-found', handler);
-    return () => ipcRenderer.removeListener('bun-not-found', handler);
-  },
-
   // ─── Window Control ──────────────────────────
   minimizeWindow: () => ipcRenderer.invoke('minimize-window'),
 
@@ -69,18 +62,15 @@ contextBridge.exposeInMainWorld('serverAPI', {
   loadGuiSettings: () => ipcRenderer.invoke('load-gui-settings'),
 
   // ─── Icon Picker ───────────────────────────────
-  pickIcon: () => ipcRenderer.invoke('pick-icon'),
 
   // ─── Settings Password ─────────────────────────
-  authSettings: (password) => ipcRenderer.invoke('auth-settings', password),
-  changeSettingsPassword: (current, next) => ipcRenderer.invoke('change-settings-password', current, next),
-  resetSettingsPassword: () => ipcRenderer.invoke('reset-settings-password'),
 
   // ─── User Management ───────────────────────────
   getUsers: () => ipcRenderer.invoke('get-users'),
 
   // ─── Model Settings ────────────────────────────
   getInstalledModels: () => ipcRenderer.invoke('get-installed-models'),
+  getModelUsageMap: () => ipcRenderer.invoke('get-model-usage-map'),
   pullModel: (name) => ipcRenderer.invoke('pull-model', name),
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (payload) => ipcRenderer.invoke('save-settings', payload),
@@ -114,8 +104,10 @@ contextBridge.exposeInMainWorld('serverAPI', {
 
   // ─── Download Manager ─────────────────────────
   downloadRelease: (assetName) => ipcRenderer.invoke('download-release', assetName),
-  getReleaseFiles: () => ipcRenderer.invoke('get-release-files'),
-  checkGitHubRelease: () => ipcRenderer.invoke('check-github-release'),
+  /** Run a previously downloaded installer without re-downloading */
+  installRelease: () => ipcRenderer.invoke('install-release'),
+  /** Latest GitHub release + local downloaded-installer state */
+  getLatestRelease: () => ipcRenderer.invoke('get-latest-release'),
 
   onDownloadProgress: (callback) => {
     const handler = (_event, data) => callback(data);

@@ -85,9 +85,10 @@
         <div class="update-banner-text">
           <strong id="updateBannerVersion">New version available</strong>
           <span id="updateBannerDesc"></span>
+          <span id="updateBannerStatus" style="display:none;color:var(--green);font-size:11px;"></span>
         </div>
         <div class="update-banner-actions">
-          <a href="https://github.com/Kasikexe/Kasalix/releases/latest" target="_blank" class="btn btn-small btn-primary">Download</a>
+          <button class="btn btn-small btn-primary" id="updateBannerInstall">Update</button>
           <button class="btn btn-small btn-ghost" id="updateBannerDismiss">Dismiss</button>
         </div>
       </div>
@@ -181,49 +182,6 @@
         </div>
       </div>
 
-
-
-      <!-- App Icon Card -->
-      <div class="card">
-        <div class="card-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
-          </svg>
-          App Icon
-        </div>
-        <div class="icon-row">
-          <img id="iconPreview" class="icon-preview" style="display:none" alt="icon" />
-          <span id="iconStatus" style="font-size:12px;color:var(--text-dim)">Default icon</span>
-        </div>
-        <button class="btn btn-small" id="pickIconBtn">Choose Icon (.ico or .png)</button>
-      </div>
-
-      <!-- Downloads Card -->
-      <div class="card">
-        <div class="card-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-          Downloads
-          <span class="dl-badge" id="releaseVersion"></span>
-        </div>
-        <button class="download-btn" id="downloadWin">
-          <span class="dl-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span>
-          <span class="dl-text">
-            <span>Windows Desktop (EXE)</span>
-            <span class="dl-status" id="dlWinStatus">Click to download</span>
-          </span>
-          <span class="dl-progress" id="dlWinProgress"></span>
-        </button>
-        <button class="download-btn" id="downloadAndroid">
-          <span class="dl-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg></span>
-          <span class="dl-text">
-            <span>Android App (APK)</span>
-            <span class="dl-status" id="dlAndroidStatus">Click to download</span>
-          </span>
-          <span class="dl-progress" id="dlAndroidProgress"></span>
-        </button>
-      </div>
     </div>
 
     <!-- ─── Right Column: Stats ─── -->
@@ -283,33 +241,6 @@
 
     <!-- ─── Middle Column: Admin ─── -->
     <div class="col-mid">
-      <!-- Settings Password Card -->
-      <div class="card">
-        <div class="card-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-          </svg>
-          Settings Password
-        </div>
-        <div class="pw-status" id="pwStatus">
-          <span class="dot dot-offline" id="pwDot"></span>
-          <span id="pwStatusText">Not authenticated</span>
-        </div>
-        <div class="pw-form" id="pwForm">
-          <input type="password" id="pwInput" placeholder="Default: letmein" class="pw-input" />
-          <button class="btn btn-small" id="pwAuthBtn">Unlock</button>
-          <span class="pw-hint">Default password is <strong>letmein</strong></span>
-          <button class="btn btn-small btn-reset" id="pwResetBtn" title="Reset the settings password to the default">Forgot password? Reset</button>
-          <span class="pw-msg pw-msg-error" id="pwErrorMsg"></span>
-        </div>
-        <div class="pw-change" id="pwChange" style="display:none">
-          <input type="password" id="pwCurrent" placeholder="Current password" class="pw-input" />
-          <input type="password" id="pwNew" placeholder="New password" class="pw-input" />
-          <button class="btn btn-small" id="pwChangeBtn">Change</button>
-          <span class="pw-msg" id="pwMsg"></span>
-        </div>
-      </div>
-
       <!-- Connected Users Card -->
       <div class="card">
         <div class="card-title">
@@ -381,9 +312,6 @@
         <button class="btn btn-small btn-primary" id="modelsSaveBtn">Save Assignments</button>
       </div>
     </div>
-    <div class="view-locked" id="modelsLocked" style="display:none">
-      <p><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Unlock the admin panel (Settings Password on the Dashboard) to edit model assignments.</p>
-    </div>
     <!-- Quick assignment summary -->
     <div class="models-summary" id="modelsSummary" style="display:none">
       <div class="models-summary-pill">
@@ -423,9 +351,6 @@
         <button class="btn btn-run" id="speedRunBtn">Run All Tests</button>
       </div>
     </div>
-    <div class="view-locked" id="speedLocked" style="display:none">
-      <p><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Unlock the admin panel (Settings Password on the Dashboard) to run speed tests.</p>
-    </div>
     <div class="speed-timeline" id="speedTimeline">
       <div class="speed-empty">No speed test results yet. Click "Run All Tests" to benchmark your models.</div>
     </div>
@@ -445,9 +370,6 @@
         <span class="save-status" id="pluginsStatus"></span>
         <button class="btn btn-small btn-ghost" id="pluginsRefreshBtn">Refresh</button>
       </div>
-    </div>
-    <div class="view-locked" id="pluginsLocked" style="display:none">
-      <p><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Unlock the admin panel (Settings Password on the Dashboard) to install, enable, or remove plugins.</p>
     </div>
     <div class="plugins-catalog" id="pluginsCatalog">
       <div class="plugins-loading">Loading catalog…</div>
@@ -640,155 +562,87 @@
         <p class="apikeys-hint" style="margin-top: 8px;" id="hwRecommendation"></p>
       </div>
 
-      <!-- KV Cache Offloading -->
+      <!-- Ollama Settings -->
       <div class="card">
         <div class="card-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 4v16"/><path d="M15 4v16"/></svg>
-          Context Cache (KV Cache)
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Settings
           <span class="ollama-restart-badge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Restart required</span>
         </div>
-        <p class="apikeys-desc">The context cache stores your conversation history. Choose where it lives — GPU is faster, RAM allows much longer context windows.</p>
-        <div class="ollama-split-layout">
-          <button class="ollama-option-card" id="kvOptionGpu" type="button">
-            <div class="ollama-option-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="12" x2="10" y2="12"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="15" y1="13" x2="15.01" y2="13"/><line x1="18" y1="11" x2="18.01" y2="11"/><rect x="2" y="6" width="20" height="12" rx="6" ry="6"/></svg></div>
-            <div class="ollama-option-info">
-              <span class="ollama-option-title">GPU</span>
-              <span class="ollama-option-desc">Fastest — conversation context lives in VRAM alongside model weights. Limited by your GPU memory.</span>
-            </div>
-          </button>
-          <button class="ollama-option-card" id="kvOptionRam" type="button">
-            <div class="ollama-option-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg></div>
-            <div class="ollama-option-info">
-              <span class="ollama-option-title">RAM</span>
-              <span class="ollama-option-desc">Larger context — conversation context lives in system RAM. Slower but supports 128K+ tokens.</span>
-            </div>
-          </button>
-        </div>
-        <div class="ollama-context-bar" id="kvOffloadEstimate" style="margin-top: 12px;">
-          <div class="ollama-context-label" id="kvEstimateLabel">Estimated memory for context cache:</div>
-          <div class="ollama-context-bar-track"><div class="ollama-context-bar-fill" id="kvVramEstimateBar" style="width:30%"></div></div>
-          <div class="ollama-context-values"><span id="kvVramEstimateText">~2 GB</span><span id="kvVramEstimateMax">of 8 GB VRAM</span></div>
-        </div>
-      </div>
 
-      <!-- KV Cache Quantization -->
-      <div class="card">
-        <div class="card-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-          Context Cache Quantization
-          <span class="ollama-restart-badge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Restart required</span>
+        <div class="ollama-setting">
+          <label class="ollama-setting-label" for="numParallelSelect">PARALLEL SLOTS</label>
+          <select class="ollama-setting-select" id="numParallelSelect">
+            <option value="0">Auto — Ollama decides (usually 1)</option>
+            <option value="1">1 — one request at a time</option>
+            <option value="2">2 — two users at once</option>
+            <option value="3">3 — three users at once</option>
+            <option value="4">4 — four users at once</option>
+            <option value="6">6 — needs a lot of spare memory</option>
+            <option value="8">8 — needs a lot of spare memory</option>
+          </select>
+          <p class="ollama-setting-hint">How many users can generate at the same time. Some models can't do parallel at all (marked "No parallel" in the model catalog) — their requests always queue.</p>
+          <p class="apikeys-hint" id="parallelLimitHint" style="display:none; margin-top: 6px;"></p>
         </div>
-        <p class="apikeys-desc" id="kvQuantDesc">How precisely the conversation context is stored. Lower precision = less memory used, but slightly lower quality on very long conversations.</p>
-        <div class="ollama-quant-grid">
-          <button class="ollama-quant-card" data-quant="f32">
-            <div class="ollama-quant-header">
-              <span class="ollama-quant-name">f32</span>
-              <span class="ollama-quant-badge ollama-quant-hq">Highest Quality</span>
-            </div>
-            <div class="ollama-quant-desc">Full 32-bit precision. Best quality, uses the most VRAM.</div>
-            <div class="ollama-quality-bar">
-              <div class="ollama-quality-fill" style="width:100%; background: #22c55e;"></div>
-            </div>
-            <div class="ollama-quant-meta">
-              <span>Quality: Perfect</span>
-              <span>VRAM: 1x baseline</span>
-            </div>
-          </button>
-          <button class="ollama-quant-card ollama-quant-selected" data-quant="f16">
-            <div class="ollama-quant-header">
-              <span class="ollama-quant-name">f16</span>
-              <span class="ollama-quant-badge ollama-quant-rec">Recommended</span>
-            </div>
-            <div class="ollama-quant-desc">Half precision. Virtually identical quality to f32, half the VRAM.</div>
-            <div class="ollama-quality-bar">
-              <div class="ollama-quality-fill" style="width:97%; background: #22c55e;"></div>
-            </div>
-            <div class="ollama-quant-meta">
-              <span>Quality: Excellent</span>
-              <span>VRAM: 0.5x baseline</span>
-            </div>
-          </button>
-          <button class="ollama-quant-card" data-quant="q8_0">
-            <div class="ollama-quant-header">
-              <span class="ollama-quant-name">q8_0</span>
-              <span class="ollama-quant-badge ollama-quant-saver">Memory Saver</span>
-            </div>
-            <div class="ollama-quant-desc">8-bit quantization. ~50% less VRAM. Noticeable only on very long conversations.</div>
-            <div class="ollama-quality-bar">
-              <div class="ollama-quality-fill" style="width:85%; background: #eab308;"></div>
-            </div>
-            <div class="ollama-quant-meta">
-              <span>Quality: Very Good</span>
-              <span>VRAM: 0.25x baseline</span>
-            </div>
-          </button>
-          <button class="ollama-quant-card" data-quant="q4_0">
-            <div class="ollama-quant-header">
-              <span class="ollama-quant-name">q4_0</span>
-              <span class="ollama-quant-badge ollama-quant-max">Max Savings</span>
-            </div>
-            <div class="ollama-quant-desc">4-bit quantization. ~75% less VRAM. Some quality loss on long contexts.</div>
-            <div class="ollama-quality-bar">
-              <div class="ollama-quality-fill" style="width:65%; background: #f97316;"></div>
-            </div>
-            <div class="ollama-quant-meta">
-              <span>Quality: Good</span>
-              <span>VRAM: 0.12x baseline</span>
-            </div>
-          </button>
-        </div>
-        <div class="ollama-context-bar" id="kvQuantEstimate" style="margin-top: 12px;">
-          <div class="ollama-context-label">VRAM savings with <strong id="kvQuantLabel">f16</strong>:</div>
-          <div class="ollama-context-bar-track"><div class="ollama-context-bar-fill ollama-ctx-savings" id="kvQuantBar" style="width:50%"></div></div>
-          <div class="ollama-context-values"><span id="kvQuantSavingsText">50% of f32</span><span id="kvQuantFreeText">Saves ~2 GB VRAM</span></div>
-        </div>
-      </div>
 
-      <!-- Default Context Length -->
-      <div class="card">
-        <div class="card-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-          Context Window Size
+        <div class="ollama-setting">
+          <label class="ollama-setting-label" for="maxLoadedModelsSelect">MODELS KEPT IN MEMORY</label>
+          <select class="ollama-setting-select" id="maxLoadedModelsSelect">
+            <option value="0">Auto — Ollama decides</option>
+            <option value="1">1 — only one model loaded</option>
+            <option value="2">2 — chat + coding model both loaded</option>
+            <option value="3">3 — three models resident</option>
+            <option value="4">4 — maximum flexibility</option>
+          </select>
+          <p class="ollama-setting-hint">How many different models stay loaded at the same time — 2 lets Chat and Koding serve without reload delays.</p>
         </div>
-        <p class="apikeys-desc">How many tokens the model can remember at once. This determines the context cache size — more tokens = longer conversations before it "forgets" earlier messages.</p>
-        <div class="ollama-ctx-presets" id="ctxPresets">
-          <button class="ollama-ctx-preset" data-val="0">
-            <span class="ollama-ctx-preset-val">Auto</span>
-            <span class="ollama-ctx-preset-desc">Use model default</span>
-          </button>
-          <button class="ollama-ctx-preset" data-val="4096">
-            <span class="ollama-ctx-preset-val">4K</span>
-            <span class="ollama-ctx-preset-desc">~3,000 words</span>
-          </button>
-          <button class="ollama-ctx-preset" data-val="8192">
-            <span class="ollama-ctx-preset-val">8K</span>
-            <span class="ollama-ctx-preset-desc">~6,000 words</span>
-          </button>
-          <button class="ollama-ctx-preset" data-val="16384">
-            <span class="ollama-ctx-preset-val">16K</span>
-            <span class="ollama-ctx-preset-desc">~12,000 words</span>
-          </button>
-          <button class="ollama-ctx-preset" data-val="32768">
-            <span class="ollama-ctx-preset-val">32K</span>
-            <span class="ollama-ctx-preset-desc">~24,000 words</span>
-          </button>
-          <button class="ollama-ctx-preset" data-val="65536">
-            <span class="ollama-ctx-preset-val">64K</span>
-            <span class="ollama-ctx-preset-desc">~48,000 words</span>
-          </button>
-          <button class="ollama-ctx-preset" data-val="131072">
-            <span class="ollama-ctx-preset-val">128K</span>
-            <span class="ollama-ctx-preset-desc">~96,000 words</span>
-          </button>
+
+        <div class="ollama-setting">
+          <label class="ollama-setting-label" for="keepAliveSelect">KEEP MODEL IN MEMORY FOR</label>
+          <select class="ollama-setting-select" id="keepAliveSelect">
+            <option value="">Auto — unload 5 minutes after last use</option>
+            <option value="10m">10 minutes</option>
+            <option value="30m">30 minutes</option>
+            <option value="1h">1 hour</option>
+            <option value="4h">4 hours</option>
+            <option value="8h">8 hours</option>
+            <option value="-1">Forever — never unload</option>
+          </select>
+          <p class="ollama-setting-hint">How long an idle model stays loaded. Longer = no reload lag between messages, but the memory stays reserved.</p>
         </div>
-        <div class="ollama-ctx-slider-row">
-          <input type="range" id="numCtxSlider" min="0" max="131072" step="1024" value="0" style="flex: 1; accent-color: var(--accent);" />
-          <span id="numCtxValue" class="ollama-ctx-slider-val">Auto</span>
+
+        <div class="ollama-setting">
+          <label class="ollama-setting-label" for="numCtxSelect">CONTEXT WINDOW SIZE</label>
+          <select class="ollama-setting-select" id="numCtxSelect">
+            <option value="0">Auto — model default</option>
+            <option value="4096">4K tokens (~3,000 words)</option>
+            <option value="8192">8K tokens (~6,000 words)</option>
+            <option value="16384">16K tokens (~12,000 words)</option>
+            <option value="32768">32K tokens (~24,000 words)</option>
+            <option value="65536">64K tokens (~48,000 words)</option>
+            <option value="131072">128K tokens (~96,000 words)</option>
+          </select>
+          <p class="ollama-setting-hint">How many tokens the model can remember at once — longer conversations need more memory.</p>
         </div>
-        <div class="ollama-context-bar" id="ctxMemEstimate">
-          <div class="ollama-context-label">Estimated memory for this context:</div>
-          <div class="ollama-context-bar-track"><div class="ollama-context-bar-fill ollama-ctx-mem" id="ctxMemBar" style="width:0%"></div></div>
-          <div class="ollama-context-values"><span id="ctxMemText">Auto (model default)</span><span id="ctxMemMax"></span></div>
+
+        <div class="ollama-setting">
+          <label class="ollama-setting-label" for="kvCacheTypeSelect">CACHE QUANTIZATION</label>
+          <select class="ollama-setting-select" id="kvCacheTypeSelect">
+            <option value="f32">f32 — full precision</option>
+            <option value="f16">f16 — half precision</option>
+            <option value="q8_0">q8_0 — 8-bit</option>
+            <option value="q4_0">q4_0 — 4-bit</option>
+          </select>
+          <p class="ollama-setting-hint">Precision of the conversation context cache. Quantizing takes less VRAM/RAM in exchange for slightly worse quality on very long conversations.</p>
+        </div>
+
+        <div class="ollama-setting">
+          <label class="ollama-setting-label" for="kvCacheLocationSelect">CACHE LOCATION</label>
+          <select class="ollama-setting-select" id="kvCacheLocationSelect">
+            <option value="gpu">GPU (VRAM) — fastest</option>
+            <option value="ram">RAM — slower, allows longer contexts</option>
+          </select>
+          <p class="ollama-setting-hint">Where the conversation context is stored. GPU is faster; RAM helps when the context no longer fits in VRAM.</p>
         </div>
       </div>
 
@@ -811,34 +665,29 @@
             <span class="ollama-status-label">Loaded models</span>
             <span class="ollama-status-value" id="ollamaLoadedModels">—</span>
           </div>
+          <div class="ollama-status-item">
+            <span class="ollama-status-label">Active tuning</span>
+            <span class="ollama-status-value" id="ollamaActiveTuning">—</span>
+          </div>
         </div>
+        <p class="apikeys-hint" id="ollamaTuningHint" style="display:none; margin-top: 8px;"></p>
         <button class="btn btn-small btn-ghost" id="ollamaRefreshBtn" style="margin-top: 8px;">Refresh Status</button>
       </div>
     </div>
 
     <!-- Model Catalog Sub-tab -->
     <div class="ollama-tab-content" id="ollama-tab-catalog" style="display:none;">
-      <!-- Search Bar -->
+      <!-- Search Bar (browser-style suggestions dropdown below) -->
       <div class="card" style="padding:12px 16px;">
         <div style="display:flex;gap:8px;align-items:center;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" id="catalogSearchInput" class="apikeys-input" placeholder="Search models — e.g. qwen3, llama, phi, uncensored..." style="flex:1;border:none;background:transparent;font-size:14px;" />
+          <div class="catalog-search-wrap">
+            <input type="text" id="catalogSearchInput" class="apikeys-input" placeholder="Search models — e.g. qwen3, llama, phi, uncensored..." autocomplete="off" spellcheck="false" style="width:100%;border:none;background:transparent;font-size:14px;" />
+            <div class="catalog-suggestions" id="catalogSuggestions" style="display:none;"></div>
+          </div>
           <button class="btn-icon" id="catalogRefreshBtn" title="Refresh installed models">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           </button>
-        </div>
-      </div>
-
-      <!-- Browse Models Section -->
-      <div class="card">
-        <div class="card-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          Browse Models
-          <span class="apikeys-hint" style="margin-left:8px;font-weight:400;font-size:11px;" id="catalogBrowseCount"></span>
-          <span class="catalog-db-badge" id="catalogDbSource"></span>
-        </div>
-        <div id="catalogBrowseList" class="model-catalog-browse">
-          <div class="catalog-loading">Type to search models...</div>
         </div>
       </div>
 
@@ -847,6 +696,7 @@
         <div class="card-title">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
           Installed on this machine
+          <span class="catalog-db-badge" id="catalogDbSource"></span>
         </div>
         <div id="catalogInstalledList" class="model-catalog-list">
           <div class="catalog-loading">Loading installed models...</div>
@@ -864,7 +714,8 @@
         </div>
       </div>
     </div>
-n    <!-- Model Detail Popup -->
+
+    <!-- Model Detail Popup -->
     <div class="modal-overlay" id="modelDetailModal" style="display:none;">
       <div class="modal">
         <div class="modal-header">
@@ -975,10 +826,6 @@
       <div class="overlay-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg></div>
       <h2>Starting Kasalix AI Chat Server</h2>
       <div class="checklist" id="checklist">
-        <div class="check-item" id="check-bun">
-          <span class="check-spinner"></span>
-          <span>Checking Bun runtime...</span>
-        </div>
         <div class="check-item" id="check-deps">
           <span class="check-spinner"></span>
           <span>Checking if Ollama is available...</span>
@@ -993,6 +840,7 @@
         </div>
       </div>
       <div class="overlay-log" id="startupLog"></div>
+      <button class="btn btn-primary" id="startupRetryBtn" style="display:none;margin-top:12px;">Retry Ollama check</button>
     </div>
   </div>
 

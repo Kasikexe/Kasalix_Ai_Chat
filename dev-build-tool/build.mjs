@@ -112,10 +112,10 @@ function ensureConfig() {
   if (!existsSync(CONFIG_PATH)) {
     saveJson(CONFIG_PATH, {
       version: '1.0.0',
-      productName: 'AI Chat',
+      productName: 'Kasalix AI Chat',
       appId: 'com.aichat.desktop',
       iconPath: '',
-      description: 'AI Chat Desktop Application',
+      description: 'Kasalix AI Chat Client',
       author: '',
       lastBuild: null,
     });

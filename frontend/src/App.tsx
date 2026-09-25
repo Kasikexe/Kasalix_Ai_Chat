@@ -23,6 +23,7 @@ import {
  createUserProfile,
  updateUserProfile,
  clearUserProfile,
+ clearSessionToken,
  isLoggedIn,
 } from './services/api';
 import type { ConversationMode, UserProfile } from './types';
@@ -54,6 +55,7 @@ function App() {
  setUser(result.user);
  } else {
  // Session expired or invalid — user will need to login
+ clearSessionToken();
  setUser(null);
  }
  } else {
@@ -62,6 +64,46 @@ function App() {
  setSessionChecked(true);
  })();
  }, []);
+
+ // Backend told us our token is dead (401 from a session-protected route).
+ // Drop to the login screen instead of letting every request fail silently —
+ // this is what previously left the client looking frozen/"lost connection".
+ useEffect(() => {
+ const onAuthInvalid = () => {
+ clearUserProfile();
+ setUser(null);
+ };
+ window.addEventListener('auth:invalid', onAuthInvalid);
+ return () => window.removeEventListener('auth:invalid', onAuthInvalid);
+ }, []);
+
+ // Backend watchdog: when the server stops answering, flip serverConnected off
+ // so the reconnect screen appears; when it answers again, flip back on —
+ // ChatApp remounts fresh and refetches everything. The app heals itself after
+ // a backend crash — no client restart needed. (Previously a backend error
+ // left the UI half-dead: sends did nothing, new-chat created nothing, until
+ // the user restarted the app.)
+ // Two consecutive failures are required before tearing down — a single
+ // dropped health check (Wi-Fi blip, GC pause) must not unmount the whole
+ // app mid-chat and throw away the user's state.
+ useEffect(() => {
+ if (!user) return;
+ let cancelled = false;
+ let failures = 0;
+ const poll = async () => {
+ const healthy = await api.getHealth();
+ if (cancelled) return;
+ failures = healthy ? 0 : failures + 1;
+ if (healthy) {
+ setServerConnected(true);
+ } else if (failures >= 2) {
+ setServerConnected(false);
+ }
+ };
+ const timer = setInterval(poll, 5000);
+ poll();
+ return () => { cancelled = true; clearInterval(timer); };
+ }, [user]);
 
  if (!sessionChecked) {
  // Show a loading state while checking session
@@ -253,9 +295,16 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  }, []);
 
  const handleNewChat = async () => {
+ try {
  const conv = await create(model, undefined, mode);
  setActiveId(conv.id);
  setSidebarOpen(false);
+ } catch (e) {
+ // Never leave the button silently dead — if the backend hiccuped the
+ // user gets a visible error and can simply try again.
+ console.error('[App] Create conversation failed:', e);
+ toastHook.error('Could not create a new chat. Is the server running? Try again.');
+ }
  };
 
  const handleSelect = (id: string) => {
@@ -264,9 +313,14 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  };
 
  const handleDelete = async (id: string) => {
+ try {
  await remove(id);
  discardLiveConversation(id);
  if (activeId === id) setActiveId(null);
+ } catch (e) {
+ console.error('[App] Delete conversation failed:', e);
+ toastHook.error('Could not delete the conversation. Try again.');
+ }
  };
 
  // A brand-new chat becomes real server-side the moment its first stream
@@ -373,6 +427,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  onConversationCreated={handleConversationCreated}
  onConversationStarted={handleConversationStarted}
  onForkConversation={async (forkMessages) => {
+ try {
  const conv = await create(model, undefined, 'agent');
  for (const msg of forkMessages) {
  await api.addConversationMessage(conv.id, msg.role as 'user' | 'assistant', msg.content);
@@ -386,6 +441,10 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  setActiveId(conv.id);
  }
  setSidebarOpen(false);
+ } catch (e) {
+ console.error('[App] Fork (agent) failed:', e);
+ toastHook.error('Could not start the agent session. Try again.');
+ }
  }}
  />
  ) : (
@@ -405,6 +464,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  api.getConversation(id).then((conv) => update(conv)).catch(() => {});
  }}
  onForkConversation={async (forkMessages) => {
+ try {
  const conv = await create(model, undefined, 'chat');
  // Add the forked messages to the new conversation
  for (const msg of forkMessages) {
@@ -421,6 +481,10 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  setActiveId(conv.id);
  }
  setSidebarOpen(false);
+ } catch (e) {
+ console.error('[App] Fork (chat) failed:', e);
+ toastHook.error('Could not fork the conversation. Try again.');
+ }
  }}
  />
  )}

@@ -1,5 +1,5 @@
-// Disable SSL verification for self-signed certs (local dev server)
-// Needed so the auto-updater can fetch latest.yml and the installer .exe
+// Disable SSL verification for self-signed certs
+// Needed so the client can talk to the backend's self-signed HTTPS server
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
@@ -13,8 +13,59 @@ const fs = require('fs');
 const os = require('os');
 const http = require('http');
 const https = require('https');
-const { autoUpdater } = require('electron-updater');
 const { startServer, setBackendUrl, getBackendUrl } = require('./server.cjs');
+
+// ─── Brand-consistent data folders (migrate legacy names once) ──────
+// Chromium profile, localStorage, settings and the updater cache used to
+// land in generic folders named after the old npm package ("ai-chat-frontend",
+// "AI Chat") in both %APPDATA% (Roaming) and %LOCALAPPDATA% (Local).
+// Everything now lives under ONE brand folder: "Kasalix-AI-Chat".
+const APP_DATA_FOLDER = 'Kasalix-AI-Chat';
+// Old data folder in Roaming — renamed (not deleted) so nothing is lost. The
+// most recently modified one wins (the profile the user actually used last).
+const LEGACY_DATA_FOLDERS = ['Ai-Chat-frontend', 'ai-chat-frontend', 'AI Chat'];
+const LEGACY_UPDATER_FOLDER = 'ai-chat-frontend-updater';
+(function migrateUserData() {
+  try {
+    const appData = app.getPath('appData');
+    const target = path.join(appData, APP_DATA_FOLDER);
+    if (!fs.existsSync(target)) {
+      const stats = LEGACY_DATA_FOLDERS
+        .map((n) => path.join(appData, n))
+        .filter((p) => fs.existsSync(p))
+        .map((p) => ({ p, m: fs.statSync(p).mtimeMs }))
+        .sort((a, b) => b.m - a.m);
+      if (stats.length > 0) {
+        const legacy = stats[0].p;
+        try {
+          fs.renameSync(legacy, target);
+          console.log(`[init] Migrated user data: ${path.basename(legacy)} -> ${APP_DATA_FOLDER}`);
+        } catch (e) {
+          // Old folder locked (app still running, OneDrive, AV scan) — start
+          // fresh at the new path rather than blocking startup.
+          console.warn(`[init] Could not rename legacy data folder (${e.message}) — starting fresh profile`);
+        }
+      }
+    }
+    app.setPath('userData', target);
+    // Auto-updater cache in Local: one-time rename so downloaded installers
+    // and pending-update state follow the brand.
+    const localUpdater = path.join(app.getPath('appData'), '..', 'Local', APP_DATA_FOLDER + '-updater');
+    const legacyUpdater = path.join(app.getPath('appData'), '..', 'Local', LEGACY_UPDATER_FOLDER);
+    try {
+      if (fs.existsSync(legacyUpdater) && !fs.existsSync(localUpdater)) {
+        fs.renameSync(legacyUpdater, localUpdater);
+        console.log(`[init] Migrated updater cache -> ${APP_DATA_FOLDER}-updater`);
+      }
+    } catch { /* non-fatal — updater just re-downloads on next update */ }
+  } catch (e) {
+    console.warn('[init] userData path setup failed:', e.message);
+  }
+})();
+// app.name drives the auto-updater cache (%LOCALAPPDATA%/<name>-updater) —
+// align it with the brand so "ai-chat-frontend-updater" becomes
+// "Kasalix-AI-Chat-updater".
+app.setName('Kasalix-AI-Chat');
 
 // The default URL of the backend AI server
 // Matches the backend mode: HTTPS by default, HTTP when HTTPS=false or --http is used
@@ -26,6 +77,207 @@ const CONFIG_FILE = 'server-config.json';
 
 let mainWindow = null;
 let server = null;
+
+// ─── Koding Preview (agent-driven live preview window + bridge) ───────
+let previewWindow = null;
+let previewBridgeServer = null;
+let previewBridgeRegistered = false;
+
+function agentFetch(endpoint, body) {
+  // Backend runs on HTTPS with a self-signed certificate — use the
+  // bundled http(s) modules with TLS verification disabled.
+  const base = getBackendUrl();
+  const mod = base.startsWith('https') ? https : http;
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(base.replace(/\/$/, '') + endpoint);
+      const payload = JSON.stringify(body || {});
+      const req = mod.request({
+        hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+        path: u.pathname + u.search, method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+        rejectUnauthorized: false,
+      }, (res) => {
+        let data = '';
+        res.on('data', (c) => { data += c; });
+        res.on('end', () => {
+          if (res.statusCode && res.statusCode >= 400) {
+            console.log(`[agent] ${endpoint} → HTTP ${res.statusCode}: ${String(data).slice(0, 300)}`);
+          }
+          try { resolve(JSON.parse(data)); } catch { resolve({}); }
+        });
+      });
+      req.on('error', (e) => {
+        console.log(`[agent] ${endpoint} → request failed: ${e.message}`);
+        resolve({});
+      });
+      req.write(payload);
+      req.end();
+    } catch (e) {
+      console.log(`[agent] ${endpoint} → error: ${e.message}`);
+      resolve({});
+    }
+  });
+}
+
+// ─── Preview preference ("hide preview window") ────────────────────
+const PREVIEW_PREFS_FILE = 'preview-prefs.json';
+
+function readPreviewHidden() {
+  try {
+    const p = path.join(app.getPath('userData'), PREVIEW_PREFS_FILE);
+    if (fs.existsSync(p)) {
+      return JSON.parse(fs.readFileSync(p, 'utf-8')).hidden === true;
+    }
+  } catch { /* fall through to default */ }
+  return false; // default: window IS shown
+}
+
+function writePreviewHidden(hidden) {
+  try {
+    const p = path.join(app.getPath('userData'), PREVIEW_PREFS_FILE);
+    fs.writeFileSync(p, JSON.stringify({ hidden: hidden === true }), 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ensurePreviewWindow(targetUrl) {
+  return new Promise((resolve) => {
+    const hidden = readPreviewHidden();
+    if (previewWindow && !previewWindow.isDestroyed()) {
+      previewWindow.loadURL(targetUrl).then(() => resolve({ ok: true, hidden })).catch(() => resolve({ ok: false, hidden }));
+      return;
+    }
+    previewWindow = new BrowserWindow({
+      width: 1100, height: 800,
+      // Hidden mode: never on screen. Offscreen rendering keeps capturePage
+      // working so the agent can still screenshot/verify the page.
+      show: !hidden,
+      ...(hidden ? { webPreferences: { offscreen: true } } : {}),
+      title: 'Koding Preview',
+      autoHideMenuBar: true,
+      icon: path.join(__dirname, '..', 'icon_client.png'),
+      webPreferences: {
+        nodeIntegration: false, contextIsolation: true,
+        javascript: true, images: true,
+      },
+    });
+    previewWindow.setMenuBarVisibility(false);
+    previewWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    previewWindow.on('closed', () => { previewWindow = null; });
+    if (hidden) {
+      // Offscreen windows need an explicit frame rate to paint at all —
+      // without this capturePage() returns blank frames.
+      try { previewWindow.webContents.setFrameRate(10); } catch { /* optional */ }
+    } else {
+      previewWindow.once('ready-to-show', () => {
+        try { previewWindow.show(); } catch { /* already visible */ }
+      });
+    }
+    previewWindow.loadURL(targetUrl)
+      .then(() => resolve({ ok: true, hidden }))
+      .catch(() => resolve({ ok: false, hidden }));
+  });
+}
+
+function closePreviewWindow() {
+  if (previewWindow && !previewWindow.isDestroyed()) {
+    try { previewWindow.destroy(); } catch { /* closing anyway */ }
+  }
+  previewWindow = null;
+}
+
+function startPreviewBridge() {
+  if (previewBridgeServer) return;
+  previewBridgeServer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; if (body.length > 10 * 1024 * 1024) req.destroy(); });
+    req.on('end', () => {
+      const reply = (obj) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(obj));
+      };
+      if (req.method !== 'POST') { reply({ ok: false, error: 'POST only' }); return; }
+      let payload = {};
+      try { payload = JSON.parse(body || '{}'); } catch { reply({ ok: false, error: 'bad JSON' }); return; }
+      handlePreviewBridge(payload).then(reply).catch((e) => reply({ ok: false, error: e.message }));
+    });
+  });
+  previewBridgeServer.listen(0, '127.0.0.1', async () => {
+    const port = previewBridgeServer.address().port;
+    console.log(`[preview] Bridge listening on 127.0.0.1:${port}`);
+    // Register with the backend, then KEEP re-registering every 15s: the
+    // backend forgets us when IT restarts, so the client must re-announce
+    // itself (cheap loopback POST; a restarted backend picks the bridge up
+    // within seconds without any user action).
+    const register = async () => {
+      const r = await agentFetch('/api/preview/register-client', { url: `http://127.0.0.1:${port}/` });
+      if (r && r.ok) return true;
+      if (!register._warnedOnce) {
+        register._warnedOnce = true;
+        console.log(`[preview] Bridge registration failed (retrying every 15s): ${JSON.stringify(r || null)} — backend: ${getBackendUrl()}`);
+      }
+      return false;
+    };
+    for (let attempt = 0; attempt < 10; attempt++) {
+      if (await register()) { console.log('[preview] Bridge registered with backend'); break; }
+      await new Promise((res) => setTimeout(res, 3000));
+    }
+    setInterval(async () => {
+      const ok = await register();
+      if (ok && !previewBridgeRegistered) {
+        console.log('[preview] Bridge (re-)registered with backend');
+      }
+      previewBridgeRegistered = ok;
+    }, 15000);
+  });
+}
+
+async function handlePreviewBridge(payload) {
+  const type = payload.type;
+  if (type === 'open') {
+    const result = await ensurePreviewWindow(String(payload.url || ''));
+    // `hidden` tells the backend the user chose headless verification, so
+    // the agent can word its answer honestly ("running invisibly, you can
+    // open <url> to see it") instead of claiming a window appeared.
+    return { ok: result.ok, hidden: result.hidden };
+  }
+  if (type === 'close') {
+    closePreviewWindow();
+    return { ok: true };
+  }
+  if (!previewWindow || previewWindow.isDestroyed()) {
+    return { ok: false, error: 'Preview window is not open' };
+  }
+  if (type === 'capture') {
+    try {
+      const img = await previewWindow.webContents.capturePage();
+      const dir = app.getPath('temp');
+      const file = path.join(dir, `kasalix-preview-${Date.now()}.png`);
+      fs.writeFileSync(file, img.toPNG());
+      return { ok: true, path: file };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  }
+  if (type === 'eval') {
+    try {
+      const result = await previewWindow.webContents.executeJavaScript(String(payload.code || ''), true);
+      return { ok: true, value: result === undefined ? null : result };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  }
+  if (type === 'ping') return { ok: true };
+  return { ok: false, error: `Unknown bridge action: ${type}` };
+}
+
+app.on('before-quit', () => {
+  closePreviewWindow();
+  if (previewBridgeServer) { try { previewBridgeServer.close(); } catch { /* quitting */ } }
+});
 
 // ─── Update Preference File ──────────────────────────────────────
 const UPDATE_CONFIG_FILE = 'update-config.json';
@@ -95,86 +347,194 @@ app.on('certificate-error', (event, _webContents, url, _error, _certificate, cal
   callback(false);
 });
 
-// ─── Auto-Updater ───────────────────────────────────────────────
+// ─── Auto-Updater (GitHub releases, silent download) ────────────
+// Updates are pulled straight from GitHub releases — the exact flow the
+// Server app uses: GET /releases/latest → pick the Windows installer
+// asset → stream it to the local updater cache → run it silently (/S)
+// via a detached helper after this app quits. No backend involvement,
+// so updates work no matter which server the client is connected to.
 
-// Don't auto-download — we notify the user and let them choose
-autoUpdater.autoDownload = false;
-autoUpdater.allowPrerelease = true;
+const GITHUB_REPO = process.env.KASALIX_REPO || 'Kasikexe/Kasalix';
+const GITHUB_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 
-/** Configure the updater to fetch updates from the backend server (network-accessible) */
-function configureUpdater(backendUrl) {
+// Installer staged by download-update; consumed by install-update.
+let githubUpdatePath = null;
+
+/** Local cache dir for downloaded installers — %LOCALAPPDATA%, so it is
+ *  always writable (unlike the install dir) and shared across launches. */
+function getUpdateCacheDir() {
   try {
-    // Use the backend URL as the feed URL — this is accessible from any PC on the
-    // network because the backend serves latest.yml and .exe files at its root.
-    // The publish.url in latest.yml is set to empty so the updater resolves paths
-    // RELATIVE to the feed URL (i.e., https://backend:3001/AI-Chat-Setup-1.5.0.exe).
-    autoUpdater.setFeedURL({
-      provider: 'generic',
-      url: backendUrl,
-      channel: 'latest',
-    });
-    console.log(`[updater] Feed URL configured: ${backendUrl}/latest.yml`);
-  } catch (err) {
-    console.error('[updater] Failed to configure feed URL:', err.message);
+    const dir = path.join(app.getPath('appData'), '..', 'Local', APP_DATA_FOLDER + '-updater', 'pending');
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  } catch {
+    return os.tmpdir();
   }
 }
 
-/** Check for updates manually (called after window is ready) */
+/** Latest GitHub release, or null when GitHub is unreachable. */
+function fetchLatestGitHubRelease() {
+  return new Promise((resolve) => {
+    try {
+      const req = https.get(GITHUB_API, {
+        headers: { 'User-Agent': 'Kasalix-Client/1.0', 'Accept': 'application/vnd.github.v3+json' },
+      }, (res) => {
+        if (res.statusCode !== 200) { res.resume(); resolve(null); return; }
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)); } catch { resolve(null); }
+        });
+      });
+      req.on('error', () => resolve(null));
+      req.setTimeout(10000, () => { req.destroy(); resolve(null); });
+    } catch { resolve(null); }
+  });
+}
+
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** Run the silent installer via a detached bat helper, then quit.
+ *  Same approach as the Server app: this app exits first so no files are
+ *  locked, the helper waits, then NSIS runs with /S (the installer
+ *  relaunches the app on success). */
+function launchSilentInstaller(installerPath) {
+  const { spawn } = require('child_process');
+  try {
+    const bat = path.join(os.tmpdir(), 'kasalix-client-update-' + Date.now() + '.bat');
+    const verbElevate = '-Verb Run' + 'As';
+    const psCmd = "Start-Process -FilePath '" + installerPath + "' -ArgumentList '/S' "
+      + verbElevate + " -Wait";
+    const CRLF = String.fromCharCode(13, 10);
+    const batText = [
+      '@echo off',
+      'timeout /t 2 /nobreak >>nul',
+      'powershell -NoProfile -ExecutionPolicy Bypass -Command "' + psCmd + '"',
+      'del "%~f0"',
+    ].join(CRLF);
+    fs.writeFileSync(bat, batText, 'utf-8');
+    const child = spawn('cmd.exe', ['/d', '/c', bat], { detached: true, stdio: 'ignore', windowsHide: true });
+    child.unref();
+  } catch (e) {
+    console.error('[updater] Could not arm installer:', e.message);
+    return false;
+  }
+  setTimeout(() => { try { app.quit(); } catch {} }, 500);
+  return true;
+}
+
+/** Stream a release asset to the updater cache, emitting progress events. */
+function downloadGitHubAsset(asset) {
+  return new Promise((resolve) => {
+    try {
+      const destPath = path.join(getUpdateCacheDir(), asset.name);
+      const total = asset.size || 0;
+      let received = 0;
+      const req = https.get(asset.browser_download_url, {
+        headers: { 'User-Agent': 'Kasalix-Client/1.0' },
+      }, (res) => {
+        // browser_download_url redirects to the CDN — follow manually
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.resume();
+          downloadGitHubAsset({ ...asset, browser_download_url: res.headers.location })
+            .then(resolve).catch((e) => resolve({ success: false, error: e.message }));
+          return;
+        }
+        if (res.statusCode !== 200) {
+          res.resume();
+          resolve({ success: false, error: `Download failed: HTTP ${res.statusCode}` });
+          return;
+        }
+        const fileStream = fs.createWriteStream(destPath);
+        res.on('data', (chunk) => {
+          received += chunk.length;
+          const percent = total > 0 ? Math.round((received / total) * 100) : 0;
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('update-download-progress', { percent, total, transferred: received });
+          }
+        });
+        res.pipe(fileStream);
+        fileStream.on('finish', () => {
+          fileStream.close();
+          resolve({ success: true, path: destPath, size: total });
+        });
+        fileStream.on('error', (err) => resolve({ success: false, error: err.message }));
+      });
+      req.on('error', (err) => resolve({ success: false, error: err.message }));
+      req.setTimeout(600000, () => { req.destroy(); resolve({ success: false, error: 'Download timed out' }); });
+    } catch (err) {
+      resolve({ success: false, error: err.message });
+    }
+  });
+}
+
+/** Check GitHub for a newer release and notify the renderer (same event
+ *  shape as before, so the update UI keeps working unchanged). */
 async function checkForUpdates(showSilent = true) {
   try {
-    const result = await autoUpdater.checkForUpdates();
-    if (result && result.updateInfo && result.updateInfo.version) {
-      const current = app.getVersion();
-      const latest = result.updateInfo.version;
-      console.log(`[updater] Current: ${current}, Latest: ${latest}`);
-
-          // Always check critical status
-      let critical = false;
-      try {
-        const backendUrl = getBackendUrl();
-        const httpMod = backendUrl.startsWith('https') ? https : http;
-        const urlObj = new URL(`${backendUrl}/api/build/critical`);
-        const critResult = await new Promise((resolve) => {
-          const req = httpMod.request(
-            { hostname: urlObj.hostname, port: urlObj.port, path: urlObj.pathname, method: 'GET', rejectUnauthorized: false, timeout: 3000 },
-            (res) => {
-              let data = '';
-              res.on('data', (chunk) => { data += chunk; });
-              res.on('end', () => {
-                try { resolve(JSON.parse(data)); } catch { resolve({ critical: false }); }
-              });
-            }
-          );
-          req.on('error', () => resolve({ critical: false }));
-          req.on('timeout', () => { req.destroy(); resolve({ critical: false }); });
-          req.end();
-        });
-        critical = critResult.critical === true && critResult.version === latest;
-      } catch { /* non-critical: fallback */ }
-
-      if (current !== latest) {
-        console.log(`[updater] Update critical: ${critical}`);
-
-        // Notify the renderer about the update
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('update-available', {
-            version: latest,
-            currentVersion: current,
-            releaseNotes: result.updateInfo.releaseNotes || '',
-            critical,
-          });
-        }
-        return { available: true, version: latest, currentVersion: current, critical };
-      }
-
-      // Version matches — still return the latest version so the UI can show what's available
-      console.log(`[updater] Already up to date (v${current}). Server latest: v${latest}`);
-      return { available: false, latestVersion: latest, currentVersion: current };
+    const release = await fetchLatestGitHubRelease();
+    if (!release) {
+      return { available: false, error: 'Could not reach GitHub' };
     }
-    // No update info returned at all
-    return { available: false, error: 'Could not read update information from server' };
+    const current = app.getVersion();
+    const latest = String(release.tag_name || '').replace(/^v/i, '');
+    if (!latest) {
+      return { available: false, error: 'Latest release has no version tag' };
+    }
+    console.log(`[updater] Current: v${current}, GitHub latest: v${latest}`);
+
+    // Always check critical status
+    let critical = false;
+    try {
+      const backendUrl = getBackendUrl();
+      const httpMod = backendUrl.startsWith('https') ? https : http;
+      const urlObj = new URL(`${backendUrl}/api/build/critical`);
+      const critResult = await new Promise((resolve) => {
+        const req = httpMod.request(
+          { hostname: urlObj.hostname, port: urlObj.port, path: urlObj.pathname, method: 'GET', rejectUnauthorized: false, timeout: 3000 },
+          (res) => {
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+              try { resolve(JSON.parse(data)); } catch { resolve({ critical: false }); }
+            });
+          }
+        );
+        req.on('error', () => resolve({ critical: false }));
+        req.on('timeout', () => { req.destroy(); resolve({ critical: false }); });
+        req.end();
+      });
+      critical = critResult.critical === true && critResult.version === latest;
+    } catch { /* non-critical: fallback */ }
+
+    if (compareVersions(latest, current) > 0) {
+      console.log(`[updater] Update available: v${current} -> v${latest} (critical: ${critical})`);
+
+      // Notify the renderer about the update
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-available', {
+          version: latest,
+          currentVersion: current,
+          releaseNotes: release.body || '',
+          critical,
+        });
+      }
+      return { available: true, version: latest, currentVersion: current, critical };
+    }
+
+    // Already up to date — still return the latest version so the UI can show it
+    return { available: false, latestVersion: latest, currentVersion: current };
   } catch (err) {
-    // Silent check failures are expected (server might not have update files yet)
+    // Silent check failures are expected (offline, GitHub unreachable)
     if (!showSilent) {
       console.warn('[updater] Check failed:', err.message);
     }
@@ -303,14 +663,27 @@ async function scanSubnet() {
 
 // ─── Local File Operations ───────────────────────────────────────
 
-/** Get the default workspace path: Documents/AiChat */
+/** Get the default workspace root: Documents/Koding.
+ * On first run after the rename (v0.11.x), the old generic `Documents/AiChat`
+ * folder is renamed to `Koding` so existing projects move with it. Renaming
+ * is skipped if Koding already exists (never overwrite user data) — in that
+ * case old AiChat projects stay where they are and the user can move them. */
 function getDefaultWorkspacePath() {
   const docs = app.getPath('documents');
-  const aiChatDir = path.join(docs, 'AiChat');
+  const kodingDir = path.join(docs, 'Koding');
+  const legacyDir = path.join(docs, 'AiChat');
   try {
-    fs.mkdirSync(aiChatDir, { recursive: true });
+    if (!fs.existsSync(kodingDir) && fs.existsSync(legacyDir)) {
+      try {
+        fs.renameSync(legacyDir, kodingDir);
+      } catch {
+        // Old folder locked (Explorer open, AV scan, OneDrive sync) — fall
+        // through and just create/use Koding; legacy projects stay put.
+      }
+    }
+    fs.mkdirSync(kodingDir, { recursive: true });
   } catch {}
-  return aiChatDir;
+  return kodingDir;
 }
 
 /**
@@ -564,8 +937,8 @@ app.whenReady().then(async () => {
   const isPackaged = app.isPackaged;
   let releaseDir;
   if (isPackaged) {
-    // Packaged: app executable is at C:\Program Files\AI Chat\AI Chat.exe
-    // release dir is C:\Program Files\AI Chat\release
+    // Packaged: app executable is at C:\Program Files\Kasalix AI Chat\Kasalix AI Chat.exe
+    // release dir is C:\Program Files\Kasalix AI Chat\release
     releaseDir = path.join(path.dirname(app.getPath('exe')), 'release');
   } else {
     // Development: release dir is at frontend/release
@@ -576,9 +949,9 @@ app.whenReady().then(async () => {
   server = result.server;
   const port = result.port;
 
-  // Configure the auto-updater to fetch from the backend server (network-accessible)
-  // The backend serves latest.yml and .exe files at its root routes
-  configureUpdater(backendUrl);
+  // Koding preview: start the loopback bridge listener and register it with
+  // the backend so agent preview tools can open/capture/drive the window.
+  startPreviewBridge();
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -607,27 +980,8 @@ app.whenReady().then(async () => {
     // Check for updates silently after the window is shown (if enabled)
     const updateEnabled = readUpdatePreference();
     if (updateEnabled) {
-      setTimeout(async () => {
-        // First check if backend is reachable — no point trying updates if it's down
-        try {
-          const backendUrl = getBackendUrl();
-          const httpMod = backendUrl.startsWith('https') ? https : http;
-          const urlObj = new URL(`${backendUrl}/api/health`);
-          const healthy = await new Promise((resolve) => {
-            const req = httpMod.request(
-              { hostname: urlObj.hostname, port: urlObj.port, path: urlObj.pathname, method: 'GET', rejectUnauthorized: false, timeout: 3000 },
-              (res) => { res.resume(); resolve(res.statusCode >= 200 && res.statusCode < 400); }
-            );
-            req.on('error', () => resolve(false));
-            req.on('timeout', () => { req.destroy(); resolve(false); });
-            req.end();
-          });
-          if (!healthy) {
-            console.log('[updater] Backend unreachable, skipping update check');
-            return;
-          }
-        } catch { /* skip health check on error */ }
-
+      setTimeout(() => {
+        // Updates come from GitHub now — no backend health gate needed
         checkForUpdates(true).catch((err) => {
           console.warn('[updater] Initial check failed:', err.message);
         });
@@ -640,54 +994,51 @@ app.whenReady().then(async () => {
   // Hide menu bar
   mainWindow.setMenuBarVisibility(false);
 
+  // Navigation guard: the app is a single-page client — a clicked link
+  // (e.g. a preview URL the agent posted in chat) must NEVER navigate the
+  // main window away, or the whole Kasalix UI is replaced by that page
+  // ("the whole screen turned into the game"). Route links instead:
+  //  - loopback http(s) URLs (Koding preview pages) → the preview window
+  //    (real BrowserWindow with capture support)
+  //  - everything else → the system browser
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    routeExternalLink(url);
+    return { action: 'deny' };
+  });
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const appUrl = mainWindow.webContents.getURL();
+    if (url && appUrl && url.startsWith(appUrl.split('#')[0].split('?')[0])) return; // same-app navigation
+    event.preventDefault();
+    routeExternalLink(url);
+  });
+
   if (process.env.NODE_ENV === 'development') {
     mainWindow.webContents.openDevTools();
   }
 });
 
-// ─── Auto-Updater Event Handlers ─────────────────────────────────
-
-autoUpdater.on('download-progress', (progress) => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('update-download-progress', {
-      percent: Math.round(progress.percent),
-      bytesPerSecond: progress.bytesPerSecond,
-      total: progress.total,
-      transferred: progress.transferred,
-    });
-  }
-});
-
-autoUpdater.on('update-downloaded', (info) => {
-  console.log(`[updater] Update v${info.version} downloaded and ready to install.`);
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('update-downloaded', {
-      version: info.version,
-      releaseNotes: info.releaseNotes || '',
-    });
-  }
-});
-
-autoUpdater.on('error', (err) => {
-  console.error('[updater] Error:', err.message);
-  // Suppress network/cert errors when the backend is unreachable
-  const isNetworkError = err.message && (
-    err.message.includes('ERR_CERT_AUTHORITY_INVALID') ||
-    err.message.includes('ERR_CONNECTION_REFUSED') ||
-    err.message.includes('ERR_CONNECTION_RESET') ||
-    err.message.includes('ERR_NAME_NOT_RESOLVED') ||
-    err.message.includes('ENOTFOUND') ||
-    err.message.includes('ECONNREFUSED') ||
-    err.message.includes('ETIMEDOUT')
-  );
-  if (isNetworkError) {
-    console.log('[updater] Network error suppressed — backend may be offline');
+/** Open a URL the right way: loopback preview URLs in the preview window,
+ * external URLs in the system browser. Never inside the app window. */
+function routeExternalLink(url) {
+  if (!url || typeof url !== 'string') return;
+  let parsed;
+  try { parsed = new URL(url); } catch { return; }
+  if (!['http:', 'https:'].includes(parsed.protocol)) return;
+  const isLoopback = ['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname);
+  if (isLoopback && !parsed.port) return; // malformed — ignore
+  if (isLoopback) {
+    // Koding preview page: open (or reuse) the preview window so console/
+    // capture tooling keeps working for the agent.
+    ensurePreviewWindow(url).then((r) => {
+      if (!r || !r.ok) shell.openExternal(url).catch(() => {});
+    }).catch(() => {});
     return;
   }
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('update-error', { error: err.message });
-  }
-});
+  shell.openExternal(url).catch(() => {});
+}
+
+// Download progress is emitted from downloadGitHubAsset; the
+// 'update-downloaded' event fires from the download-update handler below.
 
 // ─── IPC Handlers: Auto-Update ───────────────────────────────────
 
@@ -695,18 +1046,47 @@ ipcMain.handle('check-for-updates', async () => {
   return await checkForUpdates(false);
 });
 
+// Silently download the Windows installer from the latest GitHub release
+// (same asset-picking rule as the Server app: the .exe that is not a blockmap).
 ipcMain.handle('download-update', async () => {
   try {
-    autoUpdater.downloadUpdate();
-    return { success: true };
+    const release = await fetchLatestGitHubRelease();
+    if (!release) {
+      const error = 'Could not reach GitHub';
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-error', { error });
+      return { success: false, error };
+    }
+    const asset = (release.assets || []).find((a) => a.name.endsWith('.exe') && !a.name.endsWith('.exe.blockmap'));
+    if (!asset) {
+      const error = 'No Windows installer found in the latest release';
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-error', { error });
+      return { success: false, error };
+    }
+
+    const result = await downloadGitHubAsset(asset);
+    if (result.success) {
+      githubUpdatePath = result.path;
+      const latest = String(release.tag_name || '').replace(/^v/i, '');
+      console.log(`[updater] Installer v${latest} downloaded: ${result.path}`);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-downloaded', { version: latest, releaseNotes: release.body || '' });
+      }
+    } else if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-error', { error: result.error || 'Download failed' });
+    }
+    return result;
   } catch (err) {
     return { success: false, error: err.message };
   }
 });
 
+// Run the staged installer silently and quit so it can replace the app files.
 ipcMain.handle('install-update', async () => {
   try {
-    autoUpdater.quitAndInstall(false, true);
+    if (!githubUpdatePath || !fs.existsSync(githubUpdatePath)) {
+      return { success: false, error: 'No downloaded installer found' };
+    }
+    launchSilentInstaller(githubUpdatePath);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -729,6 +1109,18 @@ ipcMain.handle('set-update-preference', (_event, enabled) => {
   return { success: true, saved };
 });
 
+// ─── IPC Handlers: Preview Preference ───────────────────────────
+
+ipcMain.handle('get-preview-preference', () => {
+  return { hidden: readPreviewHidden() };
+});
+
+ipcMain.handle('set-preview-preference', (_event, hidden) => {
+  if (typeof hidden !== 'boolean') return { success: false, error: 'hidden must be boolean' };
+  const saved = writePreviewHidden(hidden);
+  return { success: saved, hidden };
+});
+
 // ─── IPC Handlers: Server Config ─────────────────────────────────
 
 ipcMain.handle('get-backend-url', () => {
@@ -749,8 +1141,6 @@ ipcMain.handle('set-backend-url', async (_event, newUrl) => {
   }
   setBackendUrl(newUrl);
   const saved = saveServerConfig(newUrl);
-  // Re-configure the auto-updater with the new backend URL
-  configureUpdater(newUrl);
   return { success: true, saved };
 });
 

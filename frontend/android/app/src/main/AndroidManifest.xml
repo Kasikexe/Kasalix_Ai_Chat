@@ -34,4 +34,9 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- In-app self-update: download the release APK and hand it to the
+         system installer. Play-Store-only policy discourages this permission
+         for apps distributed via Play; Kasalix is sideloaded, where the user
+         grants "install unknown apps" for this app once. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 </manifest>

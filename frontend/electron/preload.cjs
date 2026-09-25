@@ -34,6 +34,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getUpdatePreference: () => ipcRenderer.invoke('get-update-preference'),
   setUpdatePreference: (enabled) => ipcRenderer.invoke('set-update-preference', enabled),
 
+  // ─── Koding Preview Preference ──────────────
+  getPreviewPreference: () => ipcRenderer.invoke('get-preview-preference'),
+  setPreviewPreference: (hidden) => ipcRenderer.invoke('set-preview-preference', hidden),
+
   // ─── Server Config ──────────────────────────
   getBackendUrl: () => ipcRenderer.invoke('get-backend-url'),
   setBackendUrl: (url) => ipcRenderer.invoke('set-backend-url', url),

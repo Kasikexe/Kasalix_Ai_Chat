@@ -1,10 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
-title Kasalix AI Chat Server — Stop
+title Kasalix AI Chat Server - Stop
 
-echo ╔══════════════════════════════════════════════════╗
-echo ║       Stopping Kasalix AI Chat Server           ║
-echo ╚══════════════════════════════════════════════════╝
+echo ================================================================
+echo    Stopping Kasalix AI Chat Server (Python backend)
+echo ================================================================
 echo.
 
 set "FOUND=0"
@@ -25,10 +25,10 @@ for %%p in (3001 5173) do (
     )
 )
 
-:: Also kill any bun processes that were started by the server
-for /f "tokens=2" %%a in ('tasklist ^| findstr /I "bun.exe"') do (
+:: Also kill any backend.exe processes that were started by the server
+for /f "tokens=2" %%a in ('tasklist ^| findstr /I "backend.exe"') do (
     set "FOUND=1"
-    echo [BUN] Stopping bun process %%a ...
+    echo [BACKEND] Stopping process %%a ...
     taskkill /F /PID %%a >nul 2>&1
 )
 
@@ -37,10 +37,10 @@ if "%FOUND%"=="0" (
 )
 
 echo.
-echo ────────────────────────────────────────────────
+echo ----------------------------------------------------------------
 echo Note: Ollama is still running in the background.
 echo To stop Ollama too:
 echo   taskkill /F /IM ollama.exe
-echo ────────────────────────────────────────────────
+echo ----------------------------------------------------------------
 echo.
 pause

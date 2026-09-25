@@ -3,16 +3,16 @@
 This folder contains everything you need to build a **Setup.exe** installer for the AI Chat Server App.
 
 The installer packages:
-- **Backend** — Bun/TypeScript API server (handles AI requests, auth, etc.)
+- **Backend** — Self-contained Python API server (`backend.exe`, PyInstaller build — no Python install needed on the user machine)
 - **Frontend** — Pre-built React web UI (served directly by the backend on port 3001)
-- **SSL Certificates** — Self-signed certs for HTTPS
+- **SSL Certificates** — Self-signed certs for HTTPS (auto-generated on first run)
 - **Start/Stop scripts** — Windows batch files for running the server
 
 The installer does **NOT** include:
 - The Electron client app
 - The Android APK builder
 - Developer build tools (`dev-build-tool/`)
-- Bun runtime (user must install Bun separately)
+- Ollama (the Server GUI offers to install it on first launch)
 
 ---
 
@@ -28,7 +28,7 @@ The installer does **NOT** include:
 ### Prerequisites
 
 1. **Node.js** — [nodejs.org](https://nodejs.org) (required for building the frontend)
-2. **Bun** — [bun.sh](https://bun.sh) (install backend deps)
+2. **Python 3.12+** — [python.org](https://www.python.org) (required to build the backend exe)
 3. **NSIS** — [nsis.sourceforge.io/Download](https://nsis.sourceforge.io/Download) (to compile the installer)
    - Download and install with default settings (adds `makensis` to PATH automatically)
 
@@ -42,10 +42,11 @@ build-setup.bat
 
 The script will:
 
-1. Install backend dependencies (`bun install`)
+1. Create the backend venv and compile `backend.exe` with PyInstaller
 2. Build the frontend for production (`npm run build`)
-3. Read the version from `frontend/package.json`
-4. Compile `setup.nsi` into `output\Kasalix-AI-Chat-Server-Setup-<version>.exe`
+3. Build the Server GUI (Electron portable)
+4. Read the version from `frontend/package.json`
+5. Compile `setup.nsi` into `output\Kasalix-AI-Chat-Server-Setup-<version>.exe`
 
 ### Without NSIS
 
@@ -65,7 +66,7 @@ On the user's machine, the Setup.exe:
 
 1. **Installs to:** `%LOCALAPPDATA%\Kasalix AI Chat Server\`
 2. **Creates shortcuts:** Start Menu group + Desktop shortcut
-3. **Checks for Bun** — offers to open bun.sh if not found
+3. **Starts Ollama** if it is installed but not running
 4. **Offers to run** the server after installation finishes
 5. **Uninstaller** — cleanly removes all files, shortcuts, and registry entries
 
@@ -77,7 +78,8 @@ After installation, the user double-clicks the **"Kasalix AI Chat Server"** shor
 
 | File | Purpose |
 |------|---------|
-| `build-setup.bat` | Build script — installs deps, builds frontend, compiles Setup.exe |
+| `build-setup.bat` | Build script — compiles backend.exe, builds frontend + GUI, compiles Setup.exe |
+| `build-setup-bun.bat.bak` / `setup-bun.nsi.bak` / `run-server-bun.bat.bak` / `stop-server-bun.bat.bak` | Legacy Bun-backend build files kept for reference (not used) |
 | `setup.nsi` | **NSIS script** — defines the installer (zlib/libpng license, free for commercial use) |
 | `run-server.bat` | Start script (included in the installer) |
 | `stop-server.bat` | Stop script (included in the installer) |

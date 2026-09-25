@@ -4,12 +4,25 @@ import {
  LogOut, Pencil, CheckCircle, Shield, Sun, Moon,
  Database, Plus, Trash2, Edit3, BookOpen, RefreshCw, Quote,
  Thermometer, Gauge, AlignLeft, Sparkles, Sliders,
- ArrowUpCircle, Download, Package, Settings2,
+ ArrowUpCircle, Download, Package, Settings2, MonitorOff,
 } from 'lucide-react';
 import type { UserProfile, MemoryData } from '../types';
 import { useToast } from '../hooks/useToast';
+import { getSavedServerUrl } from '../services/api';
 
 const AUTO_UPDATE_KEY = 'ai-chat:autoUpdate';
+
+/** Hostname of the backend that actually stores conversations/accounts/settings.
+ *  Data lives on the machine running the Kasalix server — not necessarily the
+ *  device the client runs on (the client only keeps its session token). */
+function serverHost(): { host: string; local: boolean } {
+  const saved = getSavedServerUrl();
+  let host = 'localhost';
+  if (saved) {
+    try { host = new URL(saved).hostname; } catch { host = saved.replace(/^https?:\/\//, ''); }
+  }
+  return { host, local: ['localhost', '127.0.0.1', '::1'].includes(host) };
+}
 
 const COLORS = [
  '#ef4444', '#f97316', '#eab308', '#22c55e',
@@ -103,6 +116,25 @@ export function UserSettingsModal({
 
  // Auto-update state
  const [autoUpdate, setAutoUpdate] = useState(() => localStorage.getItem(AUTO_UPDATE_KEY) !== 'false');
+
+ // Koding preview preference (window hidden vs shown)
+ const [previewHidden, setPreviewHidden] = useState(false);
+ useEffect(() => {
+ if (!open) return;
+ const api = (window as any).electronAPI;
+ if (api?.getPreviewPreference) {
+ api.getPreviewPreference().then((r: any) => setPreviewHidden(!!(r && r.hidden))).catch(() => {});
+ }
+ }, [open]);
+ const togglePreviewHidden = async () => {
+ const next = !previewHidden;
+ setPreviewHidden(next);
+ try {
+ localStorage.setItem('ai-chat:previewHidden', String(next));
+ const api = (window as any).electronAPI;
+ if (api?.setPreviewPreference) await api.setPreviewPreference(next);
+ } catch {}
+ };
 
  // System prompt state
  const [systemPrompt, setSystemPrompt] = useState<string>('');
@@ -461,7 +493,7 @@ export function UserSettingsModal({
 
  {/* Footer */}
  <p className="text-xs text-gray-600 text-center pt-2">
- Profile data is stored locally on this device
+ Profile data is saved on the host's PC running the server{serverHost().local ? ' (this device)' : ` (${serverHost().host})`}
  </p>
  </div>
  )}
@@ -1098,7 +1130,14 @@ export function UserSettingsModal({
 
  <div className="px-4 py-3 bg-gray-800/30 border border-gray-800 rounded-xl space-y-1">
  <p className="text-xs text-gray-500">Data Storage</p>
- <p className="text-sm text-white">Local (this device only)</p>
+ <p className="text-sm text-white">
+ {serverHost().local ? "Host's PC (this device)" : `Host's PC (${serverHost().host})`}
+ </p>
+ <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+ Conversations, accounts, memory & settings are saved on the host's PC running the Kasalix
+ server — nothing is sent to any external service. Only your sign-in session stays
+ on this device.
+ </p>
  </div>
  </div>
 
@@ -1117,17 +1156,16 @@ export function UserSettingsModal({
  } else if (result?.error) {
  // Show the actual error instead of hiding it
  const errMsg = result.error.length > 80 ? result.error.slice(0, 80) + '...' : result.error;
- toast('error', `Update check failed: ${errMsg}`);
- } else if (result?.latestVersion && result.latestVersion !== appVersion) {
- // Server has a different version but comparison didn't match — show it anyway
- toast('info', `Server has v${result.latestVersion} (currently on v${appVersion}). Try building a new version on the server.`);
- } else if (result?.latestVersion) {
- toast('info', `Already up to date (v${result.currentVersion || appVersion}). Server also has v${result.latestVersion}.`);
+ toast('error', `Update check failed: ${errMsg}`);        } else if (result?.latestVersion && result.latestVersion !== appVersion) {
+          // This build is NEWER than the latest GitHub release (dev build ahead
+          // of the last published version) — informational, not a problem.
+          toast('info', `You're on v${appVersion} — GitHub's latest release is v${result.latestVersion}, so this build is newer.`);
+        } else if (result?.latestVersion) {
+          toast('info', `Already up to date (v${result.currentVersion || appVersion}). GitHub also has v${result.latestVersion}.`);
  } else {
  toast('info', `You're up to date (v${appVersion || '?'}).`);
  }
- } catch (e) {
- toast('error', 'Update check failed. Could not reach the backend server.');
+ } catch (e) {      toast('error', 'Update check failed. Could not reach GitHub.');
  }
  setCheckingUpdates(false);
  }}
@@ -1146,8 +1184,7 @@ export function UserSettingsModal({
  {checkingUpdates ? 'Checking...' : 'Check for Updates'}
  </p>
  <p className="text-xs text-gray-500">
- {checkingUpdates
- ? 'Contacting server...'
+ {checkingUpdates      ? 'Checking GitHub...'
  : appVersion ? `Currently on v${appVersion}` : 'See if a new version is available'}
  </p>
  </div>
@@ -1173,7 +1210,7 @@ export function UserSettingsModal({
  </button>
 
  <p className="text-xs text-gray-600 text-center pt-2">
- All user data is stored locally on this device
+ Your data is saved on the host's PC running the server — nothing is sent to any external service
  </p>
  </div>
  )}
@@ -1203,6 +1240,33 @@ export function UserSettingsModal({
  your rules.
  </p>
  </div>
+
+ {/* Hide preview window (Electron only) */}
+ {typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron && (
+ <div
+ className={`flex items-center justify-between px-4 py-3 rounded-xl cursor-pointer transition-all duration-200 ${
+ previewHidden
+ ? 'bg-emerald-900/20 border border-emerald-800/40'
+ : 'bg-gray-800/50 border border-gray-800 hover:bg-gray-800'
+ }`}
+ onClick={togglePreviewHidden}
+ >
+ <div className="flex items-center gap-3">
+ <div className={`p-1.5 rounded-lg ${previewHidden ? 'bg-emerald-700/30' : 'bg-gray-700/50'}`}>
+ <MonitorOff size={16} className={previewHidden ? 'text-[#4a9988]' : 'text-gray-400'} />
+ </div>
+ <div>
+ <p className="text-sm font-medium text-gray-200">Hide preview window</p>
+ <p className="text-xs text-gray-500 mt-0.5">
+ Agent still verifies its web work (screenshots, console, JS checks) — nothing pops up on your screen
+ </p>
+ </div>
+ </div>
+ <div className={`w-10 h-6 rounded-full p-1 transition-colors duration-200 ${previewHidden ? 'bg-emerald-600' : 'bg-gray-700'}`}>
+ <div className={`w-4 h-4 rounded-full bg-white transition-transform duration-200 ${previewHidden ? 'translate-x-4' : 'translate-x-0'}`} />
+ </div>
+ </div>
+ )}
  </div>
  )}
  </div>

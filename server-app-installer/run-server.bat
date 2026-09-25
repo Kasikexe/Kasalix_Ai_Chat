@@ -4,45 +4,37 @@ title Kasalix AI Chat Server
 
 cd /d "%~dp0"
 
-echo ╔══════════════════════════════════════════════════╗
-echo ║     Kasalix AI Chat Server — Starting           ║
-echo ╚══════════════════════════════════════════════════╝
+echo ================================================================
+echo    Kasalix AI Chat Server - Starting (Python backend)
+echo ================================================================
 echo.
 
-:: ── Detect paths ────────────────────────────────────
+:: ---- Detect paths -------------------------------------------------
 :: When installed, the structure is:
 ::   C:\Users\<you>\AppData\Local\Kasalix AI Chat Server\
-::     ├── backend\
-::     ├── frontend\dist\
-::     ├── certs\
-::     ├── run-server.bat   (this file)
-::     └── stop-server.bat
+::     |- backend\        (backend.exe + _internal\ - PyInstaller build)
+::     |- frontend\dist\
+::     |- certs\
+::     |- run-server.bat  (this file)
+::     |- stop-server.bat
 set "INSTALL_DIR=%~dp0"
 set "BACKEND_DIR=%INSTALL_DIR%backend"
-:: The installer copies backend files to the install ROOT (not a backend\
-:: subfolder), so fall back to the root when the subfolder doesn't exist.
-if not exist "%BACKEND_DIR%\package.json" set "BACKEND_DIR=%INSTALL_DIR%"
 set "FRONTEND_DIR=%INSTALL_DIR%frontend"
 set "CERT_DIR=%INSTALL_DIR%certs"
 :: Runtime data lives in a stable per-install folder so it survives updates.
 set "DATA_DIR=%INSTALL_DIR%data"
 set "GENERATED_IMAGES_DIR=%INSTALL_DIR%generated_images"
 
-:: ── Check if Bun is available ───────────────────────
-where bun >nul 2>nul
-if %errorlevel% neq 0 (
-    echo [ERROR] Bun is not installed!
-    echo.
-    echo   The Kasalix AI Chat Server requires Bun to run.
-    echo   Download from: https://bun.sh
-    echo.
-    echo   After installing Bun, run this script again.
+:: ---- Check backend.exe exists ------------------------------------
+if not exist "%BACKEND_DIR%\backend.exe" (
+    echo [ERROR] backend.exe not found in "%BACKEND_DIR%"
+    echo         The installation appears to be incomplete.
     echo.
     pause
     exit /b 1
 )
 
-:: ── Check for Ollama ────────────────────────────────
+:: ---- Check for Ollama ---------------------------------------------
 where ollama >nul 2>nul
 if %errorlevel% neq 0 (
     echo [WARN] Ollama is not installed or not in PATH.
@@ -53,18 +45,13 @@ if %errorlevel% neq 0 (
     timeout /t 3 /nobreak >nul
 )
 
-:: ── Start Ollama if not running ─────────────────────
+:: ---- Start Ollama if not running ----------------------------------
 echo [1/4] Checking Ollama...
 curl -s http://localhost:11434/api/tags >nul 2>nul
 if %errorlevel% neq 0 (
     where ollama >nul 2>nul
     if !errorlevel! equ 0 (
         echo [INFO] Starting Ollama...
-        :: Read Ollama settings and inject env vars for next ollama serve
-        if exist "%DATA_DIR%\settings.json" (
-            node -e "const s=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));const a=[];if(s.kvCacheOffload===false)a.push('set LLAMA_ARG_KV_OFFLOAD=0');if(s.kvCacheType&&s.kvCacheType!=='f16'){a.push('set LLAMA_ARG_CACHE_TYPE_K='+s.kvCacheType);a.push('set LLAMA_ARG_CACHE_TYPE_V='+s.kvCacheType)};if(a.length){console.log('[INFO] Applying Ollama settings:');a.forEach(l=>console.log('  '+l.replace('set ','')));console.log(a.join('\r\n'))}" "%DATA_DIR%\settings.json" > "%TEMP%\kasalix_env.bat" 2>nul
-            if exist "%TEMP%\kasalix_env.bat" call "%TEMP%\kasalix_env.bat" & del "%TEMP%\kasalix_env.bat" 2>nul
-        )
         start "Ollama" /min cmd /c "ollama serve"
         timeout /t 3 /nobreak >nul
         echo [OK] Ollama started
@@ -76,25 +63,10 @@ if %errorlevel% neq 0 (
 )
 echo.
 
-:: ── Install backend dependencies if needed ──────────
-echo [2/4] Checking backend dependencies...
-if not exist "%BACKEND_DIR%\node_modules" (
-    echo [INFO] Installing backend dependencies...
-    pushd "%BACKEND_DIR%"
-    call bun install
-    if %errorlevel% neq 0 (
-        echo [ERROR] Failed to install backend dependencies.
-        popd
-        pause
-        exit /b 1
-    )
-    popd
-)
-echo [OK] Backend dependencies ready
-echo.
+:: The Python backend is self-contained - no dependency install step.
 
-:: ── Detect local IP for LAN sharing ─────────────────
-echo [3/4] Detecting network...
+:: ---- Detect local IP for LAN sharing ------------------------------
+echo [2/4] Detecting network...
 set "IP=127.0.0.1"
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /C:"IPv4"') do (
     set "IP=%%a"
@@ -105,75 +77,52 @@ set "IP=%IP: =%"
 echo [OK] Local IP: %IP%
 echo.
 
-:: ── Decide HTTPS vs HTTP ────────────────────────────
-echo [4/4] Starting server...
+:: ---- Decide HTTPS vs HTTP -----------------------------------------
+echo [3/4] Starting server...
 set "HTTPS=true"
-if exist "%INSTALL_DIR%\.http-mode" (
-    del "%INSTALL_DIR%\.http-mode"
-)
-set "HTTPS_ARGS="
 
 :: User can pass --http to force HTTP mode
 if /i "%~1"=="--http" set "HTTPS=false"
 if /i "%~1"=="/http" set "HTTPS=false"
 
-:: Check if certs exist — auto-generate missing self-signed certs
-:: (generate-certs.cjs is a zero-dependency generator, run with Bun which is
-:: verified to be installed above)
-if "%HTTPS%"=="true" (
-    if not exist "%CERT_DIR%\localhost.crt" (
-        echo [INFO] SSL certificates not found. Generating self-signed certs...
-        if exist "%CERT_DIR%\generate-certs.cjs" (
-            bun "%CERT_DIR%\generate-certs.cjs" "%CERT_DIR%" >nul 2>nul
-        )
-        if not exist "%CERT_DIR%\localhost.crt" (
-            echo [WARN] Certificate generation failed. Falling back to HTTP.
-            set "HTTPS=false"
-        ) else (
-            echo [OK] Self-signed certificates generated
-        )
-    )
-)
-
+:: The Python backend auto-generates self-signed certs into certs\ on
+:: first HTTPS start (cryptography is bundled). No external generator needed.
 if "%HTTPS%"=="true" (
     set "PROTO=https"
-    set "PROTO_ARGS="
-    echo [OK] HTTPS mode (encrypted)
+    set "HTTP_ARG="
+    echo [OK] HTTPS mode (encrypted) - certs auto-generated if missing
 ) else (
     set "PROTO=http"
-    set "PROTO_ARGS=--http"
-    :: Signal to the backend that we want HTTP
-    echo. > "%INSTALL_DIR%\.http-mode"
+    set "HTTP_ARG=--http"
     echo [OK] HTTP mode (no encryption)
 )
 echo.
 
-:: ── Launch the server ───────────────────────────────
-echo ╔══════════════════════════════════════════════════╗
-echo ║   Kasalix AI Chat Server is starting!           ║
-echo ║                                                  ║
-echo ║   Open in your browser:                         ║
-echo ║     %PROTO%://localhost:3001                     ║
-echo ║                                                  ║
-echo ║   Share with others on your LAN:                ║
-echo ║     %PROTO%://%IP%:3001                          ║
-echo ║                                                  ║
-echo ║   Press Ctrl+C to stop the server.              ║
-echo ╚══════════════════════════════════════════════════╝
+:: ---- Launch the server --------------------------------------------
+echo ================================================================
+echo    Kasalix AI Chat Server is starting!
+echo.
+echo    Open in your browser:
+echo      %PROTO%://localhost:3001
+echo.
+echo    Share with others on your LAN:
+echo      %PROTO%://%IP%:3001
+echo.
+echo    Press Ctrl+C to stop the server.
+echo ================================================================
 echo.
 
 pushd "%BACKEND_DIR%"
-if "%PROTO_ARGS%"=="" (
-    bun run src/index.ts
+set "PORT=3001"
+set "DATA_DIR=%DATA_DIR%"
+set "GENERATED_IMAGES_DIR=%GENERATED_IMAGES_DIR%"
+if "%HTTP_ARG%"=="" (
+    backend.exe
 ) else (
-    bun run src/index.ts -- %PROTO_ARGS%
+    backend.exe --http
 )
 set "EXIT_CODE=%errorlevel%"
 popd
-
-if exist "%INSTALL_DIR%\.http-mode" (
-    del "%INSTALL_DIR%\.http-mode" 2>nul
-)
 
 if %EXIT_CODE% neq 0 (
     echo.

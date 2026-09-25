@@ -60,11 +60,6 @@ async function loadGuiSettings() {
   if (saved) {
     if (saved.httpMode !== undefined) state.httpMode = saved.httpMode;
     if (saved.autoStart !== undefined) state.autoStart = saved.autoStart;
-    if (saved.iconPath) {
-      $('iconPreview').src = 'file:///' + saved.iconPath.replace(/\\/g, '/');
-      $('iconPreview').style.display = 'block';
-      $('iconStatus').textContent = '✓ Custom icon set';
-    }
   }
   // Apply toggles
   httpToggle.classList.toggle('toggle-on', state.httpMode);
@@ -72,12 +67,9 @@ async function loadGuiSettings() {
 }
 
 async function saveGuiSettings() {
-  const iconImg = $('iconPreview');
-  const iconPath = iconImg.style.display !== 'none' && iconImg.src ? iconImg.src : '';
   await API.saveGuiSettings({
     httpMode: state.httpMode,
     autoStart: state.autoStart,
-    iconPath: iconPath.startsWith('file://') ? decodeURIComponent(iconPath.slice(7)) : iconPath,
   });
 }
 
@@ -97,8 +89,7 @@ const serverBadge = $('serverStatus');
 let installResolve = null;
 
 function promptInstall(component) {
-  // If a prompt is already showing (e.g. both the startup check and the
-  // bun-not-found event fire), chain onto it so no caller hangs waiting
+  // If a prompt is already showing, chain onto it so no caller hangs waiting
   // for a resolver that never gets called.
   if (installResolve) {
     return new Promise((resolve) => {
@@ -108,13 +99,8 @@ function promptInstall(component) {
   }
   return new Promise((resolve) => {
     installResolve = resolve;
-    if (component === 'bun') {
-      $('installModalTitle').textContent = 'Bun is missing';
-      $('installModalMsg').textContent = 'The Bun runtime is required to run the AI server. I can install it for you. May I?';
-    } else {
-      $('installModalTitle').textContent = 'Ollama is missing';
-      $('installModalMsg').textContent = 'Ollama is required for AI model responses. I can install it for you. May I?';
-    }
+    $('installModalTitle').textContent = 'Ollama is missing';
+    $('installModalMsg').textContent = 'Ollama is required for AI model responses. I can install it for you. May I?';
     $('installModal').style.display = 'flex';
   });
 }
@@ -150,18 +136,6 @@ function showInstallError(title, msg) {
   $('installProgressOverlay').style.display = 'flex';
 }
 
-async function ensureBun() {
-  const check = await API.checkBun();
-  if (check.installed) return true;
-  const yes = await promptInstall('bun');
-  if (!yes) return false;
-  showInstallProgress('Installing Bun...', 'Downloading and installing the Bun runtime. This may take a minute.');
-  const res = await API.installBun();
-  if (res.installed) { hideInstallProgress(); return true; }
-  showInstallError('Bun install failed', res.error || 'Bun could not be installed. Please install it manually from https://bun.sh');
-  return false;
-}
-
 // Module-level startup log (used by ensureOllama and runStartup)
 function startupLogFn(text) {
   const el = document.getElementById('startupLog');
@@ -190,7 +164,7 @@ async function ensureOllama() {
     log('Auto-start failed: ' + e.message);
   }
 
-  // 3. Ollama not running — show message in startup log
+  // 3. Ollama not running — show message in startup log + a Retry button
   log('');
   log('╔══════════════════════════════════════════╗');
   log('║     Ollama is not running                ║');
@@ -203,8 +177,42 @@ async function ensureOllama() {
   log('║  https://ollama.com/download             ║');
   log('╚══════════════════════════════════════════╝');
   log('');
+  showStartupRetry();
   return false;
 }
+
+// Show/hide the startup-overlay Retry button (used when Ollama isn't running).
+function showStartupRetry() {
+  const btn = $('startupRetryBtn');
+  if (!btn) return;
+  btn.style.display = 'inline-flex';
+  btn.onclick = async () => {
+    btn.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Checking...';
+    mark('check-deps', 'active');
+    log('Retrying Ollama check...');
+    try {
+      const ok = await ensureOllama();
+      if (ok) {
+        mark('check-deps', 'done');
+        updateOllamaBadge(true);
+        log('Ollama is running ✓');
+      } else {
+        mark('check-deps', 'error');
+        updateOllamaBadge(false);
+        showStartupRetry();
+      }
+    } catch (e) {
+      mark('check-deps', 'error');
+      log('Ollama check failed: ' + e.message);
+      showStartupRetry();
+    }
+    btn.disabled = false;
+    btn.textContent = 'Retry Ollama check';
+  };
+}
+
 // ─── Startup Sequence ───────────────────────────────────────────
 async function runStartup() {
   const mark = (id, status) => {
@@ -222,19 +230,7 @@ async function runStartup() {
 
 
 
-  // Step 1: Check Bun (auto-install if missing, after asking)
-  mark('check-bun', 'active');
-  log('Checking Bun runtime...');
-  const bunOk = await ensureBun();
-  if (bunOk) {
-    mark('check-bun', 'done');
-    log('Bun found ✓');
-  } else {
-    mark('check-bun', 'error');
-    log('Bun not found — server cannot start without it. Install from https://bun.sh');
-  }
-
-  // Step 2: Check Ollama (non-blocking — server starts either way)
+  // Step 1: Check Ollama (non-blocking — server starts either way)
   mark('check-deps', 'active');
   log('Checking if Ollama is available...');
   let ollamaOk = false;
@@ -253,13 +249,13 @@ async function runStartup() {
     log('Ollama not found — AI features will be unavailable');
   }
 
-  // Step 3: Backend dependencies
+  // Step 2: Backend (self-contained exe — nothing to install)
   mark('check-ollama', 'active');
-  log('Backend dependencies ready ✓');
+  log('Backend ready ✓');
   mark('check-ollama', 'done');
 
-  // Enable start button (only if Bun is available)
-  startBtn.disabled = !bunOk;
+  // Enable start button (backend exe is self-contained — no extra runtime needed)
+  startBtn.disabled = false;
 
   // Step 4: Auto-start server if setting is on
   mark('check-server', 'active');
@@ -352,6 +348,8 @@ function updateServerURL(port, https) {
   const value = serverUrl.querySelector('.value');
   const url = `${protocol}://localhost:${port}`;
   value.textContent = url;
+  // Remember for per-interface share links in the Network card
+  updateIPs.currentUrl = url;
   $('copyUrlBtn').style.display = 'inline-flex';
 }
 
@@ -396,7 +394,7 @@ async function refreshModePill() {
       const icon = mode === 'auto' ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>' : mode === 'local' ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>';
       const label = mode === 'auto' ? 'Auto' : mode === 'local' ? 'Local Only' : 'Cloud Only';
       const modeClass = `mode-${mode}`;
-      $('modePillIcon').textContent = icon;
+      $('modePillIcon').innerHTML = icon;
       const valEl = $('modePillValue');
       valEl.textContent = label;
       valEl.className = 'info-pill-value ' + modeClass;
@@ -547,7 +545,7 @@ $('copyUrlBtn').addEventListener('click', () => {
   if (!url || url === '—') return;
   navigator.clipboard.writeText(url).then(() => {
     const btn = $('copyUrlBtn');
-    btn.textContent = '✓';
+    btn.textContent = 'Copied!';
     btn.classList.add('copied');
     setTimeout(() => { btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>'; btn.classList.remove('copied'); }, 1500);
   }).catch(() => {});
@@ -597,12 +595,26 @@ function updateIPs(ips) {
     return;
   }
   container.innerHTML = ips.map(ip => `
-    <div class="ip-row">
+    <div class="ip-row ip-row-share" data-address="${ip.address}" title="Click to copy shareable URL for this network">
       <span class="ip-address">${ip.address}</span>
-      <span class="ip-interface">${ip.interface}</span>
+      <span class="ip-interface">${ip.interface || ''}</span>
     </div>
-  `).join('');
+  `).join('') +
+  (ips.length > 0 ? `<div class="ip-hint">Devices must be on the same network as the IP you share (VPN IPs only work for VPN members).</div>` : '');
+  // Click a row to copy protocol://address:port for sharing over that network
+  container.querySelectorAll('.ip-row-share').forEach((row) => {
+    row.addEventListener('click', () => {
+      const addr = row.dataset.address;
+      const url = updateIPs.currentUrl ? updateIPs.currentUrl.replace('localhost', addr) : `http://${addr}:3001`;
+      navigator.clipboard.writeText(url).then(() => {
+        row.classList.add('copied');
+        setTimeout(() => row.classList.remove('copied'), 1200);
+      }).catch(() => {});
+    });
+  });
 }
+// Latest server URL (protocol + port) used to build per-interface share links
+updateIPs.currentUrl = null;
 
 function updateStats(stats) {
   if (!stats) return;
@@ -624,9 +636,17 @@ function updateStats(stats) {
     const gpuCard = $('gpuCard');
     gpuCard.style.display = 'block';
     $('gpuName').textContent = stats.gpu.name || 'GPU';
-    $('gpuValue').textContent = stats.gpu.gpuUtil + '%';
-    $('gpuBar').style.width = stats.gpu.gpuUtil + '%';
-    $('gpuDetail').textContent = `VRAM: ${stats.gpu.memUsed} MB / ${stats.gpu.memTotal} MB`;
+    if (stats.gpu.estimateOnly) {
+      // No live measurement available (no nvidia-smi / rocm-smi) — show the
+      // total VRAM and say so, instead of a misleading "0% / 0 MB used".
+      $('gpuValue').textContent = '—';
+      $('gpuBar').style.width = '0%';
+      $('gpuDetail').textContent = `VRAM: ${stats.gpu.memTotal} MB total (live usage unavailable)`;
+    } else {
+      $('gpuValue').textContent = stats.gpu.gpuUtil + '%';
+      $('gpuBar').style.width = stats.gpu.gpuUtil + '%';
+      $('gpuDetail').textContent = `VRAM: ${stats.gpu.memUsed} MB / ${stats.gpu.memTotal} MB`;
+    }
   }
 }
 
@@ -757,169 +777,20 @@ API.onInstallProgress((data) => {
   }
 });
 
-// ─── Download Manager ──────────────────────────────────────────
-let downloading = {};
-
-async function downloadAsset(assetName, statusEl, progressEl) {
-  if (downloading[assetName]) return;
-
-  // Check if already downloaded locally
-  const existing = await API.getReleaseFiles();
-  if (existing.files && existing.files.some(f => f.name === assetName)) {
-    statusEl.textContent = '✓ Already downloaded';
-    if (progressEl) {
-      progressEl.textContent = '100%';
-      progressEl.style.display = 'inline';
-      progressEl.style.color = 'var(--green)';
-    }
-    return;
-  }
-
-  downloading[assetName] = true;
-  statusEl.textContent = 'Starting...';
-  if (progressEl) progressEl.style.display = 'inline';
-
-  const result = await API.downloadRelease(assetName);
-
-  if (result.success) {
-    statusEl.textContent = '✓ Downloaded';
-    if (progressEl) {
-      progressEl.textContent = '100%';
-      progressEl.style.color = 'var(--green)';
-    }
-  } else {
-    statusEl.textContent = '❌ ' + (result.error || 'Failed');
-    if (progressEl) progressEl.style.display = 'none';
-  }
-  downloading[assetName] = false;
-}
-
-$('downloadWin').addEventListener('click', async () => {
-  // First check what available on GitHub
-  const release = await API.checkGitHubRelease();
-  if (!release || !release.assets) {
-    $('dlWinStatus').textContent = 'Could not reach GitHub';
-    return;
-  }
-  // Find the EXE asset (largest, not blockmap)
-  const exeAsset = release.assets.find(a => a.name.endsWith('.exe') && !a.name.endsWith('.exe.blockmap'));
-  if (!exeAsset) {
-    $('dlWinStatus').textContent = 'No EXE found in latest release';
-    return;
-  }
-  downloadAsset(exeAsset.name, $('dlWinStatus'), $('dlWinProgress'));
-});
-
-$('downloadAndroid').addEventListener('click', async () => {
-  const release = await API.checkGitHubRelease();
-  if (!release || !release.assets) {
-    $('dlAndroidStatus').textContent = 'Could not reach GitHub';
-    return;
-  }
-  const apkAsset = release.assets.find(a => a.name.toLowerCase().endsWith('.apk'));
-  if (!apkAsset) {
-    $('dlAndroidStatus').textContent = 'No APK found in latest release';
-    return;
-  }
-  downloadAsset(apkAsset.name, $('dlAndroidStatus'), $('dlAndroidProgress'));
-});
-
-// Download progress updates
+// Download progress updates (in-app banner updater downloads from GitHub)
 API.onDownloadProgress((data) => {
-  const statusEl = data.asset.endsWith('.apk') ? $('dlAndroidStatus') : $('dlWinStatus');
-  const progressEl = data.asset.endsWith('.apk') ? $('dlAndroidProgress') : $('dlWinProgress');
-  if (statusEl) statusEl.textContent = `Downloading... ${data.percent}%`;
-  if (progressEl) progressEl.textContent = data.percent + '%';
-});
-
-// ─── Icon Picker ───────────────────────────────────────────────
-$('pickIconBtn').addEventListener('click', async () => {
-  const result = await API.pickIcon();
-  if (result.success && result.path) {
-    $('iconPreview').src = 'file://' + result.path;
-    $('iconPreview').style.display = 'block';
-    $('iconStatus').textContent = '✓ Custom icon set';
-    // Save to settings
-    const current = await API.loadGuiSettings() || {};
-    current.iconPath = result.path;
-    await API.saveGuiSettings(current);
+  if (bannerUpdateRunning) {
+    const b = $('updateBannerInstall');
+    if (b) b.textContent = `Downloading… ${data.percent}%`;
   }
 });
 
-// ─── Settings Password ────────────────────────────────────────
-let settingsAuthed = false;
 
-$('pwAuthBtn').addEventListener('click', async () => {
-  const pw = $('pwInput').value;
-  if (!pw) return;
-  $('pwErrorMsg').textContent = '⏳ Authenticating...';
-  $('pwErrorMsg').style.color = 'var(--text-dim)';
-  const result = await API.authSettings(pw);
-  if (result.authenticated) {
-    settingsAuthed = true;
-    $('pwDot').className = 'dot dot-online';
-    $('pwStatusText').textContent = 'Authenticated';
-    $('pwForm').style.display = 'none';
-    $('pwChange').style.display = 'flex';
-    $('pwMsg').textContent = '';
-    $('pwErrorMsg').textContent = '';
-    loadUsers();
-    // If the user is on the Models / Speed Test tab, refresh it now that we're authed
-    refreshAuthedView();
-  } else {
-    $('pwErrorMsg').textContent = '❌ ' + (result.error || 'Wrong password');
-    $('pwErrorMsg').style.color = 'var(--red)';
-  }
-});
-
-$('pwChangeBtn').addEventListener('click', async () => {
-  const current = $('pwCurrent').value;
-  const next = $('pwNew').value;
-  if (!current || !next) {
-    $('pwMsg').textContent = 'Fill in both fields';
-    return;
-  }
-  if (next.length < 4) {
-    $('pwMsg').textContent = 'Min 4 characters';
-    return;
-  }
-  const result = await API.changeSettingsPassword(current, next);
-  if (result.success) {
-    $('pwMsg').textContent = '✓ Password changed!';
-    $('pwMsg').style.color = 'var(--green)';
-    $('pwCurrent').value = '';
-    $('pwNew').value = '';
-  } else {
-    $('pwMsg').textContent = '❌ ' + (result.error || 'Failed');
-    $('pwMsg').style.color = 'var(--red)';
-  }
-});
-
-$('pwResetBtn').addEventListener('click', async () => {
-  $('pwErrorMsg').textContent = '⏳ Resetting...';
-  $('pwErrorMsg').style.color = 'var(--text-dim)';
-  const result = await API.resetSettingsPassword();
-  if (result.success) {
-    $('pwErrorMsg').textContent = '✅ ' + (result.message || 'Password reset');
-    $('pwErrorMsg').style.color = 'var(--green)';
-    // Pre-fill the default password so the user can log right in
-    $('pwInput').value = 'letmein';
-    $('pwInput').focus();
-  } else {
-    $('pwErrorMsg').textContent = '❌ ' + (result.error || 'Reset failed');
-    $('pwErrorMsg').style.color = 'var(--red)';
-  }
-});
-
-$('pwInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') $('pwAuthBtn').click();
-});
-$('pwCurrent').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') $('pwChangeBtn').click();
-});
-$('pwNew').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') $('pwChangeBtn').click();
-});
+// ─── Admin Access ─────────────────────────────────────────────
+// The settings password was removed: a one-click reset made it security
+// theater, so every admin view is open. Securing the host is the operator's
+// job (lock the PC / restrict who can reach the server).
+const settingsAuthed = true;
 
 // ─── Connected Users ─────────────────────────────────────────
 async function loadUsers() {
@@ -981,18 +852,6 @@ function switchView(name) {
 
 tabs.forEach((t) => t.addEventListener('click', () => switchView(t.dataset.view)));
 
-// If the user unlocks the admin panel while on the Models / Speed Test tab,
-// refresh that view immediately.
-function refreshAuthedView() {
-  const activeTab = document.querySelector('.tab.active');
-  if (!activeTab) return;
-  if (activeTab.dataset.view === 'models') enterModelsView();
-  if (activeTab.dataset.view === 'speedtest') enterSpeedTestView();
-  if (activeTab.dataset.view === 'plugins') enterPluginsView();
-  if (activeTab.dataset.view === 'apikeys') enterApiKeysView();
-  if (activeTab.dataset.view === 'ollama') enterOllamaView();
-}
-
 // ══════════════════════════════════════════════════════
 // Models View — Model Assignments
 // ══════════════════════════════════════════════════════
@@ -1021,12 +880,53 @@ const DEFAULT_ASSIGNMENTS = {
   search: 'qwen2.5:3b',
 };
 
+// Where each category is actually used, so the host can see what a
+// reassignment affects. Keep in sync with backend/app — get_resolved_model()
+// call sites in pipeline.py, routes/chat.py, search.py, extractor.py, agent.py.
+const MODEL_USED_FOR = {
+  chat: [
+    'Regular chatting (Chat mode and inside Koding narration)',
+    'Thinking ON — used when this model supports thinking itself',
+    'Conversation titles (auto-generated from the first message)',
+  ],
+  chat_thinking: [
+    'Thinking ON — only used when the Chat model itself can\'t think',
+    'Unused when Chat supports thinking (the toggle just flips a flag on it)',
+  ],
+  code: [
+    'Koding (agent) mode — the autonomous multi-tool loop',
+    'Code generation and the visible Plan step in Koding',
+    'Koding planning phase (when Plan mode is ON)',
+    'Drawing images (draw_image) inside Koding',
+  ],
+  vision: [
+    'Describing attached images in chat (read_image)',
+    'Describing Koding preview screenshots — only when the Code model itself\n      can\'t see images',
+  ],
+  extraction: [
+    'Memory extraction — deciding what to remember after each answer',
+  ],
+  search: [
+    'Summarizing web-search results into answer context',
+  ],
+};
+
 let installedModels = [];
 let localAssignments = {};
 let cloudAssignments = {};
 let availableCloudModels = [];
 let fetchingCloudModels = false;
 let cloudModelsError = '';
+// Fetched from GET /api/models/usage-map (source of truth); the built-in
+// MODEL_USED_FOR is only a fallback for an older backend without the route.
+let serverUsageMap = null;
+
+async function fetchModelUsageMap() {
+  try {
+    const res = await API.getModelUsageMap();
+    if (res && res.usage && typeof res.usage === 'object') serverUsageMap = res.usage;
+  } catch { serverUsageMap = null; }
+}
 
 async function fetchAvailableCloudModels() {
   fetchingCloudModels = true;
@@ -1052,14 +952,6 @@ async function fetchAvailableCloudModels() {
 }
 
 async function enterModelsView() {
-  if (!settingsAuthed) {
-    $('modelsLocked').style.display = 'block';
-    $('modelsGrid').innerHTML = '';
-    $('modelsSaveBtn').disabled = true;
-    $('modelsResetBtn').disabled = true;
-    return;
-  }
-  $('modelsLocked').style.display = 'none';
   $('modelsSaveBtn').disabled = false;
   $('modelsResetBtn').disabled = false;
   await loadModelsView();
@@ -1086,6 +978,7 @@ async function loadModelsView() {
   if (!saved.chat && saved.chat_thinking) localAssignments.chat = saved.chat_thinking;
   else if (!saved.chat && saved.chat_fast) localAssignments.chat = saved.chat_fast;
   $('modelsCount').textContent = installedModels.length + ' model' + (installedModels.length === 1 ? '' : 's') + ' installed';
+  await fetchModelUsageMap();
   renderModelsGrid();
 }
 
@@ -1112,6 +1005,19 @@ function suggestFor(key) {
     if (small.length) return small[0].name;
   }
   return null;
+}
+
+const S_CHEV = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+
+function usedForHtml(key) {
+  const items = (serverUsageMap && Array.isArray(serverUsageMap[key]) && serverUsageMap[key].length)
+    ? serverUsageMap[key]
+    : MODEL_USED_FOR[key];
+  if (!items || !items.length) return '';
+  const list = items.map((u) => `<li>${u.replace(/\n\s+/g, ' ')}</li>`).join('');
+  return `
+    <button class="model-used-toggle" data-usedkey="${key}" type="button" aria-expanded="false">${S_CHEV}<span>Where it's used</span></button>
+    <ul class="model-used-list" data-usedlist="${key}" hidden>${list}</ul>`;
 }
 
 function renderModelsGrid() {
@@ -1155,6 +1061,7 @@ function renderModelsGrid() {
         </div>
         <span class="model-card-current" title="${cur ? esc(cur) : 'No model assigned'}">${cur ? esc(cur) : 'None'}</span>
       </div>
+      ${usedForHtml(key)}
       ${thinkingNote}
       ${thinkingRoleNote}
       <div class="model-chips">
@@ -1234,6 +1141,7 @@ function renderModelsGrid() {
         </div>
         <span class="model-card-current" title="${cur ? esc(cur) : 'No cloud model'}">${cur ? esc(cur) : 'Not set'}</span>
       </div>
+      ${usedForHtml(key)}
       <div class="model-chips">
         ${noneBtn}
         ${availableCloudModels.length ? chips : (fetchingCloudModels ? '<span class="models-loading-small">Loading…</span>' : '<span style="font-size:11px;color:var(--text-muted)">No Ollama Cloud models — configure endpoint and API key in API Keys tab</span>')}
@@ -1275,6 +1183,22 @@ function renderModelsGrid() {
       const status = $('modelsSaveStatus');
       status.textContent = 'Unsaved changes';
       status.className = 'save-status';
+    });
+  });
+
+  // "Where it's used" expanders (delegated — survives grid re-renders).
+  // IMPORTANT: scope the lookup to the button's own card — Local and Cloud
+  // sections share the same data-usedkey values, so a document-wide
+  // querySelector would always open the Local list instead of the Cloud one.
+  grid.querySelectorAll('.model-used-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.model-card');
+      const list = card && card.querySelector('.model-used-list');
+      if (!list) return;
+      const open = !list.hidden;
+      list.hidden = open;
+      btn.classList.toggle('open', !open);
+      btn.setAttribute('aria-expanded', String(!open));
     });
   });
 
@@ -1398,13 +1322,6 @@ function sanitizeResult(r) {
 }
 
 async function enterSpeedTestView() {
-  if (!settingsAuthed) {
-    $('speedLocked').style.display = 'block';
-    $('speedRunBtn').disabled = true;
-    $('speedTimeline').innerHTML = '';
-    return;
-  }
-  $('speedLocked').style.display = 'none';
   $('speedRunBtn').disabled = false;
   await loadSpeedResults();
 }
@@ -1475,7 +1392,7 @@ function renderTimeline() {
 }
 
 $('speedRunBtn').addEventListener('click', async () => {
-  if (speedRunning || !settingsAuthed) return;
+  if (speedRunning) return;
   speedRunning = true;
   $('speedRunBtn').disabled = true;
   const status = $('speedRunStatus');
@@ -1496,7 +1413,7 @@ $('speedRunBtn').addEventListener('click', async () => {
     status.className = 'save-status err';
   }
   speedRunning = false;
-  $('speedRunBtn').disabled = !settingsAuthed;
+  $('speedRunBtn').disabled = false;
   setTimeout(() => {
     if ($('speedRunStatus').textContent.startsWith('✓')) status.textContent = '';
   }, 3000);
@@ -1632,9 +1549,7 @@ let pluginsRenderedAuthed = null;
 
 async function enterPluginsView() {
   const $locked = $('pluginsLocked');
-  if ($locked) $locked.style.display = settingsAuthed ? 'none' : 'block';
-  // Re-render when the admin-lock state changes (unlock/lock while on the tab)
-  // so the action buttons appear/disappear immediately.
+  if ($locked) $locked.style.display = 'none';
   if (pluginsLoaded && pluginsRenderedAuthed === settingsAuthed) return;
   pluginsLoaded = true;
   pluginsRenderedAuthed = settingsAuthed;
@@ -1767,41 +1682,133 @@ if (pluginsRefreshBtn) {
     pluginsRenderedAuthed = null;
     await loadPluginCatalog();
     const $locked = $('pluginsLocked');
-    if ($locked) $locked.style.display = settingsAuthed ? 'none' : 'block';
+    if ($locked) $locked.style.display = 'none';
   });
 }
 
 // Check GitHub release version on init
+let updateAssetName = null;    // Windows installer asset of the latest release
+let updateDownloaded = false;  // matching installer already on disk
+let bannerUpdateRunning = false;
+
+/** Compare dotted versions: >0 if a newer, <0 if older, 0 if equal. */
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
 async function checkLatestRelease() {
   try {
-    const [release, appInfo] = await Promise.all([
-      API.checkGitHubRelease(),
+    const [{ release, downloadedInstaller }, appInfo] = await Promise.all([
+      API.getLatestRelease(),
       API.getAppInfo(),
     ]);
     if (!release || !release.version || !appInfo?.version) return;
 
-    const latest = release.version.replace(/^v/i, '');
-    const current = appInfo.version.replace(/^v/i, '');
+    const latest = String(release.version).replace(/^v/i, '');
+    const current = String(appInfo.version).replace(/^v/i, '');
 
-    // Always show badge
+    // Badge — only claim "available" when the release is strictly newer
+    // than this build (dev builds ahead of the release must not nag)
     const badge = $('releaseVersion');
-    if (badge) badge.textContent = 'v' + latest + ' available';
+    if (badge) badge.textContent = compareVersions(latest, current) > 0 ? 'v' + latest + ' available' : '';
 
-    // Compare versions — skip if same or if dismissed this session
-    if (latest === current) return;
+    // Compare versions — skip if the release is not strictly newer (never
+    // offer a downgrade) or if dismissed this session
+    if (compareVersions(latest, current) <= 0) return;
     if (sessionStorage.getItem('updateDismissed') === latest) return;
+
+    // Find the Windows installer asset for the in-app updater
+    const exeAsset = (release.assets || []).find(a => a.name.endsWith('.exe') && !a.name.endsWith('.exe.blockmap'));
+    updateAssetName = exeAsset ? exeAsset.name : null;
+    // A previously downloaded installer only counts if its version matches
+    // the latest release (filename like ...-Setup-0.11.0.exe) — never install
+    // a stale one by accident.
+    const instVer = downloadedInstaller ? (downloadedInstaller.name.match(/(\d+\.\d+(?:\.\d+)?)/) || [])[1] : null;
+    updateDownloaded = !!(downloadedInstaller && instVer === latest);
 
     // Show banner
     const banner = $('updateBanner');
     const versionEl = $('updateBannerVersion');
     const descEl = $('updateBannerDesc');
-    if (banner && versionEl) {
+    const statusEl = $('updateBannerStatus');
+    const installBtn = $('updateBannerInstall');
+    if (banner && versionEl && installBtn) {
       versionEl.textContent = 'Update available: v' + latest + ' (you have v' + current + ')';
       if (descEl && release.name) descEl.textContent = release.name;
+      if (updateDownloaded) {
+        installBtn.textContent = 'Install now';
+        installBtn.disabled = false;
+      } else {
+        installBtn.textContent = 'Download & install';
+        installBtn.disabled = !updateAssetName;
+        installBtn.title = updateAssetName ? '' : 'No Windows installer found in the latest release';
+      }
+      if (statusEl) statusEl.style.display = 'none';
       banner.style.display = 'block';
     }
   } catch {}
 }
+
+// In-app update: download (if needed) → silent NSIS install → app relaunch.
+// The main process does the work; we surface progress and guard the button.
+$('updateBannerInstall')?.addEventListener('click', async () => {
+  if (bannerUpdateRunning) return;
+  const btn = $('updateBannerInstall');
+  const statusEl = $('updateBannerStatus');
+  bannerUpdateRunning = true;
+  btn.disabled = true;
+
+  const showStatus = (text, ok) => {
+    if (!statusEl) return;
+    statusEl.style.display = 'inline';
+    statusEl.style.color = ok === false ? 'var(--red, #e5484d)' : 'var(--green)';
+    statusEl.textContent = text;
+  };
+
+  try {
+    if (!updateDownloaded) {
+      if (!updateAssetName) {
+        showStatus('No installer found in the latest release', false);
+        bannerUpdateRunning = false;
+        btn.disabled = false;
+        return;
+      }
+      btn.textContent = 'Downloading…';
+      const dl = await API.downloadRelease(updateAssetName);
+      if (!dl.success) {
+        showStatus('❌ ' + (dl.error || 'Download failed'), false);
+        bannerUpdateRunning = false;
+        btn.disabled = false;
+        btn.textContent = 'Download & install';
+        return;
+      }
+    }
+    showStatus('✓ Downloaded — installing…', true);
+    btn.textContent = 'Installing…';
+    const inst = await API.installRelease();
+    if (!inst.success) {
+      showStatus('❌ ' + (inst.error || 'Install failed'), false);
+      bannerUpdateRunning = false;
+      btn.disabled = false;
+      btn.textContent = 'Install now';
+      return;
+    }
+    showStatus('✓ Installing — the app will restart…', true);
+    // Main process quits so the installer can swap files and relaunch.
+  } catch (e) {
+    showStatus('❌ ' + (e?.message || 'Update failed'), false);
+    bannerUpdateRunning = false;
+    btn.disabled = false;
+    btn.textContent = 'Download & install';
+  }
+});
 
 // ─── Init ────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1810,32 +1817,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     $('versionDisplay').textContent = 'v' + info.version;
   });
 
-  // Handle Bun not found (also offer to install it)
-  API.onBunNotFound(async () => {
-    const $checkBun = $('check-bun');
-    if ($checkBun) {
-      $checkBun.classList.remove('active');
-      $checkBun.classList.add('error');
-    }
-    const yes = await promptInstall('bun');
-    if (yes) {
-      startupLog.textContent += 'Installing Bun...\n';
-      showInstallProgress('Installing Bun...', 'Downloading and installing the Bun runtime. This may take a minute.');
-      const res = await API.installBun();
-      hideInstallProgress();
-      if (res.installed) {
-        startupLog.textContent += '✓ Bun installed!\n';
-        if ($checkBun) { $checkBun.classList.remove('error'); $checkBun.classList.add('done'); }
-        startBtn.disabled = false;
-      } else {
-        startupLog.textContent += '❌ Bun install failed: ' + (res.error || 'unknown error') + '\n';
-      }
-    } else {
-      startupLog.textContent += '❌ Bun runtime not found! Please install Bun from https://bun.sh\n';
-      startBtn.disabled = true;
-    }
-    startupOverlay.classList.remove('hidden');
-  });
+  // Bun is no longer required (self-contained Python backend) — no bun handler.
 
   // Load saved settings (autoStart, httpMode) — AWAIT so startup respects them
   await loadGuiSettings();
@@ -2215,21 +2197,12 @@ function stopTrajectoryRefresh() {
 // ══════════════════════════════════════════════════════
 // Ollama Settings View
 // ══════════════════════════════════════════════════════
-let ollamaSettings = { kvCacheOffload: true, kvCacheType: 'f16', defaultNumCtx: 0 };
+let ollamaSettings = { kvCacheOffload: true, kvCacheType: 'f16', defaultNumCtx: 0, ollamaNumParallel: 0, ollamaMaxLoadedModels: 0, ollamaKeepAlive: '' };
 let ollamaSettingsLoaded = false;
 let ollamaGpuInfo = null; // { memTotal, memUsed, name }
 let ollamaRamInfo = null; // { total, used, free, usagePercent }
 let ollamaSettingsSnapshot = null; // snapshot when settings were loaded
 let pendingOllamaTargetView = null; // view to switch to after discard/save
-
-// VRAM estimates for a 7B model as baseline (in MB)
-const BASELINE_KV_VRAM_MB = {
-  f32: 2048,
-  f16: 1024,
-  q8_0: 512,
-  q4_0: 256,
-};
-const BASELINE_MODEL_VRAM_MB = 4096; // model weights for 7B Q4
 
 async function enterOllamaView() {
   // Load current settings
@@ -2240,6 +2213,9 @@ async function enterOllamaView() {
         ollamaSettings.kvCacheOffload = settings.kvCacheOffload !== false;
         ollamaSettings.kvCacheType = settings.kvCacheType || 'f16';
         ollamaSettings.defaultNumCtx = settings.defaultNumCtx || 0;
+        ollamaSettings.ollamaNumParallel = parseInt(settings.ollamaNumParallel, 10) || 0;
+        ollamaSettings.ollamaMaxLoadedModels = parseInt(settings.ollamaMaxLoadedModels, 10) || 0;
+        ollamaSettings.ollamaKeepAlive = settings.ollamaKeepAlive || '';
       }
     } catch {}
     ollamaSettingsLoaded = true;
@@ -2256,20 +2232,20 @@ async function enterOllamaView() {
   updateHardwareInfo();
 
   // Apply to GPU/RAM buttons
+  // Apply cache location + quantization selects
   updateKvOffloadCards();
-
-  // Apply KV cache type cards
-  updateQuantCards();
+  const kvTypeSel = $('kvCacheTypeSelect');
+  if (kvTypeSel) kvTypeSel.value = ollamaSettings.kvCacheType || 'f16';
 
   // Apply context length
-  const numCtxSlider = $('numCtxSlider');
-  const numCtxValue = $('numCtxValue');
-  if (numCtxSlider) {
-    numCtxSlider.value = ollamaSettings.defaultNumCtx;
-    if (numCtxValue) numCtxValue.textContent = ollamaSettings.defaultNumCtx === 0 ? 'Auto' : formatNumCtx(ollamaSettings.defaultNumCtx);
+  const numCtxSelect = $('numCtxSelect');
+  if (numCtxSelect) {
+    const cur = String(ollamaSettings.defaultNumCtx || 0);
+    numCtxSelect.value = Array.from(numCtxSelect.options).some(o => o.value === cur) ? cur : '0';
   }
-  updateCtxPresets();
-  updateCtxMemoryEstimate();
+
+  // Apply concurrency & memory settings
+  applyConcurrencySettings();
 
   // Load Ollama status
   refreshOllamaStatus();
@@ -2291,7 +2267,10 @@ function hasOllamaUnsavedChanges() {
   if (!ollamaSettingsSnapshot) return false;
   return ollamaSettings.kvCacheOffload !== ollamaSettingsSnapshot.kvCacheOffload
     || ollamaSettings.kvCacheType !== ollamaSettingsSnapshot.kvCacheType
-    || ollamaSettings.defaultNumCtx !== ollamaSettingsSnapshot.defaultNumCtx;
+    || ollamaSettings.defaultNumCtx !== ollamaSettingsSnapshot.defaultNumCtx
+    || ollamaSettings.ollamaNumParallel !== ollamaSettingsSnapshot.ollamaNumParallel
+    || ollamaSettings.ollamaMaxLoadedModels !== ollamaSettingsSnapshot.ollamaMaxLoadedModels
+    || ollamaSettings.ollamaKeepAlive !== ollamaSettingsSnapshot.ollamaKeepAlive;
 }
 
 async function refreshOllamaStatus() {
@@ -2309,6 +2288,48 @@ async function refreshOllamaStatus() {
       loadedEl.textContent = models.length > 0
         ? models.map(m => m.name || m.model).join(', ')
         : 'None loaded';
+    }
+    // What the RUNNING Ollama was actually started with. An external Ollama
+    // (tray autostart at PC boot) runs on ITS OWN env — the saved settings
+    // only apply once Ollama is restarted via Save & Restart.
+    const tuningEl = $('ollamaActiveTuning');
+    const hintEl = $('ollamaTuningHint');
+    if (tuningEl) {
+      if (status.ownedByUs && status.effectiveEnv) {
+        const e = status.effectiveEnv;
+        const parts = [];
+        parts.push('parallel: ' + (e.OLLAMA_NUM_PARALLEL || 'auto'));
+        parts.push('max models: ' + (e.OLLAMA_MAX_LOADED_MODELS || 'auto'));
+        parts.push('keep: ' + (e.OLLAMA_KEEP_ALIVE || 'auto(5m)'));
+        parts.push('kv: ' + (e.LLAMA_ARG_CACHE_TYPE_K || 'f16'));
+        if (e.OLLAMA_FLASH_ATTENTION === '1') parts.push('flash-attn: on');
+        tuningEl.textContent = parts.join(' · ');
+        tuningEl.style.color = 'var(--green)';
+      } else {
+        tuningEl.textContent = status.running ? 'unknown (external Ollama)' : '—';
+        tuningEl.style.color = 'var(--yellow, #eab308)';
+      }
+    }
+    if (hintEl) {
+      if (status.running && !status.ownedByUs) {
+        hintEl.style.display = 'block';
+        hintEl.textContent = '⚠ Ollama was started outside this app (e.g. tray autostart at PC boot). The backend auto-applies saved settings to it at startup — if this banner persists, models were loaded (auto-apply skipped to avoid interruption) or the restart failed. Press "Save & Restart" to apply now.';
+      } else {
+        hintEl.style.display = 'none';
+      }
+    }
+    // Some model architectures (e.g. qwen3.5) cannot serve parallel requests
+    // in Ollama at all — OLLAMA_NUM_PARALLEL is inert for them and requests
+    // queue no matter what the host picks. Say so instead of staying silent.
+    const parLimitEl = $('parallelLimitHint');
+    if (parLimitEl) {
+      const archs = status.parallelUnsupportedArchs || [];
+      if (status.running && archs.length > 0) {
+        parLimitEl.style.display = 'block';
+        parLimitEl.textContent = '⚠ ' + archs.join(', ') + '-family models do not support parallel generation in this Ollama version — requests will queue one-by-one regardless of the parallel slot setting. Multi-user concurrency works with other model families (e.g. llama3, qwen2.5).';
+      } else {
+        parLimitEl.style.display = 'none';
+      }
     }
     if (statusText) statusText.textContent = status.running ? 'Connected' : 'Disconnected';
   } catch {
@@ -2478,7 +2499,6 @@ let installedModelNames = [];
 // ─── Model Catalog Functions ──────────────────────────
 async function loadModelCatalog() {
   const installedList = $('catalogInstalledList');
-  const browseList = $('catalogBrowseList');
 
   // Load installed models
   if (installedList) {
@@ -2504,6 +2524,8 @@ async function loadModelCatalog() {
             if (dbEntry.tools) badges.push('<span class="catalog-badge catalog-badge-tools"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg> Tools</span>');
             if (dbEntry.thinking) badges.push('<span class="catalog-badge catalog-badge-think"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg> Thinking</span>');
             if (dbEntry.vision) badges.push('<span class="catalog-badge catalog-badge-vision"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> Vision</span>');
+            if (dbEntry.parallel !== false) badges.push('<span class="catalog-badge catalog-badge-par"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg> Parallel</span>');
+            else badges.push('<span class="catalog-badge catalog-badge-nopar"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> No parallel</span>');
           }
           return `<div class="catalog-model-card catalog-installed" onclick="showModelDetail('${esc(name)}')" title="Click for details">
             <div class="catalog-model-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg></div>
@@ -2520,23 +2542,47 @@ async function loadModelCatalog() {
     }
   }
 
-  // Also populate browse if there's a search
-  const searchVal = $('catalogSearchInput')?.value?.trim() || '';
-  if (searchVal) {
-    filterBrowseModels(searchVal);
-  } else {
-    if (browseList) browseList.innerHTML = '<div class="catalog-loading">Type to search models...</div>';
-    const countEl = $('catalogBrowseCount');
-    if (countEl) countEl.textContent = '';
-  }
 }
 
-function filterBrowseModels(query) {
-  const browseList = $('catalogBrowseList');
-  const countEl = $('catalogBrowseCount');
-  if (!browseList) return;
+// ─── Search suggestions dropdown (browser-style) ──────
+let catalogSuggestState = { results: [], active: -1, query: '' };
 
-  const q = query.toLowerCase();
+function highlightMatch(text, query) {
+  if (!query) return esc(text);
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx < 0) return esc(text);
+  return esc(text.slice(0, idx)) + '<mark>' + esc(text.slice(idx, idx + query.length)) + '</mark>' + esc(text.slice(idx + query.length));
+}
+
+function closeCatalogSuggestions() {
+  const dd = $('catalogSuggestions');
+  if (dd) { dd.style.display = 'none'; dd.innerHTML = ''; }
+  catalogSuggestState = { results: [], active: -1, query: '' };
+}
+
+function setActiveSuggestion(idx, scroll = true) {
+  const dd = $('catalogSuggestions');
+  if (!dd) return;
+  catalogSuggestState.active = idx;
+  dd.querySelectorAll('.catalog-suggestion-item').forEach((el, i) => {
+    el.classList.toggle('catalog-suggestion-active', i === idx);
+    if (i === idx && scroll) el.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+function openSuggestedModel(m) {
+  closeCatalogSuggestions();
+  const input = $('catalogSearchInput');
+  if (input) input.value = '';
+  showModelDetail(m.name);
+}
+
+function renderCatalogSuggestions(query) {
+  const dd = $('catalogSuggestions');
+  if (!dd) return;
+  const q = query.trim().toLowerCase();
+  if (!q) { closeCatalogSuggestions(); return; }
+
   const results = MODEL_DATABASE.filter(m => {
     return m.name.toLowerCase().includes(q)
       || m.family.toLowerCase().includes(q)
@@ -2544,36 +2590,52 @@ function filterBrowseModels(query) {
       || (m.uncensored && 'uncensored abliterated'.includes(q))
       || (m.tools && 'tools tool calling'.includes(q))
       || (m.thinking && 'thinking reasoning'.includes(q))
-      || (m.vision && 'vision image multimodal'.includes(q));
+      || (m.vision && 'vision image multimodal'.includes(q))
+      || (m.parallel !== false && 'parallel concurrent multiuser'.includes(q))
+      || (m.parallel === false && 'no parallel queue single user serial'.includes(q));
   });
-
-  if (countEl) countEl.textContent = results.length + ' model' + (results.length !== 1 ? 's' : '');
+  catalogSuggestState = { results, active: -1, query: query.trim() };
 
   if (results.length === 0) {
-    browseList.innerHTML = `<div class="catalog-loading">No models found for "${esc(query)}". Try different keywords.</div>`;
+    dd.innerHTML = '<div class="catalog-suggestion-empty">No models found for "' + esc(query) + '"</div>';
+    dd.style.display = 'block';
     return;
   }
 
-  browseList.innerHTML = results.map(m => {
-    const isInstalled = installedModelNames.some(n => n === m.name || n.startsWith(m.name + ':') || n.startsWith(m.name + '-'));
-    const badges = [];
-    if (m.tools) badges.push('<span class="catalog-badge catalog-badge-tools"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg> Tools</span>');
-    if (m.thinking) badges.push('<span class="catalog-badge catalog-badge-think"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 .5.1 1 .3 1.4A3.5 3.5 0 0 0 5 11c0 1.3.7 2.4 1.6 3A3 3 0 0 0 6 17a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3 3 3 0 0 0-.6-3A3.5 3.5 0 0 0 19 11a3.5 3.5 0 0 0-3.3-3.6c.2-.4.3-.9.3-1.4a4 4 0 0 0-4-4z"/></svg> Thinking</span>');
-    if (m.vision) badges.push('<span class="catalog-badge catalog-badge-vision"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> Vision</span>');
-    if (m.uncensored) badges.push('<span class="catalog-badge" style="background:rgba(239,68,68,0.12);color:#f87171;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg> Uncensored</span>');
+  // Icons-only mini badges (tooltips name them) — keeps rows compact
+  const miniBadges = (m) => {
+    let b = '';
+    if (m.tools) b += '<span class="catalog-badge catalog-badge-tools" title="Tools">' + _iconWrench + '</span>';
+    if (m.thinking) b += '<span class="catalog-badge catalog-badge-think" title="Thinking">' + _iconBrain + '</span>';
+    if (m.vision) b += '<span class="catalog-badge catalog-badge-vision" title="Vision">' + _iconEye + '</span>';
+    b += m.parallel !== false
+      ? '<span class="catalog-badge catalog-badge-par" title="Supports parallel requests"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></span>'
+      : '<span class="catalog-badge catalog-badge-nopar" title="No parallel — requests queue"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>';
+    if (m.uncensored) b += '<span class="catalog-badge" style="background:rgba(239,68,68,0.12);color:#f87171;" title="Uncensored">' + _iconUnlock + '</span>';
+    return b;
+  };
 
-    return `<div class="catalog-model-card" onclick="showModelDetail('${esc(m.name)}')" title="Click for details">
-      <div class="catalog-model-icon">${m.uncensored ? _iconUnlock : _iconBrain}</div>
-      <div class="catalog-model-info">
-        <div class="catalog-model-name">${esc(m.name)}</div>
-        <div class="catalog-model-meta">${esc(m.family)} · ${esc(m.params)}</div>
-        <div class="catalog-model-badges">${badges.join('')}</div>
-      </div>
-      <button class="catalog-model-pull-btn ${isInstalled ? 'catalog-pull-installed' : ''}"
-        onclick="event.stopPropagation(); ${isInstalled ? '' : `pullModelFromCatalog('${esc(m.name)}')`}"
-        ${isInstalled ? 'disabled' : ''}>${isInstalled ? S_CHECK + ' Installed' : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Pull'}</button>
-    </div>`;
-  }).join('');
+  dd.innerHTML = results.map((m, i) => {
+    const isInst = installedModelNames.some(n => n === m.name || n.startsWith(m.name + ':') || n.startsWith(m.name + '-'));
+    return '<div class="catalog-suggestion-item' + (i === catalogSuggestState.active ? ' catalog-suggestion-active' : '') + '" data-idx="' + i + '">' +
+      '<div class="catalog-suggestion-icon">' + (m.uncensored ? _iconUnlock : _iconBrain) + '</div>' +
+      '<div class="catalog-suggestion-info">' +
+        '<div class="catalog-suggestion-name">' + highlightMatch(m.name, catalogSuggestState.query) + '</div>' +
+        '<div class="catalog-suggestion-sub">' + esc(m.family) + ' · ' + esc(m.params) + (isInst ? ' · installed' : '') + '</div>' +
+      '</div>' +
+      '<div class="catalog-suggestion-badges">' + miniBadges(m) + '</div>' +
+    '</div>';
+  }).join('') + '<div class="catalog-suggestion-footer"><span>' + results.length + ' result' + (results.length !== 1 ? 's' : '') + '</span><span><kbd>\u2191\u2193</kbd> navigate · <kbd>Enter</kbd> details · <kbd>Esc</kbd> close</span></div>';
+  dd.style.display = 'block';
+
+  dd.querySelectorAll('.catalog-suggestion-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const m = catalogSuggestState.results[parseInt(el.dataset.idx, 10)];
+      if (m) openSuggestedModel(m);
+    });
+    // Row highlight on hover is pure CSS (:hover) — a JS mousemove re-highlight
+    // here caused per-pixel churn and contributed to dropdown flicker.
+  });
 }
 
 function showModelDetail(modelName) {
@@ -2615,6 +2677,7 @@ function showModelDetail(modelName) {
         <div class="detail-cap-badge ${dbEntry.tools ? 'cap-yes' : 'cap-no'}">${S_WRENCH} Tools: ${dbEntry.tools ? 'Yes' : 'No'}</div>
         <div class="detail-cap-badge ${dbEntry.thinking ? 'cap-yes' : 'cap-no'}">${S_BRAIN} Thinking: ${dbEntry.thinking ? 'Yes' : 'No'}</div>
         <div class="detail-cap-badge ${dbEntry.vision ? 'cap-yes' : 'cap-no'}">${S_EYE} Vision: ${dbEntry.vision ? 'Yes' : 'No'}</div>
+        <div class="detail-cap-badge ${dbEntry.parallel !== false ? 'cap-yes' : 'cap-no'}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg> Parallel: ${dbEntry.parallel !== false ? 'Yes' : 'No — requests queue'}</div>
         ${dbEntry.uncensored ? '<div class="detail-cap-badge cap-no" style="border:1px solid rgba(239,68,68,0.3);">' + _iconUnlock + ' Uncensored</div>' : ''}
       `;
     } else {
@@ -2824,15 +2887,32 @@ function formatBytes(bytes) {
 
 // ─── Catalog Event Listeners ──────────────────────────
 $('catalogSearchInput')?.addEventListener('input', (e) => {
-  const query = e.target.value.trim();
-  if (query) {
-    filterBrowseModels(query);
-  } else {
-    const browseList = $('catalogBrowseList');
-    if (browseList) browseList.innerHTML = '<div class="catalog-loading">Type to search models...</div>';
-    const countEl = $('catalogBrowseCount');
-    if (countEl) countEl.textContent = '';
+  renderCatalogSuggestions(e.target.value || '');
+});
+
+// Keyboard navigation for the suggestions dropdown
+$('catalogSearchInput')?.addEventListener('keydown', (e) => {
+  const dd = $('catalogSuggestions');
+  if (!dd || dd.style.display === 'none') return;
+  const max = catalogSuggestState.results.length;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (max) setActiveSuggestion((catalogSuggestState.active + 1) % max);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (max) setActiveSuggestion((catalogSuggestState.active - 1 + max) % max);
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const m = catalogSuggestState.results[catalogSuggestState.active >= 0 ? catalogSuggestState.active : 0];
+    if (m) openSuggestedModel(m);
+  } else if (e.key === 'Escape') {
+    closeCatalogSuggestions();
   }
+});
+
+// Click outside closes the dropdown
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.catalog-search-wrap')) closeCatalogSuggestions();
 });
 
 $('catalogRefreshBtn')?.addEventListener('click', async () => {
@@ -2846,150 +2926,65 @@ $('modelDetailModal')?.addEventListener('click', (e) => {
   if (e.target === $('modelDetailModal')) closeModelDetail();
 });
 
-// KV Cache GPU/RAM button clicks
-$('kvOptionGpu')?.addEventListener('click', () => {
-  ollamaSettings.kvCacheOffload = true;
-  updateKvOffloadCards();
-  updateOllamaSaveBtn();
-});
-
-$('kvOptionRam')?.addEventListener('click', () => {
-  ollamaSettings.kvCacheOffload = false;
-  updateKvOffloadCards();
+// Cache location select (GPU/RAM)
+$('kvCacheLocationSelect')?.addEventListener('change', (e) => {
+  ollamaSettings.kvCacheOffload = e.target.value !== 'ram';
   updateOllamaSaveBtn();
 });
 
 function updateKvOffloadCards() {
-  const gpuCard = $('kvOptionGpu');
-  const ramCard = $('kvOptionRam');
-  if (gpuCard) gpuCard.classList.toggle('ollama-option-active', ollamaSettings.kvCacheOffload);
-  if (ramCard) ramCard.classList.toggle('ollama-option-active', !ollamaSettings.kvCacheOffload);
-  // Update all dependent UI instantly
-  updateKvVramEstimate();
-  updateQuantCards();
-  updateCtxMemoryEstimate();
+  const sel = $('kvCacheLocationSelect');
+  if (sel) sel.value = ollamaSettings.kvCacheOffload ? 'gpu' : 'ram';
 }
 
-function updateKvVramEstimate() {
-  const bar = $('kvVramEstimateBar');
-  const text = $('kvVramEstimateText');
-  const maxText = $('kvVramEstimateMax');
-  if (!bar || !text) return;
-  const isGpu = ollamaSettings.kvCacheOffload;
-  const storageLabel = isGpu ? 'VRAM' : 'RAM';
-  // When in RAM mode, use system RAM total; when GPU, use VRAM
-  const totalMb = isGpu ? (ollamaGpuInfo?.memTotal || 8192) : (ollamaRamInfo?.total ? Math.round(ollamaRamInfo.total / (1024 * 1024)) : 32768);
-  const kvMb = isGpu ? (BASELINE_KV_VRAM_MB[ollamaSettings.kvCacheType] || 1024) : (BASELINE_KV_VRAM_MB[ollamaSettings.kvCacheType] || 1024);
-  const pct = Math.min(100, (kvMb / totalMb) * 100);
-  bar.style.width = pct + '%';
-  bar.style.background = usageBarColor(pct);
-  text.textContent = '~' + (kvMb >= 1024 ? (kvMb / 1024).toFixed(1) + ' GB' : kvMb + ' MB');
-  if (maxText) maxText.textContent = 'of ' + (totalMb >= 1024 ? (totalMb / 1024).toFixed(0) + ' GB' : totalMb + ' MB') + ' ' + storageLabel;
-  const label = $('kvEstimateLabel');
-  if (label) label.textContent = 'Estimated ' + storageLabel + ' for context cache (' + ollamaSettings.kvCacheType + '):';
-}
-document.querySelectorAll('.ollama-quant-card').forEach(card => {
-  card.addEventListener('click', () => {
-    ollamaSettings.kvCacheType = card.dataset.quant;
-    updateQuantCards();
-    updateKvVramEstimate();
-    updateCtxMemoryEstimate();
-    updateOllamaSaveBtn();
-  });
-});
-
-function updateQuantCards() {
-  const isGpu = ollamaSettings.kvCacheOffload;
-  const storageLabel = isGpu ? 'VRAM' : 'RAM';
-  document.querySelectorAll('.ollama-quant-card').forEach(card => {
-    card.classList.toggle('ollama-quant-selected', card.dataset.quant === ollamaSettings.kvCacheType);
-    // Update per-card storage labels
-    const metaSpans = card.querySelectorAll('.ollama-quant-meta span');
-    if (metaSpans.length >= 2) {
-      const quantName = card.dataset.quant;
-      const ratio = (BASELINE_KV_VRAM_MB[quantName] || 1024) / BASELINE_KV_VRAM_MB.f32;
-      metaSpans[1].textContent = storageLabel + ': ' + ratio.toFixed(2) + 'x baseline';
-    }
-  });
-  // Update description text to match storage mode
-  const desc = $('kvQuantDesc');
-  if (desc) desc.textContent = 'How precisely the conversation context is stored. Lower precision = less ' + storageLabel + ' used, but slightly lower quality on very long conversations.';
-  const label = $('kvQuantLabel');
-  const bar = $('kvQuantBar');
-  const savings = $('kvQuantSavingsText');
-  const free = $('kvQuantFreeText');
-  if (label) label.textContent = ollamaSettings.kvCacheType;
-  const ratio = (BASELINE_KV_VRAM_MB[ollamaSettings.kvCacheType] || 1024) / BASELINE_KV_VRAM_MB.f32;
-  if (bar) bar.style.width = (ratio * 100) + '%';
-  if (savings) savings.textContent = Math.round(ratio * 100) + '% of f32';
-  if (free) {
-    const saved = BASELINE_KV_VRAM_MB.f32 - (BASELINE_KV_VRAM_MB[ollamaSettings.kvCacheType] || 1024);
-    free.textContent = saved > 0 ? 'Saves ~' + (saved >= 1024 ? (saved / 1024).toFixed(1) + ' GB' : saved + ' MB') + ' ' + storageLabel : 'No savings';
-  }
-}
-
-// Context presets
-document.querySelectorAll('.ollama-ctx-preset').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const val = parseInt(btn.dataset.val);
-    ollamaSettings.defaultNumCtx = val;
-    $('numCtxSlider').value = val;
-    $('numCtxValue').textContent = val === 0 ? 'Auto' : formatNumCtx(val);
-    updateCtxPresets();
-    updateCtxMemoryEstimate();
-    updateOllamaSaveBtn();
-  });
-});
-
-// Context slider
-$('numCtxSlider')?.addEventListener('input', (e) => {
-  const val = parseInt(e.target.value);
-  ollamaSettings.defaultNumCtx = val;
-  $('numCtxValue').textContent = val === 0 ? 'Auto' : formatNumCtx(val);
-  updateCtxPresets();
-  updateCtxMemoryEstimate();
+// Cache quantization select
+$('kvCacheTypeSelect')?.addEventListener('change', (e) => {
+  ollamaSettings.kvCacheType = e.target.value || 'f16';
   updateOllamaSaveBtn();
 });
 
-function formatNumCtx(tokens) {
-  if (tokens >= 1024) return (tokens / 1024) + 'K';
-  return tokens.toString();
+// Context window size select
+$('numCtxSelect')?.addEventListener('change', (e) => {
+  ollamaSettings.defaultNumCtx = parseInt(e.target.value, 10) || 0;
+  updateOllamaSaveBtn();
+});
+
+// Concurrency & Memory — parallel slots
+function applyConcurrencySettings() {
+  const sel = $('numParallelSelect');
+  if (sel) {
+    const cur = String(ollamaSettings.ollamaNumParallel || 0);
+    sel.value = Array.from(sel.options).some(o => o.value === cur) ? cur : '0';
+  }
+  const mlm = $('maxLoadedModelsSelect');
+  if (mlm) {
+    const cur = String(ollamaSettings.ollamaMaxLoadedModels || 0);
+    mlm.value = Array.from(mlm.options).some(o => o.value === cur) ? cur : '0';
+  }
+  const ka = $('keepAliveSelect');
+  if (ka) ka.value = ollamaSettings.ollamaKeepAlive;
 }
+
+$('numParallelSelect')?.addEventListener('change', (e) => {
+  ollamaSettings.ollamaNumParallel = parseInt(e.target.value, 10) || 0;
+  updateOllamaSaveBtn();
+});
+
+$('maxLoadedModelsSelect')?.addEventListener('change', (e) => {
+  ollamaSettings.ollamaMaxLoadedModels = parseInt(e.target.value, 10) || 0;
+  updateOllamaSaveBtn();
+});
+
+$('keepAliveSelect')?.addEventListener('change', (e) => {
+  ollamaSettings.ollamaKeepAlive = e.target.value || '';
+  updateOllamaSaveBtn();
+});
 
 function updateCtxPresets() {
-  document.querySelectorAll('.ollama-ctx-preset').forEach(btn => {
-    btn.classList.toggle('ollama-ctx-active', parseInt(btn.dataset.val) === ollamaSettings.defaultNumCtx);
-  });
-}
-
-function updateCtxMemoryEstimate() {
-  const bar = $('ctxMemBar');
-  const text = $('ctxMemText');
-  const max = $('ctxMemMax');
-  if (!bar) return;
-  const isGpu = ollamaSettings.kvCacheOffload;
-  const storageLabel = isGpu ? 'VRAM' : 'RAM';
-  const ctx = ollamaSettings.defaultNumCtx;
-  // Rough estimate: 1K tokens ≈ 0.5 MB KV cache with f16
-  const kvMb = ctx === 0 ? 0 : Math.round(ctx * 0.5 * (BASELINE_KV_VRAM_MB[ollamaSettings.kvCacheType] || 1024) / 1024);
-  if (isGpu) {
-    // GPU mode: show model weights + KV cache in VRAM
-    const totalMb = kvMb + BASELINE_MODEL_VRAM_MB;
-    const vramTotal = ollamaGpuInfo?.memTotal || 8192;
-    const pct = Math.min(100, (totalMb / vramTotal) * 100);
-    bar.style.width = pct + '%';
-    bar.style.background = usageBarColor(pct);
-    if (text) text.textContent = ctx === 0 ? 'Auto (model default)' : formatNumCtx(ctx) + ' context (' + ollamaSettings.kvCacheType + ') — ~' + (totalMb >= 1024 ? (totalMb / 1024).toFixed(1) + ' GB' : totalMb + ' MB');
-    if (max) max.textContent = 'of ' + (vramTotal / 1024).toFixed(0) + ' GB VRAM (model + context)';
-  } else {
-    // RAM mode: KV cache in RAM, model weights stay in VRAM (not counted here)
-    const ramTotalMb = ollamaRamInfo?.total ? Math.round(ollamaRamInfo.total / (1024 * 1024)) : 32768;
-    const ramUsedMb = ollamaRamInfo?.used ? Math.round(ollamaRamInfo.used / (1024 * 1024)) : 16384;
-    const pct = Math.min(100, (kvMb / ramTotalMb) * 100);
-    bar.style.width = pct + '%';
-    bar.style.background = usageBarColor(pct);
-    if (text) text.textContent = ctx === 0 ? 'Auto (model default)' : formatNumCtx(ctx) + ' context (' + ollamaSettings.kvCacheType + ') — ~' + (kvMb >= 1024 ? (kvMb / 1024).toFixed(1) + ' GB' : kvMb + ' MB');
-    if (max) max.textContent = 'of ' + (ramTotalMb / 1024).toFixed(0) + ' GB RAM';
+  const sel = $('numCtxSelect');
+  if (sel) {
+    const cur = String(ollamaSettings.defaultNumCtx || 0);
+    sel.value = Array.from(sel.options).some(o => o.value === cur) ? cur : '0';
   }
 }
 
@@ -3001,19 +2996,25 @@ function updateHardwareInfo() {
   const ramText = $('hwRamText');
   const rec = $('hwRecommendation');
   if (ollamaGpuInfo) {
-    if (gpuName) gpuName.textContent = ollamaGpuInfo.name || 'NVIDIA GPU';
+    if (gpuName) gpuName.textContent = ollamaGpuInfo.name || 'GPU';
     if (vramBar) { const vpct = Math.round((ollamaGpuInfo.memUsed / ollamaGpuInfo.memTotal) * 100); vramBar.style.width = vpct + '%'; vramBar.style.background = usageBarColor(vpct); }
-    if (vramText) vramText.textContent = ollamaGpuInfo.memUsed + ' / ' + ollamaGpuInfo.memTotal + ' MB';
+    if (vramText) vramText.textContent = ollamaGpuInfo.estimateOnly
+      ? 'Live usage unavailable' + (ollamaGpuInfo.memTotal ? ' (' + (ollamaGpuInfo.memTotal / 1024).toFixed(0) + ' GB card)' : '')
+      : ollamaGpuInfo.memUsed + ' / ' + ollamaGpuInfo.memTotal + ' MB';
     if (rec) {
+      if (ollamaGpuInfo.estimateOnly) {
+        rec.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg> ' + (ollamaGpuInfo.name || 'GPU') + ' detected. Live VRAM monitoring needs rocm-smi (not installed) — Ollama still uses this GPU for inference.';
+      } else {
       const freeVram = ollamaGpuInfo.memTotal - ollamaGpuInfo.memUsed;
-      if (freeVram < 2048) rec.textContent = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Low VRAM free (' + (freeVram / 1024).toFixed(1) + ' GB). Consider disabling GPU offloading to free VRAM for model weights.';
-      else if (freeVram < 4096) rec.textContent = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg> Moderate VRAM available. f16 context cache recommended. Consider q8_0 if context feels tight.';
-      else rec.textContent = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Plenty of VRAM free (' + (freeVram / 1024).toFixed(1) + ' GB). GPU offloading with f16 is ideal.';
+      if (freeVram < 2048) rec.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Low VRAM free (' + (freeVram / 1024).toFixed(1) + ' GB). Consider disabling GPU offloading to free VRAM for model weights.';
+      else if (freeVram < 4096) rec.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg> Moderate VRAM available. f16 context cache recommended. Consider q8_0 if context feels tight.';
+      else rec.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Plenty of VRAM free (' + (freeVram / 1024).toFixed(1) + ' GB). GPU offloading with f16 is ideal.';
+      }
     }
   } else {
-    if (gpuName) gpuName.textContent = 'No NVIDIA GPU detected';
+    if (gpuName) gpuName.textContent = 'No dedicated GPU detected';
     if (vramText) vramText.textContent = '—';
-    if (rec) rec.textContent = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg> No GPU detected. Context cache will run on RAM. Set context length to match your available system RAM.';
+    if (rec) rec.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg> No GPU detected. Context cache will run on RAM. Set context length to match your available system RAM.';
   }
   // RAM
   if (ollamaRamInfo) {
@@ -3049,6 +3050,9 @@ $('ollamaSaveBtn')?.addEventListener('click', async () => {
       kvCacheOffload: ollamaSettings.kvCacheOffload,
       kvCacheType: ollamaSettings.kvCacheType,
       defaultNumCtx: ollamaSettings.defaultNumCtx,
+      ollamaNumParallel: ollamaSettings.ollamaNumParallel,
+      ollamaMaxLoadedModels: ollamaSettings.ollamaMaxLoadedModels,
+      ollamaKeepAlive: ollamaSettings.ollamaKeepAlive,
     });
   } catch (e) {
     btn.disabled = false;
@@ -3090,6 +3094,10 @@ async function doOllamaRestart(confirm) {
     const result = await API.applyOllamaSettings({
       kvCacheOffload: ollamaSettings.kvCacheOffload,
       kvCacheType: ollamaSettings.kvCacheType,
+      defaultNumCtx: ollamaSettings.defaultNumCtx,
+      ollamaNumParallel: ollamaSettings.ollamaNumParallel,
+      ollamaMaxLoadedModels: ollamaSettings.ollamaMaxLoadedModels,
+      ollamaKeepAlive: ollamaSettings.ollamaKeepAlive,
       confirm,
     });
 

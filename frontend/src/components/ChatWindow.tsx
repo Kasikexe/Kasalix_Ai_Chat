@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { Message } from './Message';
 import { ServerDownInline } from './ServerDownInline';
+import { StatusBanner } from './StatusBanner';
 import { useServerStatus } from '../hooks/useServerStatus';
 import type { Message as MessageType } from '../types';
 import { Search, X, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
@@ -8,8 +9,8 @@ import { Search, X, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
 interface Props {
  messages: MessageType[];
  isStreaming: boolean;
- currentStage?: string;
- liveDuration?: number;
+ currentStage?: string;  liveDuration?: number;
+  liveTps?: number | null;
  onEdit?: (index: number, newContent: string) => void;
  onDelete?: (index: number) => void;
  onRegenerate?: () => void;
@@ -29,8 +30,8 @@ interface Props {
  onDeleteFile?: (filePath: string) => void;
 }
 
-export function ChatWindow({ messages, isStreaming, currentStage, liveDuration, onEdit, onDelete, onRegenerate, onApplyCode, onApplyEdit, onApplyAll, onDeleteFile, searchQuery, onSearchQueryChange, searchMatches, activeSearchMatch, onSearchNext, onSearchPrev, selectedIndices, onToggleSelect, selectable, onFork }: Props) {
- const { online } = useServerStatus();
+export function ChatWindow({ messages, isStreaming, currentStage, liveDuration, liveTps, onEdit, onDelete, onRegenerate, onApplyCode, onApplyEdit, onApplyAll, onDeleteFile, searchQuery, onSearchQueryChange, searchMatches, activeSearchMatch, onSearchNext, onSearchPrev, selectedIndices, onToggleSelect, selectable, onFork }: Props) {
+ const { online, modelsReady, availableModels } = useServerStatus();
  const containerRef = useRef<HTMLDivElement>(null);
  const bottomRef = useRef<HTMLDivElement>(null);
  const [stickToBottom, setStickToBottom] = useState(true);
@@ -104,6 +105,12 @@ export function ChatWindow({ messages, isStreaming, currentStage, liveDuration, 
  </button>
  </div>
  </div>
+ )}
+
+ {/* Server reachable but model backend not ready (e.g. Ollama still starting
+ after a server restart) — soft banner, chat UI stays usable */}
+ {online && !modelsReady && (
+ <StatusBanner online={false} models={availableModels.map((name) => ({ name }))} />
  )}
 
  {/* Scroll to bottom button */}
@@ -189,8 +196,8 @@ export function ChatWindow({ messages, isStreaming, currentStage, liveDuration, 
  index={i}
  message={msg}
  isStreaming={streaming}
- stage={streaming ? currentStage : undefined}
- liveDuration={streaming ? liveDuration : undefined}
+ stage={streaming ? currentStage : undefined}  liveDuration={streaming ? liveDuration : undefined}
+ liveTps={streaming ? liveTps : undefined}
  onEdit={onEdit}
  onDelete={onDelete}
  onRegenerate={isLastAssistant ? onRegenerate : undefined}

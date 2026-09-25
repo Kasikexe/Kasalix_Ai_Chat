@@ -4,7 +4,8 @@ export type ConversationMode = 'chat' | 'agent';
 /** A single event in the agent's execution timeline (thinking, tool call, etc.) */
 export type TimelineEvent =
   | { type: 'thinking'; content: string }
-  | { type: 'tool'; tool: string; args: string; status?: 'running' | 'done' | 'error' };
+  | { type: 'narration'; content: string }
+  | { type: 'tool'; tool: string; args: string; status?: 'running' | 'done' | 'error'; result?: string; ok?: boolean };
 
 export interface Message {
   role: Role;
@@ -15,6 +16,10 @@ export interface Message {
   thinking?: string;
   /** Ordered timeline of thinking + tool events during agent execution */
   timeline?: TimelineEvent[];
+  /** Real generation stats from Ollama (tokens/s) for the meta line */
+  tokensPerSecond?: number;
+  /** Tokens generated for this reply (from Ollama's eval_count) */
+  evalCount?: number;
   /** Which model generated this response */
   generatedBy?: string;
   /** Whether the model is local or cloud */

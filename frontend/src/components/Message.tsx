@@ -4,8 +4,9 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
-import { Check, Copy, Download, User, Bot, FileCode, RefreshCw, Pencil, X, Save, FilePlus2, Trash2, GitBranch, Code2, FileText, Layers, Loader2, ImageIcon, ZoomIn, Brain, ChevronDown, MessageSquare, Timer, Palette, Sparkles, Wrench, Hourglass, CheckCircle2, Globe, BookOpen, ClipboardList, FolderOpen, Settings2, Scissors, PenLine, Play, FileDiff, FolderPlus, Link2, Ruler, Eye, HelpCircle, Cloud, CloudOff, Search, type LucideIcon } from 'lucide-react';
+import { Check, Copy, Download, User, Bot, FileCode, RefreshCw, Pencil, X, Save, FilePlus2, Trash2, GitBranch, Code2, FileText, Layers, Loader2, ImageIcon, ZoomIn, Brain, ChevronDown, MessageSquare, Timer, Palette, Sparkles, Wrench, Hourglass, CheckCircle2, Globe, BookOpen, ClipboardList, FolderOpen, Settings2, Scissors, PenLine, Play, FileDiff, FolderPlus, Link2, Ruler, Eye, HelpCircle, Cloud, CloudOff, Search, Gauge, Terminal, Gamepad2, type LucideIcon } from 'lucide-react';
 import type { Message as MessageType, TimelineEvent } from '../types';
+import { openExternal } from '../utils/openExternal';
 
 const languageExtensions: Record<string, string> = {
  javascript: '.js',
@@ -373,10 +374,10 @@ const CodeBlock = memo(function CodeBlock({ children, className, onApplyCode, on
 });
 
 interface Props {
- message: MessageType;
- isStreaming?: boolean;
- stage?: string;
- liveDuration?: number;
+ message: MessageType;  isStreaming?: boolean;
+  stage?: string;
+  liveDuration?: number;
+  liveTps?: number | null;
  index?: number;
  onEdit?: (index: number, newContent: string) => void;
  onDelete?: (index: number) => void;
@@ -457,21 +458,29 @@ function getStageInfo(stage?: string): StageInfo {
 
 /** Compact inline row for a single timeline event (thinking or tool call) */
 function TimelineRow({ event, isStreaming, isLast }: { event: TimelineEvent; isStreaming?: boolean; isLast: boolean }) {
+ const [expanded, setExpanded] = useState(false);
+ const hasResult = event.type === 'tool' && typeof event.result === 'string' && event.result.trim().length > 0;
+ // edit_file / multi_edit results carry a ±diff — render it colored
+ const resultIsDiff = hasResult && event.type === 'tool' && (event.tool === 'edit_file' || event.tool === 'multi_edit' || event.tool === 'write_file') && /^[+-] /m.test(event.result!);
  const [open, setOpen] = useState(false);
 
  if (event.type === 'thinking') {
-   // Collapsible thinking section — closed by default, opens on click
+   // Collapsible thinking section — live while streaming (pulsing, expanded
+   // preview), collapsed after the event finalizes.
+   const isLive = isStreaming && isLast && (event as any).live === true;
    return (
      <div className="rounded-md border border-gray-800/60 bg-gray-950/40 overflow-hidden">
        <button
          onClick={() => setOpen(!open)}
          className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-gray-900/40 transition-colors"
        >
+         {isLive && <span className="w-1.5 h-1.5 bg-[#7b9fc6] rounded-full animate-pulse flex-shrink-0"/>}
          <Brain size={10} className="text-[#7b9fc6] flex-shrink-0"/>
          <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">Thinking</span>
-         <ChevronDown size={10} className={`ml-auto text-gray-600 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}/>
+         {isLive && <span className="text-[10px] text-gray-600">streaming…</span>}
+         <ChevronDown size={10} className={`ml-auto text-gray-600 transition-transform duration-200 ${open || isLive ? 'rotate-180' : ''}`}/>
        </button>
-       {open && (
+       {(open || isLive) && (
          <div className="px-2.5 pb-2 text-[11px] text-gray-500 leading-relaxed whitespace-pre-wrap border-t border-gray-800/40 pt-1.5 font-mono max-h-40 overflow-y-auto">
            {event.content}
          </div>
@@ -480,29 +489,72 @@ function TimelineRow({ event, isStreaming, isLast }: { event: TimelineEvent; isS
    );
  }
 
+ if (event.type === 'narration') {
+   // The model's own words between tool calls ("Now let me write the
+   // movement function") — styled as the model speaking.
+   return (
+     <div className="flex items-start gap-2 px-2.5 py-1 text-[11px] italic text-gray-400">
+       <Sparkles size={10} className="text-[#9b8cc6] flex-shrink-0 mt-0.5"/>
+       <span className="min-w-0">{event.content}</span>
+     </div>
+   );
+ }
+
  // Tool call row — compact inline with icon + tool name + args
  const toolIcons: Record<string, LucideIcon> = {
    read_file: FileText, write_file: PenLine, edit_file: Scissors, delete_file: Trash2,
-   run_command: Play, list_files: FolderOpen, search_files: Search, web_search: Globe,
+   run_command: Play, run_python: Terminal, play_game: Gamepad2, list_files: FolderOpen, search_files: Search, web_search: Globe,
    read_rules: ClipboardList, update_memory: Brain, git_status: GitBranch, git_diff: FileDiff,
    git_commit: GitBranch, ask_user: HelpCircle, rename_file: PenLine, create_directory: FolderPlus,
    file_exists: FileText, read_url: Link2, diff_files: FileDiff, replace_in_file: Scissors,
    count_lines: Ruler, glob: Search, multi_edit: Scissors, delegate_to_subagent: Bot,
-   read_image: Eye, find_references: Search, refactor_rename: PenLine,
+   read_image: Eye, find_references: Search, refactor_rename: PenLine, gen_image: ImageIcon, draw_image: Palette,
  };
  const ToolIcon = toolIcons[event.tool] || Wrench;
  const isRunning = isStreaming && isLast && event.status === 'done';
- return (
-   <div className="flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-gray-800/30 transition-colors text-[11px] font-mono">
+ const clickable = hasResult && event.type === 'tool';
+ const Header = (
+   <div
+     className={`flex items-center gap-2 px-2.5 py-1 rounded-md text-[11px] font-mono ${clickable ? 'cursor-pointer hover:bg-gray-800/30' : ''} transition-colors`}
+     onClick={clickable ? () => setExpanded((v) => !v) : undefined}
+   >
      <span className="text-gray-600 flex-shrink-0 flex"><ToolIcon size={10} /></span>
      <span className="text-[#4a9988] flex-shrink-0 font-medium">{event.tool}</span>
-     {event.args && <span className="truncate text-gray-500 min-w-0">{event.args}</span>}
-     {event.status === 'error' && <span className="ml-auto text-[#c44] text-[10px]">failed</span>}
+     {event.type === 'tool' && event.args && <span className="truncate text-gray-500 min-w-0">{event.args}</span>}
+     {event.type === 'tool' && event.status === 'error' && <span className="ml-auto text-[#c44] text-[10px] flex-shrink-0">failed</span>}
+     {clickable && (
+       <span className="ml-auto flex items-center gap-1 text-[10px] text-gray-600 flex-shrink-0">
+         {event.ok === false && <span className="text-[#c44]">failed</span>}
+         <ChevronDown size={10} className={`transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+       </span>
+     )}
+   </div>
+ );
+ if (!clickable) return <div className="transition-colors">{Header}</div>;
+ return (
+   <div className="rounded-md transition-colors">
+     {Header}
+     {expanded && event.type === 'tool' && (
+       <div className="mx-2.5 mb-1 rounded border border-gray-800 bg-[#0d1117] max-h-56 overflow-y-auto">
+         <div className="px-2 py-1 border-b border-gray-800/60 text-[9px] uppercase tracking-wider text-gray-600 font-sans">
+           {resultIsDiff ? 'Changes' : event.tool === 'run_command' || event.tool === 'run_python' || event.tool === 'play_game' ? 'Output' : 'Result'}
+         </div>
+         <pre className="px-2 py-1.5 text-[10px] leading-relaxed font-mono whitespace-pre-wrap break-words">
+           {resultIsDiff
+             ? event.result!.split('\n').map((line, li) => {
+                 if (line.startsWith('+ ')) return <span key={li} className="block text-emerald-400">{line}</span>;
+                 if (line.startsWith('- ')) return <span key={li} className="block text-rose-400">{line}</span>;
+                 return <span key={li} className="block text-gray-500">{line}</span>;
+               })
+             : event.result}
+         </pre>
+       </div>
+     )}
    </div>
  );
 }
 
-export const Message = memo(function Message({ message, isStreaming, stage, liveDuration, index, onEdit, onDelete, onRegenerate, isLastAssistant, onApplyCode, onApplyEdit, onDeleteFile, onApplyAll, selected, onToggleSelect, selectable, onFork }: Props) {
+export const Message = memo(function Message({ message, isStreaming, stage, liveDuration, liveTps, index, onEdit, onDelete, onRegenerate, isLastAssistant, onApplyCode, onApplyEdit, onDeleteFile, onApplyAll, selected, onToggleSelect, selectable, onFork }: Props) {
  const [copied, setCopied] = useState(false);
  const [editing, setEditing] = useState(false);
  const [editValue, setEditValue] = useState('');
@@ -564,6 +616,19 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  return <CodeBlock className={codeChild.props?.className} onApplyCode={onApplyCode} onApplyEdit={onApplyEdit} onDeleteFile={onDeleteFile}>{codeChild.props?.children}</CodeBlock>;
  }
  return <pre>{children}</pre>;
+ },
+ // Links must NEVER navigate the app window away (in Electron that
+ // replaces the whole Kasalix UI). Preview URLs (loopback) are handed to
+ // the desktop shell which opens them in the preview window; everything
+ // else opens in the system browser.
+ a: ({ href, children }: { href?: string; children?: ReactNode }) => {
+ const safeHref = typeof href === 'string' ? href : '';
+ const handleClick = (e: React.MouseEvent) => {
+ if (!safeHref) return;
+ e.preventDefault();
+ openExternal(safeHref);
+ };
+ return <a href={safeHref} onClick={handleClick} className="underline text-blue-400 hover:text-blue-300">{children}</a>;
  },
  img: ({ src, alt }: { src?: string; alt?: string }) => {
  if (!src) return null;
@@ -745,6 +810,15 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  </div>
  )}
 
+ {/* Live generation speed — its own row so it stays visible during the
+ whole reply, independent of the stage label. */}
+ {isStreaming && liveTps != null && (
+ <div className="mb-2 inline-flex items-center gap-1.5 text-xs text-gray-400" title="Live generation speed (estimated while streaming)">
+ <Gauge size={11} className="text-[#7b9fc6]" />
+ <span className="tabular-nums">~{liveTps} tok/s</span>
+ </div>
+ )}
+
  {/* Interleaved timeline — thinking + tool events shown inline (Koding mode) */}
  {!isUser && message.timeline && message.timeline.length > 0 && (
  <div className="mb-3 space-y-0.5">
@@ -835,6 +909,11 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  {!isUser && message.durationMs && !isStreaming && (
  <span className="text-xs text-gray-500 mr-1 inline-flex items-center gap-1"title="Response time">
  <Timer size={12} /> {message.durationMs < 1000 ? `${message.durationMs}ms` : `${(message.durationMs / 1000).toFixed(1)}s`}
+ </span>
+ )}
+ {!isUser && message.tokensPerSecond && !isStreaming && (
+ <span className="text-xs text-gray-500 inline-flex items-center gap-1" title={`${message.evalCount ?? '?'} tokens generated (Ollama stats)`}>
+ <Gauge size={12} /> {message.tokensPerSecond.toFixed(1)} tok/s
  </span>
  )}
  {!isUser && message.generatedBy && !isStreaming && (

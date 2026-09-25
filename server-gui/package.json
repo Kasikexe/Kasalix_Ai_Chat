@@ -25,19 +25,10 @@
     ],
     "extraResources": [
       {
-        "from": "../backend",
+        "from": "../backend/dist/backend",
         "to": "backend",
         "filter": [
-          "**/*",
-          "!.git/**",
-          "!node_modules/.cache/**",
-          "!node_modules/.bin/**",
-          "!node_modules/typescript/**",
-          "!node_modules/bun-types/**",
-          "!node_modules/@types/**",
-          "!data/**",
-          "!generated_images/**",
-          "!.env"
+          "**/*"
         ]
       },
       {

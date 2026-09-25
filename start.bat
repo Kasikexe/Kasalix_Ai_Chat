@@ -71,13 +71,35 @@ if %errorlevel% neq 0 (
 echo [OK] Ollama is running
 echo.
 
-REM Install backend dependencies if needed
-if not exist "backend\node_modules" (
-    echo [INFO] Installing backend dependencies...
-    pushd backend
-    call bun install
+REM Check for Python (backend requirement)
+set "PYTHON=python"
+where python >nul 2>nul
+if %errorlevel% neq 0 (
+    set "PYTHON=py -3"
+    where py >nul 2>nul
     if %errorlevel% neq 0 (
-        echo [ERROR] Bun install failed. Make sure Bun is installed: https://bun.sh
+        echo [ERROR] Python 3.12+ is required for the backend.
+        echo Download from: https://www.python.org
+        popd 2>nul
+        pause
+        exit /b 1
+    )
+)
+
+REM Create backend venv + install dependencies if needed
+if not exist "backend\.venv\Scripts\python.exe" (
+    echo [INFO] Creating backend virtual environment...
+    pushd backend
+    %PYTHON% -m venv .venv
+    if %errorlevel% neq 0 (
+        echo [ERROR] Failed to create venv.
+        popd
+        pause
+        exit /b 1
+    )
+    .venv\Scripts\python.exe -m pip install -r requirements-build.txt -q
+    if %errorlevel% neq 0 (
+        echo [ERROR] Backend dependency install failed.
         popd
         pause
         exit /b 1
@@ -107,9 +129,9 @@ echo [INFO] Starting backend on !PROTO!://localhost:3001 ...
 
 REM Use separate paths for HTTP vs HTTPS
 if "!HTTPS!"=="false" (
-    start "Kasalix AI Chat - Backend" cmd /k "cd /d %~dp0backend && bun run dev -- --http"
+    start "Kasalix AI Chat - Backend" cmd /k "cd /d %~dp0backend && set HTTPS=false&& .venv\Scripts\python.exe -m uvicorn app.main:app --port 3001"
 ) else (
-    start "Kasalix AI Chat - Backend" cmd /k "cd /d %~dp0backend && bun run dev"
+    start "Kasalix AI Chat - Backend" cmd /k "cd /d %~dp0backend && .venv\Scripts\python.exe -m uvicorn app.main:app --port 3001"
 )
 
 REM Wait a moment for backend to initialize

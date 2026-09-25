@@ -8,7 +8,6 @@ This is an **Electron desktop app** that replaces the CLI (`run-server.bat`) wit
 - **System stats** — Live CPU, RAM, and GPU (NVIDIA) usage
 - **Network info** — Shows local IP addresses for LAN sharing
 - **Ollama models** — Lists models currently loaded by Ollama
-- **Client downloads** — One-click links to download Android APK and Windows EXE from GitHub
 - **Auto-start** — Optionally start the server when the app launches
 
 ## How it works
@@ -18,7 +17,7 @@ The GUI spawns the Bun backend (`bun run src/index.ts`) as a child process, moni
 ## Rebranding a fork
 
 - Set the `KASALIX_REPO` env var (e.g. `KASALIX_REPO=YourName/YourFork`) to change where
-  client release downloads come from (defaults to `Kasikexe/Kasalix`).
+  the app and its clients pull release updates from (defaults to `Kasikexe/Kasalix`).
 - Edit `FEEDBACK_CONFIG` at the top of the dropdown section in `public/script.js` to point the
   GitHub feedback menu (report bug / suggest idea / visit repo) at your own repository.
 

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { ChevronRight, ChevronDown, File, Folder, FileCode, FileJson, FileImage, FileText, FileType, Plus, Check, X, FolderOpen, RefreshCw } from 'lucide-react';
 import { api } from '../services/api';
 import type { FileEntry } from '../types';
@@ -54,33 +54,56 @@ function formatSize(bytes?: number): string {
  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
-function DirectoryNode({ name, path, depth, onFileSelect }: {
+function DirectoryNode({ name, path, depth, onFileSelect, refreshToken }: {
  name: string;
  path: string;
  depth: number;
  onFileSelect?: (file: FileEntry) => void;
+ /** Bumped when the agent writes files — invalidates this folder's cached listing */
+ refreshToken?: number;
 }) {
  const [expanded, setExpanded] = useState(false);
  const [children, setChildren] = useState<FileEntry[] | null>(null);
  const [loading, setLoading] = useState(false);
+ const childrenRef = useRef<FileEntry[] | null>(null);
+ childrenRef.current = children;
 
- const toggle = useCallback(async () => {
- if (expanded) {
- setExpanded(false);
- return;
- }
- if (children === null) {
+ const loadChildren = useCallback(async () => {
  setLoading(true);
  try {
  const data = await api.getFiles(path);
- setChildren(data.entries);
+ // If the listing failed server-side (error object), treat as empty but
+ // DON'T cache it — next refresh will retry.
+ setChildren(Array.isArray(data.entries) ? data.entries : []);
  } catch {
  setChildren([]);
  }
  setLoading(false);
+ }, [path]);
+
+ // Agent wrote/changed files → drop the cached listing so an expanded folder
+ // re-reads from disk. Without this, a folder expanded BEFORE the agent wrote
+ // into it keeps showing its old (often empty) contents forever.
+ useEffect(() => {
+ if (refreshToken && refreshToken > 0 && childrenRef.current !== null) {
+ loadChildren();
+ }
+ }, [refreshToken, loadChildren]);
+
+ const toggle = useCallback(async () => {
+ const currentlyExpanded = expandedRef.current;
+ if (currentlyExpanded) {
+ setExpanded(false);
+ return;
+ }
+ if (childrenRef.current === null) {
+ await loadChildren();
  }
  setExpanded(true);
- }, [expanded, children, path]);
+ }, [loadChildren]);
+
+ const expandedRef = useRef(false);
+ expandedRef.current = expanded;
 
  return (
  <div>
@@ -119,6 +142,7 @@ function DirectoryNode({ name, path, depth, onFileSelect }: {
  path={child.path}
  depth={depth + 1}
  onFileSelect={onFileSelect}
+ refreshToken={refreshToken}
  />
  ) : (
  <button
@@ -301,6 +325,7 @@ export function FileTree({ rootPath, workspacePath, onFileSelect, onBrowseFolder
  path={entry.path}
  depth={0}
  onFileSelect={onFileSelect}
+ refreshToken={refreshToken}
  />
  ) : (
  <button

@@ -1,5 +1,5 @@
 {
-  "name": "ai-chat-frontend",
+  "name": "kasalix-ai-chat",
   "private": true,
   "version": "0.11.0",
   "type": "module",
@@ -104,5 +104,8 @@
   },
   "description": "Kasalix AI Chat Client",
   "author": "Filip Kasman",
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
 }

@@ -40,6 +40,7 @@ interface StreamHandlers {
   /** Fired the first time a brand-new chat gets its real conversation id. */
   onConversationStarted?: (id: string) => void;
   onAgentTool?: (call: { tool: string; args: Record<string, unknown> }) => void;
+  onToolResult?: (r: { tool: string; ok: boolean; output: string }) => void;
   onFileWritten?: (write: { path: string; changeType: string; originalContent?: string }) => void;
   onAgentCommand?: (cmd: { command: string; output: string; failed: boolean }) => void;
   onQuestion?: (q: { key: string; question: string }) => void;
@@ -64,6 +65,21 @@ interface LiveEntry {
   currentPlan: string;
   /** Accumulated thinking text since the last tool call (flushed to timeline on tool/finish) */
   thinkingBuffer: string;
+  /** Live tokens/s estimate while streaming (chars/4 ÷ elapsed seconds) */
+  liveTps: number | null;
+  /** Exact tokens/s from Ollama's final stats, applied to the message on done */
+  finalTps: number | null;
+  finalEvalCount: number | null;
+  /** First content chunk timestamp — live tok/s starts from real generation, not request start */
+  firstChunkAt: number;
+  /** Content chars before the current visible round — excluded from the live rate */
+  charsAtLastRoundStart: number;
+  /** Sliding-window samples {time, roundChars} for the live tok/s rate */
+  rateSamples: { t: number; chars: number }[];
+  /** Last tick a live rate was computed (used to hide the badge when stalled) */
+  lastRateAt: number;
+  /** chars→tokens ratio for the live estimate — self-calibrated from Ollama's exact eval_count */
+  charsPerToken: number;
 }
 
 const liveStore = new Map<string, LiveEntry>();
@@ -104,6 +120,14 @@ function getOrCreateLiveEntry(
     listeners: new Set(),
     currentPlan: '',
     thinkingBuffer: '',
+    liveTps: null,
+    finalTps: null,
+    finalEvalCount: null,
+    firstChunkAt: 0,
+    charsAtLastRoundStart: 0,
+    rateSamples: [],
+    lastRateAt: 0,
+    charsPerToken: 4,
   };
   liveStore.set(key, entry);
   return entry;
@@ -126,6 +150,8 @@ export function discardLiveConversation(id: string): void {
 // One shared timer drives every live duration counter, so it keeps counting
 // even while the conversation's view is unmounted.
 let timerStarted = false;
+/** Sliding window for the live tok/s rate — only recent generation counts. */
+const RATE_WINDOW_MS = 3000;
 function ensureLiveTimer() {
   if (timerStarted) return;
   timerStarted = true;
@@ -134,6 +160,33 @@ function ensureLiveTimer() {
     for (const entry of liveStore.values()) {
       if (entry.isStreaming && entry.startTime) {
         entry.liveDuration = now - entry.startTime;
+        // LIVE tokens/s — a sliding-window INSTANTANEOUS rate, not a
+        // cumulative average. (The old cumulative math spiked at the start
+        // — first burst ÷ tiny elapsed — then decayed toward garbage
+        // whenever thinking/tools/pauses added elapsed time without
+        // content, making a steady 15 tok/s model read as 5.)
+        const totalChars = entry.messages.reduce(
+          (acc, m) => acc + (m.role === 'assistant' ? m.content.length : 0),
+          0
+        );
+        const roundChars = Math.max(0, totalChars - entry.charsAtLastRoundStart);
+        entry.rateSamples.push({ t: now, chars: roundChars });
+        while (entry.rateSamples.length > 2 && now - entry.rateSamples[0].t > RATE_WINDOW_MS) {
+          entry.rateSamples.shift();
+        }
+        const oldest = entry.rateSamples[0];
+        const spanS = (now - oldest.t) / 1000;
+        const delta = roundChars - oldest.chars;
+        if (spanS >= 1.2 && delta > 2) {
+          // Requires ~1.2s of window so an initial burst can't fake a huge
+          // speed; the ratio is calibrated from Ollama's real eval_count.
+          entry.liveTps = Math.max(1, Math.round(delta / entry.charsPerToken / spanS));
+          entry.lastRateAt = now;
+        } else if (now - entry.lastRateAt > 4000) {
+          // No fresh content for 4s — thinking, running tools, or stalled.
+          // Hide the badge instead of showing a decayed meaningless number.
+          entry.liveTps = null;
+        }
         notify(entry);
       }
     }
@@ -230,6 +283,7 @@ export function useChat(
         currentConvId,
         {
           onChunk: (chunk) => {
+            if (!e.firstChunkAt) e.firstChunkAt = Date.now();
             const msgs = e.messages;
             // Find the last assistant message, not just the last message.
             // During the agent loop, onAgentTool inserts 'activity' role
@@ -247,9 +301,58 @@ export function useChat(
             notify(e);
           },
           onThinking: (chunk) => {
-            // Accumulate in the thinking buffer for timeline batching.
-            // Thinking is rendered via timeline events, not the old message.thinking field.
+            // Accumulate thinking and surface it LIVE: the growing text goes
+            // into a temporary live timeline event (pulsing indicator in the
+            // UI). On flush (tool call / done) it becomes a normal collapsed
+            // thinking event. Previously thinking only appeared AFTER the next
+            // tool call — the user stared at nothing during long model rounds.
             e.thinkingBuffer += chunk;
+            if (e.thinkingBuffer.length >= 24) {
+              const msgs = e.messages;
+              let assistantIdx = -1;
+              for (let i = msgs.length - 1; i >= 0; i--) {
+                if (msgs[i].role === 'assistant') { assistantIdx = i; break; }
+              }
+              if (assistantIdx >= 0) {
+                const msg = msgs[assistantIdx];
+                const timeline = [...(msg.timeline || [])];
+                const last = timeline[timeline.length - 1];
+                if (last && last.type === 'thinking' && (last as any).live) {
+                  timeline[timeline.length - 1] = { type: 'thinking', content: e.thinkingBuffer, live: true } as any;
+                } else {
+                  timeline.push({ type: 'thinking', content: e.thinkingBuffer, live: true } as any);
+                }
+                e.messages = msgs.map((m, i) => i === assistantIdx ? { ...m, timeline } : m);
+              }
+            }
+            notify(e);
+          },
+          onNarration: (text) => {
+            // The model's own words between tool calls ("Now let me write the
+            // movement function") — a narration timeline event, rendered as
+            // the model speaking. Also flush any live thinking, since the
+            // round that produced the narration is ending.
+            const msgs = e.messages;
+            let assistantIdx = -1;
+            for (let i = msgs.length - 1; i >= 0; i--) {
+              if (msgs[i].role === 'assistant') { assistantIdx = i; break; }
+            }
+            if (assistantIdx >= 0) {
+              const msg = msgs[assistantIdx];
+              const timeline = [...(msg.timeline || [])];
+              // Flush live thinking first so order stays: thinking → narration → tool
+              if (e.thinkingBuffer.trim()) {
+                const last = timeline[timeline.length - 1];
+                if (last && last.type === 'thinking' && (last as any).live) {
+                  timeline[timeline.length - 1] = { type: 'thinking', content: e.thinkingBuffer } as any;
+                } else {
+                  timeline.push({ type: 'thinking' as const, content: e.thinkingBuffer });
+                }
+                e.thinkingBuffer = '';
+              }
+              timeline.push({ type: 'narration' as const, content: text });
+              e.messages = msgs.map((m, i) => i === assistantIdx ? { ...m, timeline } : m);
+            }
             notify(e);
           },
           onConversationId: (id) => {
@@ -266,6 +369,16 @@ export function useChat(
             e.stageHistory = e.stageHistory[e.stageHistory.length - 1] === stage
               ? e.stageHistory
               : [...e.stageHistory, stage];
+            // A new tool round is starting — remember how much content exists
+            // so the live rate only counts the final visible round, and clear
+            // the sliding window so old samples don't leak across rounds.
+            if (stage === 'chat:thinking' || stage === 'tool:executing') {
+              e.charsAtLastRoundStart = e.messages.reduce(
+                (acc, m) => acc + (m.role === 'assistant' ? m.content.length : 0),
+                0
+              );
+              e.rateSamples = [];
+            }
             notify(e);
             // Cloud unavailable notification — show a toast so the user knows
             if (stage === 'cloud:unavailable') {
@@ -276,6 +389,37 @@ export function useChat(
                 window.dispatchEvent(new CustomEvent('cloud-unavailable'));
               }).catch(() => {});
             }
+          },
+          onMetrics: (m) => {
+            // Exact stats from Ollama's final stream chunk — attached to the
+            // last assistant message immediately and used on done.
+            e.finalTps = m.tokensPerSecond;
+            e.finalEvalCount = m.evalCount;
+            e.liveTps = null;
+            e.rateSamples = [];
+            // Self-calibration: chars just generated ÷ exact token count
+            // gives the real chars→token ratio for THIS model's output style
+            // (code-heavy output is ~1.5, prose ~4 — a fixed guess was off
+            // by 3x). Clamp to sane bounds so one weird round can't poison it.
+            const roundChars = Math.max(0,
+              e.messages.reduce((acc, msg) => acc + (msg.role === 'assistant' ? msg.content.length : 0), 0)
+              - e.charsAtLastRoundStart
+            );
+            if (m.evalCount > 0 && roundChars > 0) {
+              const measured = roundChars / m.evalCount;
+              e.charsPerToken = Math.min(12, Math.max(1, measured));
+            }
+            const msgs = e.messages;
+            let assistantIdx = -1;
+            for (let i = msgs.length - 1; i >= 0; i--) {
+              if (msgs[i].role === 'assistant') { assistantIdx = i; break; }
+            }
+            if (assistantIdx >= 0) {
+              e.messages = msgs.map((msg, i) =>
+                i === assistantIdx ? { ...msg, tokensPerSecond: m.tokensPerSecond, evalCount: m.evalCount } : msg
+              );
+            }
+            notify(e);
           },
           onModelInfo: (model, source) => {
             const msgs = e.messages;
@@ -291,7 +435,8 @@ export function useChat(
             }
           },
           onDone: async () => {
-            // Flush any remaining thinking buffer to the timeline
+            // Flush any remaining thinking buffer to the timeline (finalize the
+            // live event in place if present — no duplicate row)
             if (e.thinkingBuffer.trim()) {
               const msgs = e.messages;
               let assistantIdx = -1;
@@ -300,7 +445,13 @@ export function useChat(
               }
               if (assistantIdx >= 0) {
                 const msg = msgs[assistantIdx];
-                const timeline = [...(msg.timeline || []), { type: 'thinking' as const, content: e.thinkingBuffer }];
+                const timeline = [...(msg.timeline || [])];
+                const last = timeline[timeline.length - 1];
+                if (last && last.type === 'thinking' && (last as any).live) {
+                  timeline[timeline.length - 1] = { type: 'thinking', content: e.thinkingBuffer } as any;
+                } else {
+                  timeline.push({ type: 'thinking' as const, content: e.thinkingBuffer });
+                }
                 e.messages = msgs.map((m, i) => i === assistantIdx ? { ...m, timeline } : m);
               }
               e.thinkingBuffer = '';
@@ -313,6 +464,7 @@ export function useChat(
             e.isStreaming = false;
             e.currentStage = '';
             e.abort = null;
+            e.liveTps = null;
             notify(e);
 
             // Store response duration on the last assistant message
@@ -368,9 +520,15 @@ export function useChat(
             if (assistantIdx >= 0) {
               const msg = e.messages[assistantIdx];
               const timeline = [...(msg.timeline || [])];
-              // Flush accumulated thinking buffer as a timeline event before this tool call
+              // Flush accumulated thinking buffer as a timeline event before this tool call.
+              // If the live event exists, finalize it in place (no duplicate row).
               if (e.thinkingBuffer.trim()) {
-                timeline.push({ type: 'thinking', content: e.thinkingBuffer });
+                const last = timeline[timeline.length - 1];
+                if (last && last.type === 'thinking' && (last as any).live) {
+                  timeline[timeline.length - 1] = { type: 'thinking', content: e.thinkingBuffer } as any;
+                } else {
+                  timeline.push({ type: 'thinking', content: e.thinkingBuffer });
+                }
                 e.thinkingBuffer = '';
               }
               timeline.push({ type: 'tool', tool: call.tool, args: argPreview, status: 'done' as const });
@@ -390,19 +548,31 @@ export function useChat(
             notify(e);
           },
           onFileWritten: (write) => e.handlers.onFileWritten?.(write),
+          onToolResult: (r) => {
+            // Attach the tool's output (command stdout, edit diff) to the most
+            // recent matching tool event without a result yet — makes tool rows
+            // clickable to reveal what actually happened.
+            for (let i = e.messages.length - 1; i >= 0; i--) {
+              const m = e.messages[i];
+              if (m.role !== 'assistant' || !m.timeline) continue;
+              const timeline = [...m.timeline];
+              for (let j = timeline.length - 1; j >= 0; j--) {
+                const ev = timeline[j];
+                if (ev.type === 'tool' && ev.tool === r.tool && ev.result === undefined) {
+                  timeline[j] = { ...ev, result: r.output, ok: r.ok } as typeof ev;
+                  e.messages = e.messages.map((mm, k) => k === i ? { ...mm, timeline } : mm);
+                  notify(e);
+                  return;
+                }
+              }
+            }
+          },
           onAgentCommand: (cmd) => e.handlers.onAgentCommand?.(cmd),
           onQuestion: (q) => e.handlers.onQuestion?.(q),
           onApprovalRequest: (q) => e.handlers.onApprovalRequest?.(q),
           onPlan: (plan) => {
             e.currentPlan = plan;
-            // Also inject as a visible message in the chat
-            const planLines = plan.split('\n').filter((l) => l.trim());
-            const planContent = '**Plan:**\n' + planLines.map((l, i) => `${i + 1}. ${l.replace(/^\d+\.?\s*/, '').trim()}`).join('\n');
-            e.messages = [...e.messages, {
-              role: 'assistant' as const,
-              content: planContent,
-              timestamp: Date.now(),
-            }];
+            // Chat message is emitted by the backend (onChunk) — no duplicate injection here.
             notify(e);
           },
           onError: (err) => {
@@ -418,6 +588,7 @@ export function useChat(
             e.isStreaming = false;
             e.currentStage = '';
             e.abort = null;
+            e.liveTps = null;
             e.messages = e.messages.filter(
               (m) => !(m.role === 'assistant' && m.content === '')
             );
@@ -448,6 +619,7 @@ export function useChat(
       e.isStreaming = false;
       e.currentStage = '';
       e.abort = null;
+      e.liveTps = null;
       notify(e);
     }
   }, [model, mode, workspacePath, planningEnabled, autoApply, planMode, toolPermission]);
@@ -465,6 +637,15 @@ export function useChat(
       e.error = null;
       e.startTime = Date.now();
       e.stageHistory = [];
+      e.liveTps = null;
+      e.finalTps = null;
+      e.finalEvalCount = null;
+      e.firstChunkAt = 0;
+      e.charsAtLastRoundStart = 0;
+      e.rateSamples = [];
+      e.lastRateAt = 0;
+      // charsPerToken persists — it's calibrated from Ollama's exact counts
+      // and carries across messages for a better live estimate.
       notify(e);
 
       return startStream();
@@ -494,6 +675,15 @@ export function useChat(
       e.error = null;
       e.startTime = Date.now();
       e.stageHistory = [];
+      e.liveTps = null;
+      e.finalTps = null;
+      e.finalEvalCount = null;
+      e.firstChunkAt = 0;
+      e.charsAtLastRoundStart = 0;
+      e.rateSamples = [];
+      e.lastRateAt = 0;
+      // charsPerToken persists — it's calibrated from Ollama's exact counts
+      // and carries across messages for a better live estimate.
       notify(e);
 
       return startStream();
@@ -514,6 +704,15 @@ export function useChat(
       e.error = null;
       e.startTime = Date.now();
       e.stageHistory = [];
+      e.liveTps = null;
+      e.finalTps = null;
+      e.finalEvalCount = null;
+      e.firstChunkAt = 0;
+      e.charsAtLastRoundStart = 0;
+      e.rateSamples = [];
+      e.lastRateAt = 0;
+      // charsPerToken persists — it's calibrated from Ollama's exact counts
+      // and carries across messages for a better live estimate.
       notify(e);
       return startStream();
     },
@@ -551,6 +750,7 @@ export function useChat(
     e.isStreaming = false;
     e.currentStage = '';
     e.abort = null;
+    e.liveTps = null;
     notify(e);
   }, []);
 
@@ -590,6 +790,7 @@ export function useChat(
     currentStage: e.currentStage,
     stageHistory: e.stageHistory,
     liveDuration: e.liveDuration,
+    liveTps: e.liveTps,
     currentPlan: e.currentPlan,
   };
 }

@@ -4,6 +4,12 @@ import { getReleaseForVersion, type ChangelogEntry } from '../services/githubRel
 import { openExternal } from '../utils/openExternal';
 import { RELEASES_URL } from '../config';
 import { ReleaseNotesMarkdown } from './ReleaseNotesMarkdown';
+import {
+ isAndroidApp,
+ checkApkUpdate,
+ downloadApk,
+ installApk,
+} from '../services/apkUpdater';
 
 interface UpdateInfo {
  version: string;
@@ -38,6 +44,52 @@ export function UpdateBanner() {
  const [notesLoading, setNotesLoading] = useState(false);
  const [notesOpen, setNotesOpen] = useState(false);
  const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
+ const isAndroid = isAndroidApp();
+
+ // ─── Android: GitHub check + download/install handlers ──────────
+ const [apkPath, setApkPath] = useState<string | null>(null);
+ useEffect(() => {
+ if (!isAndroid) return;
+ let cancelled = false;
+ (async () => {
+ const avail = await checkApkUpdate();
+ if (!cancelled && avail?.updateAvailable) {
+ setState({
+ status: 'available',
+ info: { version: avail.latestVersion, currentVersion: avail.currentVersion },
+ });
+ }
+ })().catch(() => {});
+ return () => { cancelled = true; };
+ }, [isAndroid]);
+
+ const handleAndroidDownload = useCallback(async () => {
+ const info = state.status === 'available' ? state.info : null;
+ const avail = info ? await checkApkUpdate() : null;
+ const url = avail?.updateAvailable ? avail.downloadUrl : null;
+ if (!url) {
+ setState({ status: 'error', message: 'Could not find the update APK on GitHub.' });
+ return;
+ }
+ setState({ status: 'downloading', percent: 0 });
+ try {
+ const { path } = await downloadApk(url, (p) => setState({ status: 'downloading', percent: p }));
+ setApkPath(path);
+ setState({ status: 'downloaded', version: avail!.latestVersion });
+ } catch (e: any) {
+ setState({ status: 'error', message: e?.message || 'Download failed.' });
+ }
+ }, [state.status]);
+
+ const handleAndroidInstall = useCallback(async () => {
+ if (!apkPath) return;
+ try {
+ await installApk(apkPath);
+ // Installer activity takes over; nothing more to do here.
+ } catch (e: any) {
+ setState({ status: 'error', message: e?.message || 'Install failed.' });
+ }
+ }, [apkPath]);
 
  useEffect(() => {
  if (!isElectron) return;
@@ -133,7 +185,7 @@ export function UpdateBanner() {
 
  // Show even when auto-update is disabled IF the update is marked as critical
  const isCritical = state.status === 'available' && isCriticalUpdate(state.info);
- if (!isCritical && (!isAutoUpdateEnabled() || !isElectron || dismissed || state.status === 'idle')) return null;
+ if (!isCritical && (!isAutoUpdateEnabled() || (!isElectron && !isAndroid) || dismissed || state.status === 'idle')) return null;
 
  return (
  <div className="fixed top-0 left-0 right-0 z-[60] animate-slide-down">
@@ -199,7 +251,7 @@ export function UpdateBanner() {
  </div>
  <div className="flex items-center gap-1.5">
  <button
- onClick={handleDownload}
+ onClick={isAndroid ? handleAndroidDownload : handleDownload}
  className={`px-3 py-1.5 text-white text-xs font-medium rounded-lg transition-all active:scale-95 flex items-center gap-1.5 ${
  isCritical ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'
  }`}
@@ -256,11 +308,11 @@ export function UpdateBanner() {
  v{state.version} ready to install
  </p>
  <p className="text-[11px] text-[#4a9988]/70 mt-0.5">
- Restart to apply the update.
+ {isAndroid ? 'Tap Install to open the Android installer.' : 'Restart to apply the update.'}
  </p>
  </div>
  <button
- onClick={handleInstall}
+ onClick={isAndroid ? handleAndroidInstall : handleInstall}
  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-lg transition-all active:scale-95 flex items-center gap-1.5"
  >
  <RefreshCw size={12} />

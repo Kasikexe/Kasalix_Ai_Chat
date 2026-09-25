@@ -24,8 +24,7 @@ interface Props {
 export function ChatView({
  initialMessages, conversationId, model, thinkingEnabled = false, onMessageSent, onConversationCreated,
  searchQuery, onSearchChange, onSearchNext, onSearchPrev, onForkConversation, onConversationUpdate, onConversationStarted,
-}: Props) {
- const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, conversationId: convId, currentStage, liveDuration } = useChat(
+}: Props) {  const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, conversationId: convId, currentStage, liveDuration, liveTps } = useChat(
  model, initialMessages, conversationId, thinkingEnabled, 'chat', undefined, onConversationUpdate, false, false, undefined, undefined, undefined, undefined, onConversationStarted
  );
 
@@ -119,6 +118,7 @@ export function ChatView({
  isStreaming={isStreaming}
  currentStage={currentStage}
  liveDuration={liveDuration}
+ liveTps={liveTps}
  onEdit={handleEdit}
  onDelete={deleteMessage}
  onRegenerate={handleRegenerate}
