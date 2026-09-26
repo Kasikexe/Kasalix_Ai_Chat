@@ -689,27 +689,28 @@ class TestWebSearchSourcesReachTheClient:
         token, _ = auth
         import app.pipeline as pipeline
         from app import search
+        from app.search import SearchOutcome
 
         async def fake_decision(*_args, **_kwargs):
             # The model decides searches now — scripted here so this test stays
             # about the SSE event rather than about the decision.
             return {"search": True, "query": "czechia population"}
 
-        async def fake_search(_query):
+        async def fake_search(query):
             search.report_sources(
                 [
                     {"title": "Czechia population", "url": "https://example.com/cz"},
                     {"title": "Another source", "url": "https://example.org/cz"},
                 ]
             )
-            return "SEARCH CONTEXT"
+            return SearchOutcome(query=query, context="SEARCH CONTEXT", found=True)
 
         async def fake_model(model, messages, tools, on_chunk, options):
             on_chunk("About 10.9 million.")
             return {"content": "About 10.9 million.", "toolCalls": [], "metrics": {}}
 
         monkeypatch.setattr(pipeline, "decide_search", fake_decision)
-        monkeypatch.setattr(pipeline, "get_web_context", fake_search)
+        monkeypatch.setattr(pipeline, "search_web", fake_search)
         monkeypatch.setattr(pipeline, "stream_chat_with_tools", fake_model)
 
         r = client.post(

@@ -160,14 +160,14 @@ class TestPipelineUsesTheSubject:
 
         async def fake_search(query):
             seen.append(query)
-            return None
+            return search_mod.SearchOutcome(query=query)
 
         async def fake_model(model, messages, tools, on_chunk, options):
             on_chunk("ok")
             return {"content": "ok", "toolCalls": [], "metrics": {}}
 
         monkeypatch.setattr(pipeline, "decide_search", fake_decision)
-        monkeypatch.setattr(pipeline, "get_web_context", fake_search)
+        monkeypatch.setattr(pipeline, "search_web", fake_search)
         monkeypatch.setattr(pipeline, "stream_chat_with_tools", fake_model)
 
         asyncio.run(
@@ -201,6 +201,71 @@ class TestPipelineUsesTheSubject:
     def test_plain_question_is_unchanged_end_to_end(self, monkeypatch):
         seen = self._run(TOPIC, [], monkeypatch)
         assert seen == [TOPIC]
+
+
+class TestPipelineSaysWhenTheLookupFoundNothing:
+    """A search that returns nothing must be SAID, not silently dropped —
+    otherwise the model answers from memory as if the search had confirmed it,
+    which is the exact failure the search was there to prevent."""
+
+    def _prompt(self, monkeypatch, build_outcome) -> str:
+        import app.pipeline as pipeline
+
+        captured: list[list[dict[str, str]]] = []
+
+        async def fake_decision(*_args, **_kwargs):
+            return None  # the keyword path decides in these tests
+
+        async def fake_search(query):
+            return build_outcome(query)
+
+        async def fake_model(model, messages, tools, on_chunk, options):
+            captured.append(messages)
+            on_chunk("ok")
+            return {"content": "ok", "toolCalls": [], "metrics": {}}
+
+        monkeypatch.setattr(pipeline, "decide_search", fake_decision)
+        monkeypatch.setattr(pipeline, "search_web", fake_search)
+        monkeypatch.setattr(pipeline, "stream_chat_with_tools", fake_model)
+
+        asyncio.run(
+            pipeline.run_pipeline(
+                {
+                    "model": "test-model",
+                    "messages": [{"role": "user", "content": TOPIC}],
+                    "mode": "chat",
+                    "onChunk": lambda *_: None,
+                }
+            )
+        )
+        return " ".join(m.get("content", "") for m in captured[0])
+
+    def test_an_empty_lookup_is_reported_to_the_model(self, monkeypatch):
+        prompt = self._prompt(
+            monkeypatch,
+            lambda q: search_mod.SearchOutcome(
+                query=q, attempts=[q, "population Czechia"]
+            ),
+        )
+        assert "WEB SEARCH — NO RESULTS" in prompt
+        assert "WEB SEARCH RESULTS — CURRENT AND LIVE" not in prompt
+        # Both attempts are named so the model can see the lookup really ran.
+        assert "population Czechia" in prompt
+        assert "not from a live lookup" in prompt
+
+    def test_a_successful_lookup_is_still_injected_as_results(self, monkeypatch):
+        prompt = self._prompt(
+            monkeypatch,
+            lambda q: search_mod.SearchOutcome(
+                query=q,
+                context="Czechia has about 10.9M people.",
+                sources=[{"title": "CZ", "url": "https://example.com/cz"}],
+                found=True,
+            ),
+        )
+        assert "WEB SEARCH RESULTS — CURRENT AND LIVE" in prompt
+        assert "Czechia has about 10.9M people." in prompt
+        assert "NO RESULTS" not in prompt
 
 
 class TestDecisionParsing:
@@ -378,14 +443,14 @@ class TestModelDecisionEndToEnd:
 
         async def fake_search(query):
             seen.append(query)
-            return None
+            return search_mod.SearchOutcome(query=query)
 
         async def fake_model(model, messages, tools, on_chunk, options):
             on_chunk("ok")
             return {"content": "ok", "toolCalls": [], "metrics": {}}
 
         monkeypatch.setattr(pipeline, "decide_search", fake_decision)
-        monkeypatch.setattr(pipeline, "get_web_context", fake_search)
+        monkeypatch.setattr(pipeline, "search_web", fake_search)
         monkeypatch.setattr(pipeline, "stream_chat_with_tools", fake_model)
 
         asyncio.run(

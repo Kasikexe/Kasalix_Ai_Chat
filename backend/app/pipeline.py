@@ -25,7 +25,7 @@ from .logger import error as log_error, info as log_info, warn as log_warn
 from .memory import get_memory
 from .model_assignments import get_model_assignment, get_resolved_model
 from .ollama_client import OllamaError, StreamOptions, get_models, stream_chat, stream_chat_with_tools
-from .search import decide_search, get_web_context, set_source_sink
+from .search import decide_search, search_web, set_source_sink
 from .settings_store import get_cloud_settings
 from .tools import detect_tool, execute_tool, get_all_tools, is_probably_math_expression
 from .models import Message
@@ -259,7 +259,14 @@ def usable_search_query(query: str | None) -> str | None:
 
 
 def _no_search(reason: str, source: str) -> dict[str, Any]:
-    return {"context": None, "query": None, "source": source, "reason": reason}
+    return {
+        "context": None,
+        "query": None,
+        "source": source,
+        "reason": reason,
+        "found": False,
+        "attempts": [],
+    }
 
 
 async def plan_search(
@@ -1211,7 +1218,10 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
         if on_stage:
             on_stage("search:web")
         log_info(f'[pipeline] Web search: "{plan["query"]}" (decided by {plan["source"]})')
-        plan["context"] = await get_web_context(plan["query"])
+        outcome = await search_web(plan["query"])
+        plan["context"] = outcome.context
+        plan["found"] = outcome.found
+        plan["attempts"] = outcome.attempts
         return plan
 
     if needs_file_listing and workspace_path and on_stage:
@@ -1232,13 +1242,15 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
     if user_text and not search_plan["query"] and search_plan["source"] != "skip":
         log_info(f'[pipeline] No web search ({search_plan["source"]}): {search_plan["reason"]}')
 
-    def with_context(content: str) -> str:
-        result = content
-        if memory_context:
-            result += "\n\n---\n\n" + memory_context
+    def web_search_block() -> str | None:
+        """The search block for the system prompt — results, or the honest empty note.
+
+        A lookup that found nothing must be SAID, not silently dropped: with no
+        note the model answers from memory as if the search had confirmed it,
+        which is the exact failure a search was supposed to prevent.
+        """
         if web_context:
-            result += (
-                "\n\n---\n\n"
+            return (
                 "[WEB SEARCH RESULTS — CURRENT AND LIVE]\n\n"
                 "The information below was retrieved from the internet in real-time through a web search. It is MORE CURRENT than my training data.\n\n"
                 "INSTRUCTIONS TO ANSWER:\n"
@@ -1250,6 +1262,26 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
                 "- If the results don't contain enough info to answer, say so honestly\n\n"
                 f"Search results:\n{web_context}"
             )
+        if search_plan.get("query"):
+            tried = ", ".join(f'"{a}"' for a in (search_plan.get("attempts") or [search_plan["query"]]))
+            return (
+                "[WEB SEARCH — NO RESULTS]\n\n"
+                f"A live web search was run before answering (queries tried: {tried}) and it returned nothing usable.\n\n"
+                "INSTRUCTIONS TO ANSWER:\n"
+                "- Do NOT treat anything as verified by the search — no sources were found\n"
+                "- Say plainly that the lookup came back empty\n"
+                "- You may still answer from your own knowledge, but say that it is not from a live lookup, "
+                "and do not invent specifics (versions, numbers, dates)"
+            )
+        return None
+
+    def with_context(content: str) -> str:
+        result = content
+        if memory_context:
+            result += "\n\n---\n\n" + memory_context
+        block = web_search_block()
+        if block:
+            result += "\n\n---\n\n" + block
         return result
 
     # Tool output variables — shared by TOOL STAGE and simple chat
@@ -1312,19 +1344,9 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
         context_parts: list[str] = []
         if memory_context:
             context_parts.append(memory_context)
-        if web_context:
-            context_parts.append(
-                "[WEB SEARCH RESULTS — CURRENT AND LIVE]\n\n"
-                "The information below was retrieved from the internet in real-time through a web search. It is MORE CURRENT than my training data.\n\n"
-                "INSTRUCTIONS TO ANSWER:\n"
-                "- I MUST answer the user's question using THESE search results as my primary source of truth\n"
-                "- I should answer DIRECTLY with the facts from these results — do NOT just provide links or tell the user to visit websites\n"
-                "- If the results contain the answer, state it clearly and confidently in my response\n"
-                "- I should treat this information as accurate and current\n"
-                "- Only mention website URLs if the user specifically asks for sources\n"
-                "- If the results don't contain enough info to answer, I should say so honestly\n\n"
-                f"Search results:\n{web_context}"
-            )
+        search_block = web_search_block()
+        if search_block:
+            context_parts.append(search_block)
         combined_context = "\n\n---\n\n".join(context_parts) if context_parts else None
 
         chat_system = await with_ai_rules(

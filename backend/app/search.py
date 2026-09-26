@@ -14,6 +14,7 @@ import json
 import re
 import time
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import httpx
@@ -31,6 +32,16 @@ BROWSER_UA = (
 MIN_DELAY_S = 1.5
 _last_search_time = 0.0
 MAX_REPORTED_SOURCES = 8
+
+# A lookup is not cheap: a provider round-trip, sometimes a second one, plus a
+# model summarization — and it is often run twice for one question, because the
+# pipeline searches ahead of the answer and the model may then call web_search
+# with the same words. Repeats inside this window are served from memory.
+# A lookup that found nothing is cached too, for less time, so one dead end is
+# not immediately hit again by the other search path.
+SEARCH_CACHE_TTL_S = 600.0
+EMPTY_CACHE_TTL_S = 120.0
+SEARCH_CACHE_MAX_ENTRIES = 64
 
 # Where to report the pages a search actually used, so the clients can show
 # them under the answer. A ContextVar (rather than an argument threaded through
@@ -74,6 +85,213 @@ def report_sources(results: list[dict[str, Any]]) -> None:
         except Exception as e:  # noqa: BLE001
             # Showing sources is a nicety — never let it break the answer.
             log_warn(f"[search] Could not report sources: {e}")
+
+
+@dataclass
+class SearchOutcome:
+    """What one lookup produced — including whether it produced anything.
+
+    ``context is None`` used to mean two very different things: "nobody asked
+    for a search" and "the search found nothing". The difference matters — a
+    model that is not told its lookup came back empty will answer from memory
+    as if the search had confirmed it.
+    """
+
+    query: str
+    context: str | None = None
+    sources: list[dict[str, Any]] = field(default_factory=list)
+    found: bool = False
+    cached: bool = False
+    attempts: list[str] = field(default_factory=list)
+
+
+_SEARCH_CACHE: dict[str, tuple[float, SearchOutcome]] = {}
+
+
+def clear_search_cache() -> None:
+    """Drop every cached lookup — used by tests and when settings change."""
+    _SEARCH_CACHE.clear()
+
+
+def _cache_key(query: str) -> str:
+    """Normalized key: casing, spacing and trailing punctuation must not miss."""
+    text = " ".join(str(query or "").split()).strip().strip("\"'")
+    return text.lower().rstrip(" ?!.,;:")
+
+
+def _cache_get(key: str) -> SearchOutcome | None:
+    entry = _SEARCH_CACHE.get(key)
+    if entry is None:
+        return None
+    expires, outcome = entry
+    if expires <= time.monotonic():
+        _SEARCH_CACHE.pop(key, None)
+        return None
+    return outcome
+
+
+def _cache_put(key: str, outcome: SearchOutcome) -> None:
+    ttl = SEARCH_CACHE_TTL_S if outcome.found else EMPTY_CACHE_TTL_S
+    _SEARCH_CACHE[key] = (time.monotonic() + ttl, outcome)
+    while len(_SEARCH_CACHE) > SEARCH_CACHE_MAX_ENTRIES:
+        # Dicts keep insertion order, so this drops the oldest entry first.
+        _SEARCH_CACHE.pop(next(iter(_SEARCH_CACHE)), None)
+
+
+def _query_tokens(query: str) -> frozenset[str]:
+    """The concrete terms of a query — stopwords and punctuation dropped."""
+    tokens = {
+        word.strip("?!.,;:\"'()[]{}").lower()
+        for word in str(query or "").split()
+    }
+    return frozenset(t for t in tokens if len(t) > 1 and t not in _STOPWORDS)
+
+
+# The query that reaches the engine is often rewritten slightly between two
+# asks of the SAME question — "Czechia population 2024 2026" then "Czechia
+# population 2026" is the deciding model's wording, not the user's. A repeat
+# that only differs by a word or two still counts as the same lookup.
+_NEAR_MATCH_MIN_TOKENS = 2
+_NEAR_MATCH_CONTAINMENT = 0.8
+
+
+def _cache_lookup(query: str) -> tuple[SearchOutcome, str] | None:
+    """A cached outcome for ``query`` — the exact key first, then a near match.
+
+    Returns ``(outcome, matched_key)`` so the caller can tell the two apart in
+    the log. Near matching compares the queries' content words: one side must
+    cover at least 80% of the other's, which catches "...2024 2026" vs "...2026"
+    but not "... 2024" vs "... 2025" (two different answers).
+    """
+    key = _cache_key(query)
+    exact = _cache_get(key)
+    if exact is not None:
+        return exact, key
+
+    tokens = _query_tokens(query)
+    if len(tokens) < _NEAR_MATCH_MIN_TOKENS:
+        return None
+
+    best: tuple[float, SearchOutcome, str] | None = None
+    for cached_key, (expires, outcome) in list(_SEARCH_CACHE.items()):
+        if expires <= time.monotonic():
+            _SEARCH_CACHE.pop(cached_key, None)
+            continue
+        cached_tokens = _query_tokens(cached_key)
+        if len(cached_tokens) < _NEAR_MATCH_MIN_TOKENS:
+            continue
+        overlap = len(tokens & cached_tokens)
+        smaller = min(len(tokens), len(cached_tokens))
+        if overlap / smaller < _NEAR_MATCH_CONTAINMENT:
+            continue
+        # Among several candidates prefer the closest wording.
+        score = overlap / len(tokens | cached_tokens)
+        if best is None or score > best[0]:
+            best = (score, outcome, cached_key)
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
+# ─── Recency-aware queries ──────────────────────────────────────────────────
+# "latest", "today", "this week" change what the right answer is. When a query
+# says so, both providers accept a window: Tavily takes topic=news with days=N,
+# and DuckDuckGo takes its df= date filter.
+_RECENCY_WINDOWS: list[tuple[re.Pattern[str], int]] = [
+    (
+        re.compile(
+            r"\b(today|tonight|right now|just now|this (?:morning|afternoon|evening)|breaking)\b",
+            re.IGNORECASE,
+        ),
+        1,
+    ),
+    (re.compile(r"\b(this|last|past) week\b|\bweekly\b", re.IGNORECASE), 7),
+    (
+        re.compile(
+            r"\b(latest|newest|most recent|recent|recently|current|currently|"
+            r"news|up[- ]to[- ]date|this (?:month|quarter)|last (?:month|quarter)|"
+            r"just (?:released|launched|announced|updated)|release notes)\b",
+            re.IGNORECASE,
+        ),
+        30,
+    ),
+    (re.compile(r"\b(this|last|past) year\b|\bannually\b|\b20\d{2}\b", re.IGNORECASE), 365),
+]
+
+
+def recency_days(query: str) -> int | None:
+    """The look-back window a time-sensitive query implies, or None."""
+    for pattern, days in _RECENCY_WINDOWS:
+        if pattern.search(str(query or "")):
+            return days
+    return None
+
+
+def duckduckgo_df(days: int | None) -> str | None:
+    """DuckDuckGo's date filter for a recency window: d / w / m / y."""
+    if not days:
+        return None
+    if days <= 1:
+        return "d"
+    if days <= 7:
+        return "w"
+    if days <= 30:
+        return "m"
+    return "y"
+
+
+# ─── Recovery: rewriting a query that found nothing ─
+# A failed lookup is usually a wording problem, not a knowledge problem: engines
+# do badly with "what is the latest version of X?" and better with "X latest
+# version". One deterministic rewrite, then the caller is told plainly that
+# nothing was found.
+_QUESTION_FRAMING_RE = re.compile(
+    r"^(?:"
+    r"what(?:'s| is| are| was| were)|who(?:'s| is| are| was| were)|"
+    r"when (?:is|was|were|did|does|do)|where (?:is|are|was|were)|"
+    r"how (?:to|do|does|did|can|much|many|long|old)|"
+    r"why (?:is|are|was|were|does|do|did)|which (?:is|are|was|were)|"
+    r"(?:is|are|was|were|does|do|did|can|could|should|would|will)"
+    r")\s+(?:(?:the|a|an)\s+)?",
+    re.IGNORECASE,
+)
+
+_STOPWORDS = frozenset(
+    {
+        "a", "an", "about", "and", "are", "as", "at", "be", "been", "being", "by",
+        "can", "could", "did", "do", "does", "for", "from", "he", "her", "i", "in",
+        "is", "it", "its", "me", "my", "of", "on", "or", "please", "she", "should",
+        "tell", "that", "the", "these", "they", "this", "those", "to", "was", "we",
+        "were", "what", "when", "where", "which", "who", "why", "will", "with", "would",
+        "you", "your",
+    }
+)
+
+
+def rewrite_search_query(query: str) -> str | None:
+    """A shorter, plainer version of ``query``, or None if nothing is left.
+
+    Deterministic on purpose: a failed lookup must not depend on another model
+    call succeeding before it can be retried.
+    """
+    text = " ".join(str(query or "").split()).strip().strip("\"'")
+    if not text:
+        return None
+    # 1. Drop question framing: "what is the latest version of X" → "latest version of X".
+    stripped = _QUESTION_FRAMING_RE.sub("", text, count=1).strip(" ?!.,;:")
+    if stripped and _cache_key(stripped) != _cache_key(text):
+        return stripped
+    # 2. Drop stopwords, keeping the concrete terms: "population of Czechia" → "population Czechia".
+    words = [
+        w.strip("?!.,;:")
+        for w in (stripped or text).split()
+        if w.strip("?!.,;:").lower() not in _STOPWORDS
+    ]
+    keyword = " ".join(w for w in words if w).strip()
+    if len(words) >= 2 and len(keyword) >= 3 and _cache_key(keyword) != _cache_key(text):
+        return keyword
+    return None
+
 
 _SKIP_EXTENSIONS = [".pdf", ".zip", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".mp4", ".mp3", ".doc", ".docx"]
 
@@ -217,7 +435,9 @@ def _decode_ddg_url(url: str) -> str:
         return url
 
 
-async def _duck_search_html(query: str, max_results: int = 5) -> list[dict[str, str]]:
+async def _duck_search_html(
+    query: str, max_results: int = 5, *, df: str | None = None
+) -> list[dict[str, str]]:
     """Primary: html.duckduckgo.com POST endpoint."""
     headers = {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -228,7 +448,10 @@ async def _duck_search_html(query: str, max_results: int = 5) -> list[dict[str, 
         "Referer": "https://html.duckduckgo.com/",
     }
     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-        res = await client.post("https://html.duckduckgo.com/html/", headers=headers, data={"q": query})
+        data = {"q": query}
+        if df:
+            data["df"] = df
+        res = await client.post("https://html.duckduckgo.com/html/", headers=headers, data=data)
     if res.status_code >= 400:
         raise RuntimeError(f"DuckDuckGo HTML returned {res.status_code}")
     page = res.text
@@ -253,7 +476,9 @@ async def _duck_search_html(query: str, max_results: int = 5) -> list[dict[str, 
     return results
 
 
-async def _duck_search_lite(query: str, max_results: int = 5) -> list[dict[str, str]]:
+async def _duck_search_lite(
+    query: str, max_results: int = 5, *, df: str | None = None
+) -> list[dict[str, str]]:
     """Fallback: lite.duckduckgo.com GET endpoint — different markup, often
     still up when the HTML endpoint is rate-limiting. Links use uddg= redirects
     and single-quoted class attributes."""
@@ -264,7 +489,10 @@ async def _duck_search_lite(query: str, max_results: int = 5) -> list[dict[str, 
         "Referer": "https://lite.duckduckgo.com/",
     }
     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-        res = await client.get("https://lite.duckduckgo.com/lite/", params={"q": query}, headers=headers)
+        params = {"q": query}
+        if df:
+            params["df"] = df
+        res = await client.get("https://lite.duckduckgo.com/lite/", params=params, headers=headers)
     if res.status_code >= 400:
         raise RuntimeError(f"DuckDuckGo Lite returned {res.status_code}")
     page = res.text
@@ -298,7 +526,9 @@ async def _duck_search_lite(query: str, max_results: int = 5) -> list[dict[str, 
     return results
 
 
-async def _ddgs_library_search(query: str, max_results: int = 5) -> list[dict[str, str]]:
+async def _ddgs_library_search(
+    query: str, max_results: int = 5, *, timelimit: str | None = None
+) -> list[dict[str, str]]:
     """Primary: the ddgs library. It rotates search backends and handles
     DuckDuckGo's anti-bot challenges (browser impersonation) — the raw HTML
     endpoints below get 202-challenged after a few requests from server IPs.
@@ -307,13 +537,25 @@ async def _ddgs_library_search(query: str, max_results: int = 5) -> list[dict[st
 
     def run() -> list[dict[str, str]]:
         out: list[dict[str, str]] = []
-        with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results):
+
+        def collect(iterator: Any) -> None:
+            for r in iterator:
                 out.append({
                     "title": str(r.get("title") or "").strip(),
                     "url": str(r.get("href") or "").strip(),
                     "snippet": str(r.get("body") or "").strip(),
                 })
+
+        with DDGS() as ddgs:
+            if timelimit:
+                try:
+                    collect(ddgs.text(query, max_results=max_results, timelimit=timelimit))
+                except TypeError:
+                    # Older ddgs builds take no timelimit — a wide search beats none.
+                    out.clear()
+                    collect(ddgs.text(query, max_results=max_results))
+            else:
+                collect(ddgs.text(query, max_results=max_results))
         return out
 
     results = await asyncio.to_thread(run)
@@ -322,12 +564,15 @@ async def _ddgs_library_search(query: str, max_results: int = 5) -> list[dict[st
     return results
 
 
-async def _duck_search(query: str, max_results: int = 5) -> list[dict[str, str]]:
+async def _duck_search(
+    query: str, max_results: int = 5, *, days: int | None = None
+) -> list[dict[str, str]]:
     """Search DuckDuckGo with rate limiting, engine fallback, and retry.
 
     Order: ddgs library (challenge-proof) → raw HTML endpoint → raw Lite
     endpoint, then one full retry pass. Failures are logged WITH the exception
     type so outages are diagnosable instead of silently returning nothing.
+    ``days`` narrows the results to that look-back window on every engine.
     """
     global _last_search_time
     now = time.monotonic()
@@ -336,16 +581,17 @@ async def _duck_search(query: str, max_results: int = 5) -> list[dict[str, str]]
         await asyncio.sleep(MIN_DELAY_S - elapsed)
     _last_search_time = time.monotonic()
 
+    df = duckduckgo_df(days)
     engines: list[tuple[str, Any]] = [
-        ("ddgs", _ddgs_library_search),
-        ("html", _duck_search_html),
-        ("lite", _duck_search_lite),
+        ("ddgs", lambda: _ddgs_library_search(query, max_results, timelimit=df)),
+        ("html", lambda: _duck_search_html(query, max_results, df=df)),
+        ("lite", lambda: _duck_search_lite(query, max_results, df=df)),
     ]
     last_err: Exception | None = None
     for pass_num in (1, 2):  # one full chain, then one retry of the chain
         for name, fn in engines:
             try:
-                results = await fn(query, max_results)
+                results = await fn()
                 if results:
                     if pass_num > 1 or name != "ddgs":
                         log_info(f"[search] Served via {name} engine (pass {pass_num})")
@@ -360,13 +606,16 @@ async def _duck_search(query: str, max_results: int = 5) -> list[dict[str, str]]
 
 
 async def _gather_web_results(
-    trimmed: str,
+    trimmed: str, *, days: int | None = None
 ) -> tuple[str, list[dict[str, str]], str | None, list[dict[str, str]]]:
     """Collect search results, preferring Tavily over the DuckDuckGo scraper.
 
     Tavily's snippets already carry the page content, so its path needs no page
     fetching at all. The scraper stays as a safety net so search keeps working
     when no key is configured, the monthly credits run out, or Tavily errors.
+
+    ``days`` is the look-back window for a time-sensitive query (None for a
+    timeless one) — it reaches both providers as their own date filter.
 
     Returns ``(source, snippets, answer, page_pairs)``.
     """
@@ -375,8 +624,9 @@ async def _gather_web_results(
 
     api_key = await get_tavily_api_key()
     if api_key:
+        topic = tavily.TOPIC_NEWS if days else None
         try:
-            data = await tavily.search(trimmed, api_key)
+            data = await tavily.search(trimmed, api_key, topic=topic, days=days)
             snippets = [
                 {"title": r["title"], "url": r["url"], "snippet": r["content"]}
                 for r in data["results"]
@@ -397,7 +647,7 @@ async def _gather_web_results(
     else:
         log_info("[search] No Tavily API key configured — using the DuckDuckGo scraper")
 
-    results = await _duck_search(trimmed)
+    results = await _duck_search(trimmed, days=days)
     if not results:
         return "", [], None, []
     log_info(f"[search] DuckDuckGo returned {len(results)} results")
@@ -551,20 +801,20 @@ async def decide_search(
     return decision
 
 
-async def get_web_context(query: str) -> str | None:
-    """Search the web and return AI-summarized context with page content."""
-    trimmed = query.strip()
-    if not trimmed:
-        return None
+async def _summarize_web_results(
+    query: str,
+    source: str,
+    results: list[dict[str, str]],
+    answer: str | None,
+    page_pairs: list[dict[str, Any]],
+) -> str | None:
+    """Turn raw results into what the answering model sees, or None.
 
-    log_info(f'[search] Searching for: "{trimmed}"')
-
-    source, results, answer, page_pairs = await _gather_web_results(trimmed)
-    if not results:
-        return None
-    log_info(f"[search] Served by {source} ({len(results)} results)")
-    # Report after the refusal guard below, so the clients only ever list pages
-    # whose content actually reached the model.
+    None means nothing usable reached the model: the summarizer either refused
+    (a refusal is dropped, never fed back into chat) or produced nothing. Pages
+    are reported only once the content actually did reach the model — after the
+    refusal guard, so the clients never list a source the answer never saw.
+    """
     def emit_sources() -> None:
         report_sources(results)
 
@@ -589,7 +839,7 @@ async def get_web_context(query: str) -> str | None:
 
     summarize_prompt = f"""You are a precise web search summarizer. Your job is to extract and report ONLY facts that are EXPLICITLY stated in the text below.
 
-User's question: "{trimmed}"
+User's question: "{query}"
 
 Information gathered from web search:
 {full_context}
@@ -620,7 +870,7 @@ CRITICAL RULES:
     except Exception as e:  # noqa: BLE001
         log_error("[search] Summarization failed, using raw content:", e)
         emit_sources()
-        return f'Recent web search results for "{trimmed}":\n\n{full_context}'
+        return f'Recent web search results for "{query}":\n\n{full_context}'
 
     if _REFUSAL_RE.search(summary):
         log_info("[search] Search model refused to summarize — dropping search context for this query")
@@ -634,4 +884,101 @@ CRITICAL RULES:
         f"[search] Context ready via {source}: {len(final_context)} chars "
         f"from {len(results)} results (answer={'yes' if answer else 'no'})"
     )
-    return f'\U0001f4e1 Web search results for "{trimmed}":\n\n{final_context}'
+    return f'\U0001f4e1 Web search results for "{query}":\n\n{final_context}'
+
+
+async def _run_web_search(query: str, *, days: int | None) -> SearchOutcome:
+    """One provider round-trip plus summarization, honestly reported."""
+    if days:
+        log_info(f'[search] Time-sensitive query — looking back {days} day(s) for "{query}"')
+    source, results, answer, page_pairs = await _gather_web_results(query, days=days)
+    if not results:
+        return SearchOutcome(query=query, attempts=[query])
+    log_info(f"[search] Served by {source} ({len(results)} results)")
+    context = await _summarize_web_results(query, source, results, answer, page_pairs)
+    return SearchOutcome(
+        query=query,
+        context=context,
+        sources=results if context else [],
+        found=bool(context),
+        attempts=[query],
+    )
+
+
+async def search_web(query: str) -> SearchOutcome:
+    """Search the web for ``query`` and say honestly whether anything came back.
+
+    One lookup, cached for repeats: the pipeline decides to search before the
+    answer is composed, and the model may then call web_search with the same
+    words — which would otherwise be a second provider round-trip. A failed
+    lookup is retried once with a rewritten query before giving up, and the
+    recency window is dropped on that retry so a date filter cannot be the only
+    reason nothing matched.
+    """
+    trimmed = " ".join(str(query or "").split()).strip()
+    if not trimmed:
+        return SearchOutcome(query="")
+
+    key = _cache_key(trimmed)
+    cached = _cache_lookup(trimmed)
+    if cached is not None:
+        outcome, matched_key = cached
+        report_sources(outcome.sources)
+        if matched_key == key:
+            log_info(
+                f'[search] Cache hit for "{trimmed}" '
+                f'({len(outcome.sources)} sources, found={outcome.found})'
+            )
+        else:
+            log_info(
+                f'[search] Cache near-hit for "{trimmed}" (matched "{matched_key}", '
+                f'{len(outcome.sources)} sources) — the model reworded the same lookup'
+            )
+        # Remember the new wording too, so an identical repeat is an exact hit.
+        _cache_put(key, outcome)
+        return SearchOutcome(
+            query=outcome.query,
+            context=outcome.context,
+            sources=outcome.sources,
+            found=outcome.found,
+            cached=True,
+            attempts=list(outcome.attempts),
+        )
+
+    log_info(f'[search] Searching for: "{trimmed}"')
+    outcome = await _run_web_search(trimmed, days=recency_days(trimmed))
+    attempts = list(outcome.attempts)
+    if not outcome.found:
+        rewritten = rewrite_search_query(trimmed)
+        if rewritten:
+            log_info(f'[search] Nothing for "{trimmed}" — retrying as "{rewritten}"')
+            outcome = await _run_web_search(rewritten, days=None)
+            attempts.extend(outcome.attempts)
+    result = SearchOutcome(
+        query=outcome.query,
+        context=outcome.context,
+        sources=outcome.sources,
+        found=outcome.found,
+        attempts=attempts,
+    )
+    _cache_put(key, result)
+    if result.found:
+        # One line that answers "did the search actually reach the model?" —
+        # the attempt count, the source count and the injected context size.
+        log_info(
+            f'[search] Context ready for "{trimmed}": {len(result.context or "")} chars '
+            f"from {len(result.sources)} results (attempts={len(attempts)})"
+        )
+    else:
+        log_info(f'[search] No usable results for "{trimmed}" (tried: {", ".join(attempts)})')
+    return result
+
+
+async def get_web_context(query: str) -> str | None:
+    """The summarized context for ``query``, or None when nothing was usable.
+
+    Thin wrapper for callers that only need the text; use :func:`search_web`
+    when it also matters THAT a search ran and found nothing, or which pages it
+    used.
+    """
+    return (await search_web(query)).context

@@ -28,6 +28,11 @@ DEFAULT_MAX_RESULTS = 8
 DEFAULT_CHUNKS_PER_SOURCE = 2
 DEFAULT_SEARCH_DEPTH = "basic"
 
+# ``topic="news"`` narrows the index to news articles and is the only topic
+# that honours ``days``. Used for queries that ask about now ("latest", "today").
+TOPIC_NEWS = "news"
+TOPIC_GENERAL = "general"
+
 # Cheapest possible probe for the "Test Connection" button: 1 credit.
 TEST_SEARCH_DEPTH = "ultra-fast"
 TEST_MAX_RESULTS = 1
@@ -102,9 +107,15 @@ async def search(
     search_depth: str = DEFAULT_SEARCH_DEPTH,
     chunks_per_source: int = DEFAULT_CHUNKS_PER_SOURCE,
     include_answer: bool = True,
+    topic: str | None = None,
+    days: int | None = None,
     timeout: float = SEARCH_TIMEOUT,
 ) -> dict:
     """Run a Tavily search.
+
+    ``topic`` (``general`` / ``news``) and ``days`` narrow a time-sensitive
+    lookup to the last N days. Tavily only honours ``days`` on the news topic,
+    so a stray ``days`` without a news topic is dropped rather than sent.
 
     Returns ``{"answer": str | None, "results": [...], "credits": int | None,
     "responseTime": float | None}``. Raises :class:`TavilyError` on failure.
@@ -121,6 +132,10 @@ async def search(
         "include_answer": include_answer,
         "include_usage": True,
     }
+    if topic:
+        body["topic"] = topic
+    if days and topic == TOPIC_NEWS:
+        body["days"] = days
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",

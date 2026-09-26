@@ -28,7 +28,7 @@ from .imagegen import get_generated_images_dir, sanitize_svg, save_artwork
 from .logger import error as log_error, info as log_info, warn as log_warn
 from .model_assignments import get_resolved_model
 from .ollama_client import StreamOptions, stream_chat
-from .search import get_web_context
+from .search import search_web
 from .services.project_rules import (
     append_agent_memory,
     find_agent_memory_file,
@@ -532,7 +532,7 @@ AGENT_TOOL_DEFS: list[dict[str, Any]] = [
     {"name": "run_command", "description": "Run a shell command inside the workspace directory (e.g. build, test, install). The command is sandboxed to the workspace. Output is capped. For long-running commands (servers, watchers), set background=true to run async and poll with __bg_status:id.", "args": '{"command": "bun run build", "background": false}', "mutating": False},
     {"name": "play_game", "description": "PLAY a game/interactive Python script headlessly to verify it WORKS — injects scripted keyboard input, steps the game loop for N frames, captures PNG frames, and MEASURES whether the picture actually changes between frames. Use this for pygame/SDL games instead of guessing: pass inputs to steer (e.g. hold right for 20 frames, then down), then read the captured frames with read_image to SEE the result. Reports frames run, any crash, and changed-pixels per frame — 'changedPixels: 0' between frames that should be animating is a REAL BUG (the actor is not moving or is drawn off-screen).", "args": '{"path": "snake.py", "frames": 120, "inputs": [{"frame": 0, "keys": ["right"]}, {"frame": 30, "keys": ["down"]}], "screenshotEvery": 10}', "mutating": False},
     {"name": "run_python", "description": "RUN a Python program to VERIFY it actually works — the fastest way to check a script you wrote or changed instead of guessing. Pass path (a .py file in the workspace) or code (an inline snippet). Runs with a timeout (games/event loops cannot hang the run), captures stdout/stderr + exit code, and by default sets HEADLESS graphics (SDL_VIDEODRIVER=dummy, matplotlib Agg) so pygame/SDL programs run with no monitor. Use this after writing or fixing any Python script, BEFORE you tell the user it works.", "args": '{"path": "snake.py"} or {"code": "import snake; print(snake.__file__)", "timeout": 15}', "mutating": False},
-    {"name": "web_search", "description": "Search the live web and return current, real-time information (docs, APIs, syntax, news). Use when you need up-to-date knowledge that is not in your training data. Results are capped.", "args": '{"query": "python requests library latest API"}', "mutating": False},
+    {"name": "web_search", "description": "Search the live web and return current, real-time information (docs, APIs, syntax, news). Use when you need up-to-date knowledge that is not in your training data — search BEFORE you answer anything version-, API- or price-shaped, and cite the pages you used. If a search comes back empty, one retry with different words is worth it. Results are capped.", "args": '{"query": "python requests library latest API"}', "mutating": False},
     {"name": "draw_image", "description": "Draw or generate an image when the user asks for a picture/logo/icon/illustration (no text-to-image model exists, so you are the artist). Pass svg: ONE complete standalone SVG that DRAWS the request — not a prompt. Declare width=\"1024\" height=\"1024\" viewBox=\"0 0 1024 1024\"; flat vector style with rect/circle/ellipse/polygon/path and gradients in <defs>; background first, foreground last; NEVER use <text> (no fonts); under ~60 elements. The SVG is rasterized to PNG and the tool result tells you the EXACT markdown to embed in your reply.", "args": '{"svg": "<svg xmlns=\\"http://www.w3.org/2000/svg\\" width=\\"1024\\" height=\\"1024\\" viewBox=\\"0 0 1024 1024\\"><rect width=\\"1024\\" height=\\"1024\\" fill=\\"#223\\"/></svg>"}', "mutating": False},
     {"name": "gen_image", "description": "Generate an image file INSIDE the workspace (e.g. assets/icon.png, textures, mockups, sprites) that code in the project can reference. Same SVG-authoring rules as draw_image (one complete standalone SVG, 1024x1024, flat vector, no <text>). Pass path (destination inside the workspace, use an assets/ folder for media) and svg. The image is rasterized to PNG and written to that path — the tool result gives you the file path to reference in code.", "args": '{"path": "assets/car.png", "svg": "<svg xmlns=\\"http://www.w3.org/2000/svg\\" width=\\"1024\\" height=\\"1024\\" viewBox=\\"0 0 1024 1024\">...</svg>"}', "mutating": True},
     {"name": "read_image", "description": "Describe an image file inside the workspace using the vision model (e.g. screenshots, mockups, diagrams). Returns a detailed plain-text description.", "args": '{"path": "screenshots/ui.png"}', "mutating": False},
@@ -577,7 +577,7 @@ TOOL_JSON_EXAMPLES = f"""Available tools — to use one, respond with ONLY a sin
 {{"tool": "run_command", "args": {{"command": "npm start", "background": true}}}} — long-running commands run async; poll with __bg_status:id
 {{"tool": "run_python", "args": {{"path": "snake.py", "timeout": 15}}}} — RUN a workspace Python script to verify it (headless by default); use {{"code": "..."}} for an inline snippet
 {{"tool": "play_game", "args": {{"path": "snake.py", "frames": 120, "screenshotEvery": 20}}}} — PLAY a game headlessly: inject input, capture frames, measure pixel motion (then read_image them)
-{{"tool": "web_search", "args": {{"query": "python requests library latest API"}}}} — search the LIVE WEB for a fact, version, API or error you cannot verify from the workspace
+{{"tool": "web_search", "args": {{"query": "python requests library latest API"}}}} — search the LIVE WEB for a fact, version, API or error you cannot verify from the workspace; if it returns nothing, retry ONCE with different words, then cite the URL(s) you actually used
 {{"tool": "edit_file", "args": {{"path": "src/app.ts", "old_string": "const x = 1;", "new_string": "const x = 2;"}}}}
 {{"tool": "edit_lines", "args": {{"path": "snake.py", "start": 42, "end": 48, "content": "    new_line_1\\n    new_line_2"}}}} — change lines BY NUMBER (read_file with "numbers": true); no old text needed
 {{"tool": "edit_section", "args": {{"path": "snake.py", "start_anchor": "def update(self):", "end_anchor": "def draw(self):", "content": "        # the new body lines"}}}} — rewrite the region BETWEEN two anchors; the anchors themselves are kept
@@ -1131,9 +1131,21 @@ async def execute_tool(
         if not q:
             return await deny_out('web_search requires a "query" string argument.')
         try:
-            ctx = await get_web_context(q)
-            if not ctx:
-                return {"ok": True, "output": "Web search returned no results for that query."}
+            outcome = await search_web(q)
+            if not outcome.context:
+                attempts = [a for a in outcome.attempts if a]
+                tried = ", ".join(f'"{a}"' for a in attempts) or f'"{q}"'
+                already = " (a rewritten query was tried automatically)" if len(attempts) > 1 else ""
+                return {
+                    "ok": True,
+                    "output": (
+                        f"Web search found no results for {tried}{already}. "
+                        "Try ONE more query with completely different words (shorter, no \"how to\", "
+                        "no question form); if that also finds nothing, tell the user plainly that you "
+                        "could not find this rather than answering from memory."
+                    ),
+                }
+            ctx = outcome.context
             capped = ctx[:MAX_OUTPUT_CHARS] + "\n...[truncated]" if len(ctx) > MAX_OUTPUT_CHARS else ctx
             return {"ok": True, "output": f"[WEB SEARCH RESULTS — CURRENT AND LIVE]\n{capped}"}
         except Exception as e:  # noqa: BLE001
@@ -3388,6 +3400,14 @@ APIs, error messages, current best practice, anything the workspace cannot answe
 short query is cheap, and the results arrive as [WEB SEARCH RESULTS] with the pages
 cited under your reply. NEVER invent a version number or an API signature you have not
 seen in the workspace or in search results.
+SEARCH FIRST, NOT LAST — if the task turns on a version number, an API signature, a config
+format, a release date or a price, call web_search BEFORE you write the code that depends
+on it, not after the user corrects you. If a search comes back empty, rewrite the query
+once (shorter, plainer, drop "how to" and the question form) and try again; if that also
+finds nothing, say plainly what you could not find instead of filling the gap from memory.
+When search results inform your answer, CITE the pages you actually used as markdown
+links next to the claims they support — only URLs that appeared in [WEB SEARCH RESULTS],
+never a URL you did not see there.
 
 YOU ARE THE AGENT, NOT THE USER. In your private thinking, refer to YOURSELF as the one
 acting: "I'll check the file", "my edit failed", "let me fix the old_string". The user

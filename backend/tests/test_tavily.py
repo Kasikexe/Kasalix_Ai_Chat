@@ -77,6 +77,16 @@ def baseline(client):
     _reset()
 
 
+@pytest.fixture(autouse=True)
+def fresh_search_cache():
+    """Every test starts from an empty lookup cache: the same query is reused
+    across tests with different stubs, and a cached outcome from an earlier one
+    would shadow the stub of this one."""
+    search.clear_search_cache()
+    yield
+    search.clear_search_cache()
+
+
 # ─── Fake Tavily endpoint ───────────────────────────────────────────────────
 
 
@@ -334,8 +344,9 @@ class TestTestTavilyKeyRoute:
 
 
 def _stub_duckduckgo(monkeypatch, calls: dict):
-    async def fake_duck(query, max_results=5):
+    async def fake_duck(query, max_results=5, *, days=None):
         calls["duck"] = query
+        calls["days"] = days
         return [
             {"title": "DDG result", "url": "https://ddg.example/1", "snippet": "scraped snippet"}
         ]
@@ -441,22 +452,27 @@ class TestProviderChain:
         assert results
 
 
+def _stub_search_summarizer(monkeypatch, summary: str = "SUMMARY") -> dict:
+    """Replace the search model with a fixed summary (no Ollama involved)."""
+    captured: dict = {}
+
+    async def fake_resolved(category):
+        return {"model": "test-model", "source": "local"}
+
+    async def fake_stream(model, messages, on_chunk, options):
+        # stream_chat is awaited, so the stub must be a coroutine function.
+        captured["prompt"] = messages[0]["content"]
+        on_chunk(summary)
+        return None
+
+    monkeypatch.setattr(search, "get_resolved_model", fake_resolved)
+    monkeypatch.setattr(search, "stream_chat", fake_stream)
+    return captured
+
+
 class TestGetWebContext:
     def _stub_summarizer(self, monkeypatch, summary: str = "SUMMARY"):
-        captured: dict = {}
-
-        async def fake_resolved(category):
-            return {"model": "test-model", "source": "local"}
-
-        async def fake_stream(model, messages, on_chunk, options):
-            # stream_chat is awaited, so the stub must be a coroutine function.
-            captured["prompt"] = messages[0]["content"]
-            on_chunk(summary)
-            return None
-
-        monkeypatch.setattr(search, "get_resolved_model", fake_resolved)
-        monkeypatch.setattr(search, "stream_chat", fake_stream)
-        return captured
+        return _stub_search_summarizer(monkeypatch, summary)
 
     def test_tavily_answer_reaches_the_summarizer(self, monkeypatch):
         captured = self._stub_summarizer(monkeypatch)
@@ -489,7 +505,7 @@ class TestGetWebContext:
             assert asyncio.run(search.get_web_context("q")) is None
 
     def test_returns_none_when_every_provider_fails(self, monkeypatch):
-        async def no_results(query, max_results=5):
+        async def no_results(query, max_results=5, *, days=None):
             return []
 
         async def no_key():
@@ -498,6 +514,265 @@ class TestGetWebContext:
         monkeypatch.setattr(search, "_duck_search", no_results)
         monkeypatch.setattr("app.settings_store.get_tavily_api_key", no_key)
         assert asyncio.run(search.get_web_context("q")) is None
+
+
+class TestRecencyWindows:
+    """"latest", "today", "this week" change what the right answer is, and
+    both providers accept their own form of look-back window."""
+
+    def test_time_sensitive_wording_picks_a_window(self):
+        assert search.recency_days("what happened today") == 1
+        assert search.recency_days("this week in AI") == 7
+        assert search.recency_days("latest python release") == 30
+        assert search.recency_days("population of Czechia in 2026") == 365
+        assert search.recency_days("how does a binary search work") is None
+
+    def test_duckduckgo_date_filter_mapping(self):
+        assert search.duckduckgo_df(1) == "d"
+        assert search.duckduckgo_df(7) == "w"
+        assert search.duckduckgo_df(30) == "m"
+        assert search.duckduckgo_df(365) == "y"
+        assert search.duckduckgo_df(None) is None
+
+    def test_tavily_request_carries_the_news_window(self, monkeypatch):
+        _stub_search_summarizer(monkeypatch)
+
+        async def fake_key():
+            return GOOD_KEY
+
+        monkeypatch.setattr("app.settings_store.get_tavily_api_key", fake_key)
+        with serve_tavily(_ok_responder) as (endpoint, seen):
+            monkeypatch.setattr(tavily, "TAVILY_SEARCH_URL", f"{endpoint}/search")
+            assert asyncio.run(search.search_web("latest python release")).found
+        body = seen[0]["body"]
+        assert body["topic"] == tavily.TOPIC_NEWS
+        assert body["days"] == 30
+
+    def test_a_timeless_query_sends_no_window(self, monkeypatch):
+        _stub_search_summarizer(monkeypatch)
+
+        async def fake_key():
+            return GOOD_KEY
+
+        monkeypatch.setattr("app.settings_store.get_tavily_api_key", fake_key)
+        with serve_tavily(_ok_responder) as (endpoint, seen):
+            monkeypatch.setattr(tavily, "TAVILY_SEARCH_URL", f"{endpoint}/search")
+            assert asyncio.run(search.search_web("who is leo messi")).found
+        body = seen[0]["body"]
+        assert "topic" not in body
+        assert "days" not in body
+
+    def test_the_scraper_gets_the_window_too(self, monkeypatch):
+        _stub_search_summarizer(monkeypatch)
+        captured: dict = {}
+
+        async def fake_duck(query, max_results=5, *, days=None):
+            captured["days"] = days
+            return [{"title": "T", "url": "https://a.example/one", "snippet": "s"}]
+
+        async def fake_page(url, max_chars=4000):
+            return None
+
+        async def no_key():
+            return ""
+
+        monkeypatch.setattr(search, "_duck_search", fake_duck)
+        monkeypatch.setattr(search, "_fetch_page_content", fake_page)
+        monkeypatch.setattr("app.settings_store.get_tavily_api_key", no_key)
+        assert asyncio.run(search.search_web("latest python release")).found
+        assert captured["days"] == 30
+
+    def test_each_duckduckgo_engine_gets_the_date_filter(self, monkeypatch):
+        seen: dict = {}
+
+        async def ddgs_boom(query, max_results=5, *, timelimit=None):
+            seen["ddgs"] = timelimit
+            raise RuntimeError("no ddgs here")
+
+        async def html_with_results(query, max_results=5, *, df=None):
+            seen["html"] = df
+            return [{"title": "T", "url": "https://a.example/one", "snippet": "s"}]
+
+        monkeypatch.setattr(search, "_ddgs_library_search", ddgs_boom)
+        monkeypatch.setattr(search, "_duck_search_html", html_with_results)
+        monkeypatch.setattr(search, "MIN_DELAY_S", 0)
+        results = asyncio.run(search._duck_search("q", days=7))
+        assert results
+        assert seen["ddgs"] == "w"
+        assert seen["html"] == "w"
+
+
+class TestSearchCache:
+    """The same question is often asked twice in one turn — the pipeline's
+    pre-pass, then the model's own web_search call — and a repeat is free."""
+
+    def test_a_repeat_lookup_does_not_touch_the_provider(self, monkeypatch):
+        _stub_search_summarizer(monkeypatch)
+
+        async def fake_key():
+            return GOOD_KEY
+
+        monkeypatch.setattr("app.settings_store.get_tavily_api_key", fake_key)
+        with serve_tavily(_ok_responder) as (endpoint, seen):
+            monkeypatch.setattr(tavily, "TAVILY_SEARCH_URL", f"{endpoint}/search")
+            first = asyncio.run(search.search_web("who is leo messi"))
+            second = asyncio.run(search.search_web("who is leo messi"))
+
+        assert len(seen) == 1, "the second lookup went back to the provider"
+        assert first.found and second.found
+        assert first.cached is False
+        assert second.cached is True
+        assert second.context == first.context
+
+    def test_a_reworded_repeat_is_a_near_match(self, monkeypatch):
+        """The deciding model rewrites the query between two asks of the same
+        question — the real log showed "Czechia population 2024 2026" then
+        "Czechia population 2026", which an exact key can never catch."""
+        _stub_search_summarizer(monkeypatch)
+
+        async def fake_key():
+            return GOOD_KEY
+
+        monkeypatch.setattr("app.settings_store.get_tavily_api_key", fake_key)
+        with serve_tavily(_ok_responder) as (endpoint, seen):
+            monkeypatch.setattr(tavily, "TAVILY_SEARCH_URL", f"{endpoint}/search")
+            first = asyncio.run(search.search_web("Czechia population 2024 2026"))
+            second = asyncio.run(search.search_web("Czechia population 2026"))
+
+        assert len(seen) == 1, "the reworded repeat went back to the provider"
+        assert first.found and second.found
+        assert second.cached is True
+        assert second.context == first.context
+
+    def test_a_different_question_is_not_a_near_match(self, monkeypatch):
+        _stub_search_summarizer(monkeypatch)
+
+        async def fake_key():
+            return GOOD_KEY
+
+        monkeypatch.setattr("app.settings_store.get_tavily_api_key", fake_key)
+        with serve_tavily(_ok_responder) as (endpoint, seen):
+            monkeypatch.setattr(tavily, "TAVILY_SEARCH_URL", f"{endpoint}/search")
+            asyncio.run(search.search_web("nvidia latest news"))
+            asyncio.run(search.search_web("python latest release"))
+        assert len(seen) == 2
+
+    def test_a_different_year_is_not_a_near_match(self, monkeypatch):
+        """...2024 and ...2025 are two different answers — only a query that
+        COVERS the cached one (extra words, same subject) may reuse it."""
+        _stub_search_summarizer(monkeypatch)
+
+        async def fake_key():
+            return GOOD_KEY
+
+        monkeypatch.setattr("app.settings_store.get_tavily_api_key", fake_key)
+        with serve_tavily(_ok_responder) as (endpoint, seen):
+            monkeypatch.setattr(tavily, "TAVILY_SEARCH_URL", f"{endpoint}/search")
+            asyncio.run(search.search_web("world cup 2022 winner"))
+            asyncio.run(search.search_web("world cup 2026 winner"))
+        assert len(seen) == 2
+
+    def test_the_cache_key_ignores_case_spacing_and_punctuation(self, monkeypatch):
+        _stub_search_summarizer(monkeypatch)
+
+        async def fake_key():
+            return GOOD_KEY
+
+        monkeypatch.setattr("app.settings_store.get_tavily_api_key", fake_key)
+        with serve_tavily(_ok_responder) as (endpoint, seen):
+            monkeypatch.setattr(tavily, "TAVILY_SEARCH_URL", f"{endpoint}/search")
+            asyncio.run(search.search_web("Who is Leo Messi?"))
+            asyncio.run(search.search_web("who  is  leo messi"))
+        assert len(seen) == 1
+
+    def test_a_cache_hit_still_reports_the_pages(self, monkeypatch):
+        _stub_search_summarizer(monkeypatch)
+
+        async def fake_key():
+            return GOOD_KEY
+
+        monkeypatch.setattr("app.settings_store.get_tavily_api_key", fake_key)
+        reported: list[list[dict[str, str]]] = []
+        search.set_source_sink(reported.append)
+        try:
+            with serve_tavily(_ok_responder) as (endpoint, _seen):
+                monkeypatch.setattr(tavily, "TAVILY_SEARCH_URL", f"{endpoint}/search")
+                asyncio.run(search.search_web("who is leo messi"))
+                asyncio.run(search.search_web("who is leo messi"))
+        finally:
+            search.set_source_sink(None)
+        assert len(reported) == 2, "a cached search stopped reporting its sources"
+        assert reported[1] == reported[0]
+
+    def test_a_failed_lookup_is_cached_so_it_is_not_repeated(self, monkeypatch):
+        calls: list[str] = []
+
+        async def fake_gather(query, *, days=None):
+            calls.append(query)
+            return "", [], None, []
+
+        monkeypatch.setattr(search, "_gather_web_results", fake_gather)
+        first = asyncio.run(search.search_web("what is flurbs history"))
+        second = asyncio.run(search.search_web("what is flurbs history"))
+
+        assert first.found is False
+        assert second.cached is True
+        # One rewrite on the first lookup, then the cache stops the second.
+        assert calls == ["what is flurbs history", "flurbs history"]
+
+
+class TestEmptyResultRecovery:
+    """A lookup that finds nothing used to be indistinguishable from no lookup
+    at all, so the model answered from memory as if the search had confirmed
+    it. It is now retried once with a rewritten query and reported honestly."""
+
+    def test_rewrite_drops_the_question_form_first(self):
+        assert (
+            search.rewrite_search_query("What is the latest version of Python?")
+            == "latest version of Python"
+        )
+
+    def test_rewrite_drops_stopwords_when_there_is_no_question_form(self):
+        assert search.rewrite_search_query("population of Czechia") == "population Czechia"
+
+    def test_rewrite_gives_up_when_nothing_is_left(self):
+        assert search.rewrite_search_query("Czechia") is None
+        assert search.rewrite_search_query("   ") is None
+
+    def test_a_failed_lookup_is_retried_once_with_a_rewritten_query(self, monkeypatch):
+        calls: list[str] = []
+
+        async def fake_gather(query, *, days=None):
+            calls.append(query)
+            if len(calls) == 1:
+                return "", [], None, []
+            return (
+                "duckduckgo",
+                [{"title": "Capital", "url": "https://a.example/one", "snippet": "s"}],
+                None,
+                [],
+            )
+
+        _stub_search_summarizer(monkeypatch, "Flurbistan's capital is Flurb.")
+        monkeypatch.setattr(search, "_gather_web_results", fake_gather)
+        outcome = asyncio.run(search.search_web("What is the capital of Flurbistan?"))
+
+        assert calls == ["What is the capital of Flurbistan?", "capital of Flurbistan"]
+        assert outcome.found is True
+        assert outcome.attempts == calls
+        assert [s["url"] for s in outcome.sources] == ["https://a.example/one"]
+
+    def test_both_attempts_failing_is_reported_as_not_found(self, monkeypatch):
+        async def fake_gather(query, *, days=None):
+            return "", [], None, []
+
+        monkeypatch.setattr(search, "_gather_web_results", fake_gather)
+        outcome = asyncio.run(search.search_web("what is flurbs history"))
+
+        assert outcome.found is False
+        assert outcome.context is None
+        assert outcome.sources == []
+        assert len(outcome.attempts) == 2
 
 
 class TestAgentWebSearchUsesTavily:
@@ -530,7 +805,7 @@ class TestAgentWebSearchUsesTavily:
         async def fake_key():
             return GOOD_KEY
 
-        async def ddg_must_not_run(query, max_results=5):
+        async def ddg_must_not_run(query, max_results=5, *, days=None):
             raise AssertionError("DuckDuckGo was used even though Tavily is configured")
 
         monkeypatch.setattr(agent, "stream_chat_with_retry", fake_model)

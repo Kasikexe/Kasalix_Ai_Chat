@@ -296,6 +296,16 @@ class TestAgentPromptGuards:
         assert '"tool": "web_search", "args": {"query"' in p
         assert "call web_search instead of guessing" in p
 
+    def test_web_search_guidance_covers_search_first_retry_and_citation(self):
+        """The three ways the tool falls short when the prompt only says the
+        agent MAY search: it searches too late, gives up after one empty result,
+        and never says which pages it used."""
+        from app.agent import build_system_prompt
+        p = build_system_prompt("/ws", "user", True)
+        assert "SEARCH FIRST, NOT LAST" in p
+        assert "rewrite the query" in p
+        assert "CITE the pages you actually used" in p
+
     def test_every_tool_has_a_worked_example(self):
         """The examples block is what the model copies — a tool with no example
         there is a tool that barely gets called (web_search, draw_image and the
