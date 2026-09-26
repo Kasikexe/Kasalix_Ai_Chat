@@ -837,16 +837,154 @@ class TestCloudRoutingWorkflow:
             headers={"Cookie": "settings_auth=1"},
         )
 
-    def teardown_method(self, client=None):
-        # Restore safe defaults so later tests aren't affected
-        try:
-            client.put(
-                "/api/settings",
-                json={"cloudMode": "local", "cloudApiKey": "", "cloudEndpoint": "", "cloudModelAssignments": {}},
-                headers={"Cookie": "settings_auth=1"},
-            )
-        except Exception:
-            pass
+    @pytest.fixture(autouse=True)
+    def _restore_settings(self, client):
+        """Restore safe defaults so later tests aren't affected.
+
+        This used to be `teardown_method(self, client=None)` — pytest passes the
+        TEST METHOD as that first argument, so `client.put` raised and the
+        swallowed exception left cloudMode/cloudModelAssignments behind for
+        every following test in the module.
+        """
+        yield
+        self._cleanup_settings(client)
+
+
+class TestThinkingSwapStaysHonest:
+    """The thinking swap tells the user "answering this one with X" — it must
+    only fire when X really answers.
+
+    gemma4:31b from Ollama Cloud is not installed on this machine, so every
+    capability probe 404s and the name heuristics cached it as "can't think":
+    every thinking turn was handed to the chat_thinking assignment and the
+    reply announced the swap. In Koding the same announcement was doubly wrong
+    — the agent runs the CODE assignment, so the announced model never ran.
+    """
+
+    def _prepare(self, client, monkeypatch, installed, swap_target="deepseek-v2:16b"):
+        import app.pipeline as pipeline
+
+        # Self-contained: a leaked cloud setup would send the turn down the
+        # "cloud cleared → swap for a local model" path and hide what we test.
+        client.put(
+            "/api/settings",
+            json={
+                "cloudMode": "local",
+                "cloudApiKey": "",
+                "cloudEndpoint": "",
+                "cloudModelAssignments": {},
+            },
+            headers={"Cookie": "settings_auth=1"},
+        )
+
+        seen: dict[str, str] = {}
+
+        async def no_thinking(model):
+            return False
+
+        async def local_models():
+            return [{"name": name} for name in installed]
+
+        async def resolved(key):
+            if key == "chat_thinking":
+                return {"model": swap_target, "source": "local"}
+            return {"model": "local-chat", "source": "local"}
+
+        async def no_search(*_args, **_kwargs):
+            return {"search": False, "query": ""}
+
+        async def fake_model(model, messages, tools, on_chunk, options):
+            seen.setdefault("models", []).append(model)
+            on_chunk("Hello!")
+            return {"content": "Hello!", "toolCalls": [], "metrics": {}}
+
+        async def fake_stream(model, messages, on_chunk, options):
+            seen.setdefault("models", []).append(model)
+            on_chunk("Hello!")
+            return "Hello!"
+
+        monkeypatch.setattr(pipeline, "stream_chat", fake_stream)
+        monkeypatch.setattr(pipeline, "_supports_thinking", no_thinking)
+        monkeypatch.setattr(pipeline, "get_models", local_models)
+        monkeypatch.setattr(pipeline, "get_resolved_model", resolved)
+        monkeypatch.setattr(pipeline, "decide_search", no_search)
+        monkeypatch.setattr(pipeline, "stream_chat_with_tools", fake_model)
+        return seen
+
+    def _events(self, body: str) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for line in body.splitlines():
+            if line.startswith("data: "):
+                try:
+                    out.append(json.loads(line[6:]))
+                except ValueError:
+                    pass
+        return out
+
+    def _answering_model(self, body: str) -> str:
+        # model_info is emitted AFTER the thinking swap, so it is the model the
+        # client shows and the one the answer actually comes from.
+        return next(e["model"] for e in self._events(body) if e.get("type") == "model_info")
+
+    def test_a_cloud_model_is_not_swapped(self, client, auth, monkeypatch):
+        token, _ = auth
+        seen = self._prepare(client, monkeypatch, installed=["gemma3:4b"])
+        r = client.post(
+            "/api/chat/",
+            json={
+                "model": "gemma4:31b",
+                "messages": [{"role": "user", "content": "why is the sky blue"}],
+                "thinkingEnabled": True,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert "can't think" not in r.text
+        assert self._answering_model(r.text) == "gemma4:31b"
+        assert seen["models"] and all(m == "gemma4:31b" for m in seen["models"])
+
+    def test_a_local_model_that_cannot_think_is_still_swapped(self, client, auth, monkeypatch):
+        token, _ = auth
+        seen = self._prepare(client, monkeypatch, installed=["gemma3:4b"])
+        r = client.post(
+            "/api/chat/",
+            json={
+                "model": "gemma3:4b",
+                "messages": [{"role": "user", "content": "why is the sky blue"}],
+                "thinkingEnabled": True,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert "can't think" in r.text
+        assert self._answering_model(r.text) == "deepseek-v2:16b"
+        assert seen["models"] and all(m == "deepseek-v2:16b" for m in seen["models"])
+
+    def test_koding_never_announces_a_swap_the_agent_will_not_make(self, client, auth, monkeypatch):
+        token, _ = auth
+        import app.agent as agent_mod
+
+        seen = self._prepare(client, monkeypatch, installed=["gemma3:4b"])
+
+        async def fake_agent_loop(opts):
+            seen["agent_model"] = opts["model"]
+            opts["callbacks"]["onChunk"]("Done.")
+            return "Done."
+
+        monkeypatch.setattr(agent_mod, "run_agent_loop", fake_agent_loop)
+        r = client.post(
+            "/api/chat/",
+            json={
+                "model": "gemma3:4b",
+                "mode": "agent",
+                "autoApply": True,
+                "messages": [{"role": "user", "content": "fix the bug in snake.py"}],
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert "can't think" not in r.text
+        assert seen["agent_model"] == "gemma3:4b"
 
 
 # ─────────────────────────────────────────────────────────────

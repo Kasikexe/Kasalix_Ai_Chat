@@ -866,6 +866,24 @@ async def run_draw_image_chat(o: dict[str, Any]) -> str:
     )
 
 
+async def model_installed_locally(name: str) -> bool:
+    """True when ``name`` exists on THIS machine's Ollama.
+
+    Capability probes only describe the local daemon, so a model hosted on a
+    cloud endpoint 404s here and is judged by name heuristics instead. Callers
+    that would act on such a verdict (swapping models, forcing the vision path)
+    must check this first. Unknown (Ollama unreachable) keeps the old behaviour.
+    """
+    if not name:
+        return False
+    try:
+        installed = {m.get("name") or "" for m in await get_models()}
+    except Exception:  # noqa: BLE001
+        return True
+    base = name.split(":")[0]
+    return name in installed or any(n.split(":")[0] == base for n in installed)
+
+
 async def build_memory_context(user_id: str | None = None) -> str | None:
     if not user_id:
         return None
@@ -1011,7 +1029,18 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
     think = False if thinking_mode == "off" else (True if is_agent_mode else needs_thinking(last_user_for_think.get("content", "") if last_user_for_think else ""))
     log_info(f"[pipeline] Thinking mode: {thinking_mode}, agent: {is_agent_mode} → think: {think}")
 
-    if think and not (await _supports_thinking(model)):
+    # The swap is only meaningful for a LOCAL chat model, and only in chat mode:
+    #  · the capability probe describes this machine's Ollama, so a cloud model
+    #    (not installed here) always looks like it "can't think" — the local
+    #    request path now sends `think` to custom endpoints anyway;
+    #  · Koding/agent runs use the CODE assignment, so swapping the chat model
+    #    and announcing it answered with a different model would be a lie.
+    if (
+        think
+        and not is_agent_mode
+        and await model_installed_locally(model)
+        and not (await _supports_thinking(model))
+    ):
         resolved = await get_resolved_model("chat_thinking")
         if resolved["model"] and resolved["model"] != model:
             log_info(f"[pipeline] Auto-thinking: {model} can't think → using {resolved['model']} (source: {resolved['source']})")

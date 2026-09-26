@@ -851,117 +851,6 @@ header button, header .status-badge { -webkit-app-region: no-drag; }
   overflow: hidden;
 }
 
-/* ═══ Trajectory Panel ═══ */
-.trajectory-select {
-  background: var(--bg-card);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 6px;
-  font-size: 10px;
-  font-family: 'SF Mono', monospace;
-  margin-left: auto;
-  max-width: 200px;
-  cursor: pointer;
-}
-
-.trajectory-select:focus { outline: 1px solid var(--accent); }
-
-.trajectory-panel {
-  max-height: 400px;
-  overflow-y: auto;
-  border-top: 1px solid var(--border);
-  padding: 6px;
-  transition: max-height 0.3s ease;
-}
-
-.trajectory-panel.collapsed {
-  max-height: 0;
-  padding: 0 6px;
-  border-color: transparent;
-  overflow: hidden;
-}
-
-.trajectory-events {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.trajectory-event {
-  border-radius: 4px;
-  padding: 6px 8px;
-  font-size: 10px;
-  border: 1px solid var(--border);
-  transition: background 0.1s;
-}
-
-.trajectory-event:hover { background: var(--bg-card-hover); }
-
-.trajectory-event.te-run { border-left: 2px solid var(--green); }
-.trajectory-event.te-message { border-left: 2px solid var(--text-muted); }
-.trajectory-event.te-tool-call { border-left: 2px solid var(--orange); }
-.trajectory-event.te-tool-result { border-left: 2px solid var(--accent); }
-.trajectory-event.te-plan { border-left: 2px solid var(--accent); }
-.trajectory-event.te-verify { border-left: 2px solid var(--green); }
-.trajectory-event.te-stage { border-left: 2px solid var(--text-dim); }
-.trajectory-event.te-error { border-left: 2px solid var(--red); }
-
-.te-header {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-bottom: 2px;
-}
-
-.te-icon { font-size: 11px; }
-.te-label { font-weight: 600; color: var(--text); font-size: 10px; }
-
-.te-tag {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 2px;
-  background: var(--bg-input);
-  color: var(--text-muted);
-  font-family: 'SF Mono', monospace;
-}
-
-.te-time {
-  font-size: 9px;
-  color: var(--text-muted);
-  font-family: 'SF Mono', monospace;
-  margin-left: auto;
-}
-
-.te-content {
-  font-family: 'SF Mono', monospace;
-  font-size: 9px;
-  color: var(--text-dim);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 80px;
-  overflow-y: auto;
-  margin-top: 4px;
-  cursor: pointer;
-  padding: 4px;
-  background: var(--bg-input);
-  border-radius: 3px;
-}
-
-.te-content.expanded { max-height: none; }
-.te-content:hover { color: var(--text); }
-
-.te-status {
-  display: inline-block;
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 2px;
-  margin-left: 3px;
-}
-
-.te-status.failed { background: var(--red-dim); color: var(--red); }
-.te-status.passed { background: var(--green-dim); color: var(--green); }
-
 /* ═══ Model Chips ═══ */
 .models-grid-inner {
   display: flex;
@@ -1413,7 +1302,7 @@ button:focus-visible, .btn:focus-visible, .tab:focus-visible {
 }
 
 /* 5. Monospace font consistency */
-.mono, code, pre, .ip-address, .server-url .value, .apikeys-input, .trajectory-select, .stat-value {
+.mono, code, pre, .ip-address, .server-url .value, .apikeys-input, .stat-value {
   font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
 }
 

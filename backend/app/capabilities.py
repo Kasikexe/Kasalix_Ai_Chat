@@ -21,7 +21,12 @@ from .logger import error as log_error, info as log_info
 # array is accepted by every model, so every model was cached as tools=True,
 # including ones that hard-reject tool definitions (deepseek-v2). Those bogus
 # entries must be re-probed, hence the bump.
-CACHE_VERSION = 5
+# v6: cloud-hosted models (gemma4:31b) 404 on the LOCAL probe, so the name
+# heuristics decided — and cached "tools=false, thinking=false, vision=false"
+# for a model that thinks, calls tools and sees images. Loaded entries also
+# dropped their "vision" flag, so every restart made previously-probed models
+# look text-only. Both must be re-derived.
+CACHE_VERSION = 6
 PROBE_TIMEOUT_S = 15.0
 
 _caps_cache: dict[str, dict[str, bool]] = {}
@@ -52,7 +57,15 @@ async def load_cache() -> None:
             return
         for model, caps in (models or {}).items():
             if isinstance(caps, dict) and "tools" in caps and "thinking" in caps:
-                _caps_cache[model] = {"tools": bool(caps["tools"]), "thinking": bool(caps["thinking"])}
+                # vision belongs to the entry too — dropping it here made every
+                # previously-probed model look text-only after a restart, so the
+                # agent stopped using a model's own vision (and routed images to
+                # the vision assignment instead).
+                _caps_cache[model] = {
+                    "tools": bool(caps["tools"]),
+                    "thinking": bool(caps["thinking"]),
+                    "vision": bool(caps["vision"]) if "vision" in caps else _fallback_vision(model),
+                }
         log_info(f"[capabilities] Loaded {len(_caps_cache)} cached model capabilities")
     except FileNotFoundError:
         pass
@@ -179,7 +192,7 @@ async def _probe_vision(model: str) -> bool | None:
 
 FALLBACK_TOOL_MODELS = [
     "qwen3", "qwen2.5", "qwen2.5-coder", "llama3.1", "llama3.2", "llama3.3",
-    "mistral", "mixtral", "gemma3", "phi4", "phi-4", "gpt-oss",
+    "mistral", "mixtral", "gemma3", "gemma4", "phi4", "phi-4", "gpt-oss",
     "command-r", "aya-expanse", "minicpm-v", "nemotron", "molmo",
     "minimax", "deepseek", "glm", "internlm",
 ]
@@ -187,8 +200,12 @@ FALLBACK_TOOL_MODELS = [
 # NOTE: no bare "qwen" here — it matched qwen2.5/qwen2.5-coder, which have no
 # thinking support at all, so every one of their turns was sent `think: true`
 # and died with a 400. Only real thinking families belong in this list.
+# gemma4 is listed even though gemma2/gemma3 are not: it is the first Gemma with
+# a thinking mode, and it is usually used from Ollama Cloud, which the local
+# probe cannot inspect (the probe 404s, so the name heuristic decides).
 FALLBACK_THINKING_MODELS = [
     "qwen3", "qwq", "deepseek-r1", "magpie", "kimi", "glm", "internlm",
+    "gemma4",
 ]
 
 
@@ -200,7 +217,7 @@ def _fallback_vision(model: str) -> bool:
     families = (
         "llava", "minicpm-v", "moondream", "bakllava", "llama3.2-vision",
         "granite3.1-vision", "qwen2.5vl", "qwen2-vl", "qwen2vl", "qwen3-vl",
-        "qwen-vl", "gemma3", "pixtral", "mistral-small3.1", "glm-4v", "molmo",
+        "qwen-vl", "gemma3", "gemma4", "pixtral", "mistral-small3.1", "glm-4v", "molmo",
     )
     return any(f in lower for f in families)
 

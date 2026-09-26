@@ -288,7 +288,6 @@ async function startServer() {
     startUptimeTimer();
     refreshModePill();
     startUsageRefresh();
-    startTrajectoryRefresh();
 
     // Hide startup overlay
     startupOverlay.classList.add('hidden');
@@ -324,9 +323,8 @@ async function stopServer() {
     startBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg> Start Server`;
     serverUrl.querySelector('.value').textContent = '—';
     $('copyUrlBtn').style.display = 'none';
-    stopUptimeTimer();
-    stopUsageRefresh();
-    stopTrajectoryRefresh();
+  stopUptimeTimer();
+  stopUsageRefresh();
     $('cloudUsageCard').style.display = 'none';
   }
   stopBtn.disabled = false;
@@ -648,7 +646,6 @@ API.onDashboardUpdate((data) => {
       startBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg> Start Server`;
       stopUptimeTimer();
       stopUsageRefresh();
-      stopTrajectoryRefresh();
       $('cloudUsageCard').style.display = 'none';
     }
   }
@@ -2141,122 +2138,6 @@ $('resetUsageBtn').addEventListener('click', async () => {
   btn.disabled = false;
   setTimeout(() => { resultEl.textContent = ''; }, 5000);
 });
-
-// ─── Trajectory Panel ─────────────────────────────────────────────────
-const TRAJECTORY_ICONS = {
- 'run:start': S_PLAY, 'run:end': S_SQUARE, 'message': S_CHAT,
- 'tool:call': S_WRENCH, 'tool:result': S_CLIP, 'plan': S_FILE,
- 'plan:update': S_CHECK, 'verify': S_SEARCH, 'thinking': S_BRAIN,
- 'stage': S_RFRESH, 'error': S_XCIRC,
-};
-const TRAJECTORY_CLASSES = {
-  'run:start': 'te-run', 'run:end': 'te-run', 'message': 'te-message',
-  'tool:call': 'te-tool-call', 'tool:result': 'te-tool-result',
-  'plan': 'te-plan', 'plan:update': 'te-plan', 'verify': 'te-verify',
-  'thinking': 'te-message', 'stage': 'te-stage', 'error': 'te-error',
-};
-
-async function loadTrajectorySessions() {
-  const sel = $('trajectorySelect');
-  if (!sel) return;
-  try {
-    const result = await API.listSessionLogs();
-    const logs = (result && result.logs) || [];
-    sel.innerHTML = '';
-    if (logs.length === 0) {
-      sel.innerHTML = '<option value="">No sessions yet</option>';
-      return;
-    }
-    for (const log of logs) {
-      const opt = document.createElement('option');
-      opt.value = log.runId;
-      opt.textContent = `${log.runId} (${new Date(log.mtime).toLocaleString()})`;
-      sel.appendChild(opt);
-    }
-    sel.value = logs[0].runId;
-    await loadTrajectoryEvents(logs[0].runId);
-  } catch {
-    sel.innerHTML = '<option value="">Failed to load</option>';
-  }
-}
-
-async function loadTrajectoryEvents(runId) {
-  const container = $('trajectoryEvents');
-  if (!container || !runId) return;
-  container.innerHTML = '<div class="log-empty">Loading…</div>';
-  try {
-    const result = await API.readSessionLog(runId);
-    const events = (result && result.events) || [];
-    if (events.length === 0) {
-      container.innerHTML = '<div class="log-empty">No events in this session.</div>';
-      return;
-    }
-    container.innerHTML = '';
-    for (const ev of events) {
-      const cls = TRAJECTORY_CLASSES[ev.type] || 'te-message';
-      const icon = TRAJECTORY_ICONS[ev.type] || '•';
-      const label = ev.type.replace(/:/g, ' ');
-      const time = new Date(ev.ts).toLocaleTimeString();
-      const statusHtml = ev.meta?.ok === false || ev.meta?.passed === false
-        ? '<span class="te-status failed">failed</span>'
-        : (ev.meta?.passed === true ? '<span class="te-status passed">passed</span>' : '');
-      const roleHtml = ev.role
-        ? `<span class="te-tag">${esc(ev.role)}</span>`
-        : '';
-      const labelHtml = ev.label
-        ? `<span class="te-tag">${esc(ev.label)}</span>`
-        : '';
-      let contentHtml = '';
-      if (ev.content && ev.content.length > 0) {
-        const preview = ev.content.length > 200 ? ev.content.slice(0, 200) + '…' : ev.content;
-        contentHtml = `<div class="te-content" onclick="this.classList.toggle('expanded')">${esc(preview)}</div>`;
-      }
-      const div = document.createElement('div');
-      div.className = `trajectory-event ${cls}`;
-      div.innerHTML = `
-        <div class="te-header">
-          <span class="te-icon">${icon}</span>
-          <span class="te-label">${esc(label)}</span>
-          ${labelHtml}${roleHtml}${statusHtml}
-          <span class="te-time">${time}</span>
-        </div>
-        ${contentHtml}`;
-      container.appendChild(div);
-    }
-    container.scrollTop = container.scrollHeight;
-  } catch (e) {
-    container.innerHTML = `<div class="log-empty">Error loading trajectory: ${esc(String(e))}</div>`;
-  }
-}
-
-$('toggleTrajectoryBtn')?.addEventListener('click', () => {
-  const panel = $('trajectoryPanel');
-  const card = $('trajectoryCard');
-  if (panel.style.display === 'none') {
-    panel.style.display = 'block';
-    card.classList.remove('log-collapsed');
-    loadTrajectorySessions();
-  } else {
-    panel.style.display = 'none';
-    card.classList.add('log-collapsed');
-  }
-});
-
-$('trajectorySelect')?.addEventListener('change', (e) => {
-  const runId = e.target.value;
-  if (runId) loadTrajectoryEvents(runId);
-});
-
-let trajectoryRefreshInterval = null;
-function startTrajectoryRefresh() {
-  const card = $('trajectoryCard');
-  if (card) card.style.display = 'block';
-  loadTrajectorySessions();
-  trajectoryRefreshInterval = setInterval(loadTrajectorySessions, 30000);
-}
-function stopTrajectoryRefresh() {
-  if (trajectoryRefreshInterval) { clearInterval(trajectoryRefreshInterval); trajectoryRefreshInterval = null; }
-}
 
 // ══════════════════════════════════════════════════════
 // Ollama Settings View

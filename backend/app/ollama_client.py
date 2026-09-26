@@ -437,7 +437,11 @@ async def stream_chat(
     num_ctx = await _get_default_num_ctx()
     if num_ctx and not body["options"].get("num_ctx"):
         body["options"]["num_ctx"] = num_ctx
-    if await supports_thinking(model):
+    # Cloud/custom endpoints always get the flag (the local probe describes
+    # THIS machine's Ollama, and a hosted model is usually not installed here),
+    # exactly like the tool definitions above. A wrong guess is healed by
+    # _request_with_capability_heal, which drops `think` and retries.
+    if opts.base_url or await supports_thinking(model):
         body["think"] = opts.think is True
 
     endpoint = opts.base_url or ollama_base_url()
@@ -485,7 +489,11 @@ async def stream_chat_with_tools(
     num_ctx = await _get_default_num_ctx()
     if num_ctx and not body["options"].get("num_ctx"):
         body["options"]["num_ctx"] = num_ctx
-    if await supports_thinking(model):
+    # Cloud/custom endpoints always get the flag (the local probe describes
+    # THIS machine's Ollama, and a hosted model is usually not installed here),
+    # exactly like the tool definitions above. A wrong guess is healed by
+    # _request_with_capability_heal, which drops `think` and retries.
+    if opts.base_url or await supports_thinking(model):
         body["think"] = opts.think is True
 
     endpoint = opts.base_url or ollama_base_url()
@@ -525,7 +533,11 @@ async def chat(
     num_ctx = await _get_default_num_ctx()
     if num_ctx and not body["options"].get("num_ctx"):
         body["options"]["num_ctx"] = num_ctx
-    if await supports_thinking(model):
+    # Cloud/custom endpoints always get the flag (the local probe describes
+    # THIS machine's Ollama, and a hosted model is usually not installed here),
+    # exactly like the tool definitions above. A wrong guess is healed by
+    # _request_with_capability_heal, which drops `think` and retries.
+    if opts.base_url or await supports_thinking(model):
         body["think"] = opts.think is True
 
     endpoint = opts.base_url or ollama_base_url()

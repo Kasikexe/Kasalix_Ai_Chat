@@ -181,6 +181,33 @@ class TestCapabilityResolution:
         asyncio.run(capabilities.load_cache())
         assert capabilities._caps_cache["deepseek-v2:16b"]["tools"] is False
 
+    def test_bogus_v5_cloud_verdicts_are_not_loaded(self, monkeypatch, tmp_path):
+        # gemma4:31b lives on Ollama Cloud: the local probe 404s, so the name
+        # heuristics decided and cached it as "can't think, has no vision".
+        path = tmp_path / "caps.json"
+        path.write_text(
+            '{"version": 5, "models": {"gemma4:31b": {"tools": false, "thinking": false, "vision": false}}}',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(capabilities, "_cache_file", lambda: str(path))
+        monkeypatch.setattr(capabilities, "_caps_cache", {})
+        monkeypatch.setattr(capabilities, "_cache_loaded", False)
+        asyncio.run(capabilities.load_cache())
+        assert capabilities._caps_cache == {}, "cloud verdicts from the old heuristics must be re-derived"
+
+    def test_a_loaded_entry_keeps_its_vision_flag(self, monkeypatch, tmp_path):
+        path = tmp_path / "caps.json"
+        path.write_text(
+            '{"version": %d, "models": {"gemma4:31b": {"tools": true, "thinking": true, "vision": true}}}'
+            % capabilities.CACHE_VERSION,
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(capabilities, "_cache_file", lambda: str(path))
+        monkeypatch.setattr(capabilities, "_caps_cache", {})
+        monkeypatch.setattr(capabilities, "_cache_loaded", False)
+        asyncio.run(capabilities.load_cache())
+        assert capabilities._caps_cache["gemma4:31b"]["vision"] is True, "vision must survive a restart"
+
     def test_mark_tools_unsupported_persists_a_full_entry(self, monkeypatch, tmp_path):
         _fresh_cache(monkeypatch, tmp_path)
         monkeypatch.setattr(capabilities, "save_cache", lambda: asyncio.sleep(0))
@@ -267,6 +294,99 @@ class TestToolsAreNotSentToModelsThatRejectThem:
         except OllamaError as e:
             assert "runner crashed" in str(e)
         assert calls["n"] == 1, "a non-capability error must not be retried"
+
+
+class TestCloudEndpointsKeepThinking:
+    """The capability probe only ever queries THIS machine's Ollama, so a
+    cloud-hosted model (gemma4:31b) 404s there and the name heuristics decide.
+    Those verdicts must never strip `think` from a custom-endpoint request."""
+
+    def _patch_stream(self, monkeypatch, tmp_path, sent, fail_on_think=False):
+        _fresh_cache(monkeypatch, tmp_path)
+        monkeypatch.setattr(capabilities, "save_cache", lambda: asyncio.sleep(0))
+
+        async def fake_stream(endpoint, body, opts, log_line, on_chunk, collect_tool_calls):
+            sent.append(dict(body))
+            if fail_on_think and body.get("think"):
+                raise OllamaError(
+                    "Ollama error (400): registry.ollama.ai/library/gemma4:31b does not support thinking"
+                )
+            if on_chunk:
+                on_chunk("hello")
+            return "hello", [], {}
+
+        monkeypatch.setattr(oc, "_stream_response", fake_stream)
+
+    def test_think_is_sent_to_a_cloud_endpoint_even_when_the_probe_says_no(self, monkeypatch, tmp_path):
+        sent: list[dict] = []
+        self._patch_stream(monkeypatch, tmp_path, sent)
+
+        async def no_think(model):
+            return False
+
+        monkeypatch.setattr(oc, "supports_thinking", no_think)
+        chunks: list[str] = []
+        asyncio.run(
+            oc.stream_chat(
+                "gemma4:31b",
+                [{"role": "user", "content": "hi"}],
+                chunks.append,
+                StreamOptions(base_url="https://ollama.com", api_key="k", think=True),
+            )
+        )
+        assert len(sent) == 1 and sent[0].get("think") is True, "a cloud model must get the thinking flag"
+
+    def test_a_cloud_capability_guess_is_still_healed(self, monkeypatch, tmp_path):
+        sent: list[dict] = []
+        self._patch_stream(monkeypatch, tmp_path, sent, fail_on_think=True)
+
+        async def yes_think(model):
+            return True
+
+        monkeypatch.setattr(oc, "supports_thinking", yes_think)
+        chunks: list[str] = []
+        asyncio.run(
+            oc.stream_chat(
+                "gemma4:31b",
+                [{"role": "user", "content": "hi"}],
+                chunks.append,
+                StreamOptions(base_url="https://ollama.com", api_key="k", think=True),
+            )
+        )
+        assert "".join(chunks) == "hello", "the reply must survive a rejected thinking flag"
+        assert len(sent) == 2 and sent[0].get("think") is True and "think" not in sent[1]
+        assert capabilities._caps_cache["gemma4:31b"]["thinking"] is False, "the cache must learn"
+
+    def test_gemma4_is_a_fallback_family_for_thinking_tools_and_vision(self):
+        assert capabilities._fallback_thinking("gemma4:31b") is True
+        assert capabilities._fallback_tools("gemma4:31b") is True
+        assert capabilities._fallback_vision("gemma4:31b") is True
+
+
+class TestCapabilityVerdictsAreLocalOnly:
+    """Callers that act on a capability verdict must know whether the model is
+    even installed here — a cloud model always looks capability-less locally."""
+
+    def test_installed_and_cloud_only_models(self, monkeypatch):
+        import app.pipeline as pipeline
+
+        async def installed():
+            return [{"name": "gemma3:4b"}, {"name": "qwen3:8b"}]
+
+        monkeypatch.setattr(pipeline, "get_models", installed)
+        assert asyncio.run(pipeline.model_installed_locally("gemma3:4b")) is True
+        assert asyncio.run(pipeline.model_installed_locally("gemma3:12b")) is True  # other tag, same family
+        assert asyncio.run(pipeline.model_installed_locally("gemma4:31b")) is False
+        assert asyncio.run(pipeline.model_installed_locally("")) is False
+
+    def test_an_unreachable_ollama_keeps_the_old_behaviour(self, monkeypatch):
+        import app.pipeline as pipeline
+
+        async def boom():
+            raise RuntimeError("connection refused")
+
+        monkeypatch.setattr(pipeline, "get_models", boom)
+        assert asyncio.run(pipeline.model_installed_locally("gemma3:4b")) is True
 
 
 class TestCloudFailureClassification:
