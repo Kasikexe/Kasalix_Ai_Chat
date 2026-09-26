@@ -58,7 +58,9 @@ function loadCache(ignoreTTL = false): ChangelogEntry[] | null {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed.entries)) return null;
+    // An empty cached list is treated as a miss: serving it would keep the
+    // changelog saying "No releases published yet" even after a release ships.
+    if (!Array.isArray(parsed.entries) || parsed.entries.length === 0) return null;
     if (!ignoreTTL && Date.now() - (parsed.fetchedAt || 0) > CACHE_TTL) return null;
     return parsed.entries as ChangelogEntry[];
   } catch {
@@ -67,6 +69,7 @@ function loadCache(ignoreTTL = false): ChangelogEntry[] | null {
 }
 
 function saveCache(entries: ChangelogEntry[]) {
+  if (entries.length === 0) return; // never cache an empty list — see loadCache
   try {
     localStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), entries }));
   } catch {
@@ -85,18 +88,40 @@ export function getStaleReleases(): ChangelogEntry[] | null {
 }
 
 /**
- * Fetch releases from GitHub and update the cache.
- * Throws on network errors; 403/429 (rate limit) throws Error('rate-limited').
+ * Raw release list from GitHub. Inside the Electron desktop app the request
+ * goes through the main process instead of the page: a renderer-side fetch
+ * can fail silently in packaged builds (CORS/proxy/certificate quirks),
+ * while the main process already talks to GitHub for updates — so the
+ * desktop changelog survives whatever the page's network stack does.
+ * Throws Error('rate-limited') on 403/429 and a plain Error otherwise.
  */
-export async function fetchReleases(): Promise<ChangelogEntry[]> {
+async function requestReleases(): Promise<unknown> {
+  const viaMainProcess = (window as Window).electronAPI?.fetchGitHubReleases;
+  if (typeof viaMainProcess === 'function') {
+    const res = await viaMainProcess();
+    if (!res || res.ok !== true) {
+      const message = String(res?.error || 'GitHub request failed');
+      throw new Error(message === 'rate-limited' ? 'rate-limited' : message);
+    }
+    return res.data;
+  }
+
   const res = await fetch(GITHUB_RELEASES_API);
   if (!res.ok) {
     if (res.status === 403 || res.status === 429) throw new Error('rate-limited');
     throw new Error(`HTTP ${res.status}`);
   }
-  const data: GitHubRelease[] = await res.json();
+  return res.json();
+}
+
+/**
+ * Fetch releases from GitHub and update the cache.
+ * Throws on network errors; 403/429 (rate limit) throws Error('rate-limited').
+ */
+export async function fetchReleases(): Promise<ChangelogEntry[]> {
+  const data = await requestReleases();
   if (!Array.isArray(data)) throw new Error('Unexpected response from GitHub');
-  const list = data
+  const list = (data as GitHubRelease[])
     .filter((r) => !r.draft)
     .map(toEntry)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());

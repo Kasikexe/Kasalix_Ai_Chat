@@ -30,6 +30,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('update-error', handler);
   },
 
+  // ─── Changelog (GitHub releases, fetched by the main process) ─
+  fetchGitHubReleases: () => ipcRenderer.invoke('github-releases'),
+
   // ─── Update Preference ──────────────────────
   getUpdatePreference: () => ipcRenderer.invoke('get-update-preference'),
   setUpdatePreference: (enabled) => ipcRenderer.invoke('set-update-preference', enabled),

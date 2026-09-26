@@ -355,7 +355,8 @@ app.on('certificate-error', (event, _webContents, url, _error, _certificate, cal
 // so updates work no matter which server the client is connected to.
 
 const GITHUB_REPO = process.env.KASALIX_REPO || 'Kasikexe/Kasalix';
-const GITHUB_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
+const GITHUB_REPO_API = `https://api.github.com/repos/${GITHUB_REPO}`;
+const GITHUB_API = `${GITHUB_REPO_API}/releases/latest`;
 
 // Installer staged by download-update; consumed by install-update.
 let githubUpdatePath = null;
@@ -389,6 +390,35 @@ function fetchLatestGitHubRelease() {
       req.on('error', () => resolve(null));
       req.setTimeout(10000, () => { req.destroy(); resolve(null); });
     } catch { resolve(null); }
+  });
+}
+
+/** Full release list, for the in-app Changelog. The renderer could not be
+ *  relied on to reach api.github.com in packaged builds, so the desktop app
+ *  asks the main process — the same GitHub path the updater already uses. */
+function fetchGitHubReleases() {
+  return new Promise((resolve) => {
+    try {
+      const req = https.get(`${GITHUB_REPO_API}/releases?per_page=30`, {
+        headers: { 'User-Agent': 'Kasalix-Client/1.0', 'Accept': 'application/vnd.github.v3+json' },
+      }, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            resolve({
+              ok: false,
+              error: (res.statusCode === 403 || res.statusCode === 429) ? 'rate-limited' : `HTTP ${res.statusCode}`,
+            });
+            return;
+          }
+          try { resolve({ ok: true, data: JSON.parse(data) }); }
+          catch { resolve({ ok: false, error: 'Unreadable response from GitHub' }); }
+        });
+      });
+      req.on('error', (err) => resolve({ ok: false, error: err.message }));
+      req.setTimeout(10000, () => { req.destroy(); resolve({ ok: false, error: 'GitHub request timed out' }); });
+    } catch (err) { resolve({ ok: false, error: err.message }); }
   });
 }
 
@@ -1044,6 +1074,11 @@ function routeExternalLink(url) {
 
 ipcMain.handle('check-for-updates', async () => {
   return await checkForUpdates(false);
+});
+
+// Changelog release list for the renderer (see fetchGitHubReleases).
+ipcMain.handle('github-releases', async () => {
+  return await fetchGitHubReleases();
 });
 
 // Silently download the Windows installer from the latest GitHub release
