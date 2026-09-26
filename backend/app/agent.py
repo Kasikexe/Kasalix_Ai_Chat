@@ -577,6 +577,7 @@ TOOL_JSON_EXAMPLES = f"""Available tools — to use one, respond with ONLY a sin
 {{"tool": "run_command", "args": {{"command": "npm start", "background": true}}}} — long-running commands run async; poll with __bg_status:id
 {{"tool": "run_python", "args": {{"path": "snake.py", "timeout": 15}}}} — RUN a workspace Python script to verify it (headless by default); use {{"code": "..."}} for an inline snippet
 {{"tool": "play_game", "args": {{"path": "snake.py", "frames": 120, "screenshotEvery": 20}}}} — PLAY a game headlessly: inject input, capture frames, measure pixel motion (then read_image them)
+{{"tool": "web_search", "args": {{"query": "python requests library latest API"}}}} — search the LIVE WEB for a fact, version, API or error you cannot verify from the workspace
 {{"tool": "edit_file", "args": {{"path": "src/app.ts", "old_string": "const x = 1;", "new_string": "const x = 2;"}}}}
 {{"tool": "edit_lines", "args": {{"path": "snake.py", "start": 42, "end": 48, "content": "    new_line_1\\n    new_line_2"}}}} — change lines BY NUMBER (read_file with "numbers": true); no old text needed
 {{"tool": "edit_section", "args": {{"path": "snake.py", "start_anchor": "def update(self):", "end_anchor": "def draw(self):", "content": "        # the new body lines"}}}} — rewrite the region BETWEEN two anchors; the anchors themselves are kept
@@ -3373,6 +3374,12 @@ the human.
 {examples}
 
 AVAILABILITY: {availability}
+
+WHEN YOU DO NOT KNOW SOMETHING — call web_search instead of guessing. Library versions,
+APIs, error messages, current best practice, anything the workspace cannot answer: one
+short query is cheap, and the results arrive as [WEB SEARCH RESULTS] with the pages
+cited under your reply. NEVER invent a version number or an API signature you have not
+seen in the workspace or in search results.
 
 YOU ARE THE AGENT, NOT THE USER. In your private thinking, refer to YOURSELF as the one
 acting: "I'll check the file", "my edit failed", "let me fix the old_string". The user

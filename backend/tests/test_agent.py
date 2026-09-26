@@ -288,6 +288,14 @@ class TestAgentPromptGuards:
         p = build_system_prompt("/ws", "user", False)
         assert "read-only (no run_command)" in p
 
+    def test_web_search_is_offered_with_a_worked_example(self):
+        """Koding search only happens when the model chooses the tool, so the
+        prompt must both advertise it and show a copyable JSON call."""
+        from app.agent import build_system_prompt
+        p = build_system_prompt("/ws", "user", True)
+        assert '"tool": "web_search", "args": {"query"' in p
+        assert "call web_search instead of guessing" in p
+
     def test_user_deletion_intent_regex(self):
         import re
         assert re.search(r"\b(delet?e|remove|get rid of|clean up)\b", "please delete the old file", re.I)
