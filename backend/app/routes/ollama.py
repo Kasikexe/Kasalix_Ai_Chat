@@ -47,6 +47,13 @@ OWNERSHIP_FLAG = os.path.join(tempfile.gettempdir(), "kasalix-ollama-owned")
 # Seconds to wait for a possibly-still-booting external Ollama before the
 # startup hook concludes it is dead and spawns its own. Tests patch to 0.
 _STARTUP_GRACE_S = 6.0
+# A respawn that fails once used to leave the app with NO model backend at all:
+# /api/health kept answering while every chat failed with "All connection
+# attempts failed" — clients showed "server reachable" and could not send. The
+# usual cause is the previous instance still releasing port 11434, so the
+# startup spawn gets a few bounded chances before giving up.
+_STARTUP_SPAWN_ATTEMPTS = 3
+_STARTUP_SPAWN_RETRY_S = 5.0
 
 
 def _note_parallel_unsupported(line: str) -> None:
@@ -480,18 +487,36 @@ async def ensure_ollama_running_at_startup() -> None:
             f"[ollama] Not running at startup — spawning with saved tuning "
             f"(parallel={np or 'auto'}, maxLoaded={mlm or 'auto'}, keepAlive={ka or 'auto'}, kv={kv_type})"
         )
-        result = await restart_ollama(
-            kv_offload,
-            kv_type,
-            confirm=True,
-            num_parallel=np,
-            max_loaded_models=mlm,
-            keep_alive=ka,
+        last_error: Any = None
+        for attempt in range(1, _STARTUP_SPAWN_ATTEMPTS + 1):
+            result = await restart_ollama(
+                kv_offload,
+                kv_type,
+                confirm=True,
+                num_parallel=np,
+                max_loaded_models=mlm,
+                keep_alive=ka,
+            )
+            if result.get("success"):
+                log_info(
+                    "[ollama] Startup spawn successful — Ollama is up with saved tuning"
+                    + (f" (attempt {attempt})" if attempt > 1 else "")
+                )
+                return
+            last_error = result.get("error")
+            if attempt < _STARTUP_SPAWN_ATTEMPTS:
+                delay = _STARTUP_SPAWN_RETRY_S * attempt
+                log_warn(
+                    f"[ollama] Startup spawn attempt {attempt}/{_STARTUP_SPAWN_ATTEMPTS} "
+                    f"failed ({last_error}) — retrying in {delay:.0f}s"
+                )
+                await asyncio.sleep(delay)
+                if await is_ollama_running():
+                    log_info("[ollama] Ollama came up on its own — no further spawn attempts")
+                    return
+        log_warn(
+            f"[ollama] Startup spawn failed after {_STARTUP_SPAWN_ATTEMPTS} attempts: {last_error}"
         )
-        if result.get("success"):
-            log_info("[ollama] Startup spawn successful — Ollama is up with saved tuning")
-        else:
-            log_warn(f"[ollama] Startup spawn failed: {result.get('error')}")
     except FileNotFoundError:
         log_warn("[ollama] Startup spawn skipped — 'ollama' executable not found on this machine")
     except Exception as e:  # noqa: BLE001
@@ -547,12 +572,22 @@ async def restart_ollama(
 
         up = await _wait_for_ollama_up()
         if not up:
+            # `ollama serve` exits immediately when the previous instance is
+            # still releasing port 11434 — the most common restart failure.
+            # Clear whatever is left and try once more before declaring the
+            # model backend dead.
+            log_warn("[ollama] Did not answer within 30s — clearing leftovers and retrying once")
+            _kill_ollama_sync()
+            await _wait_for_port_free()
+            await _spawn_ollama(env_overrides)
+            up = await _wait_for_ollama_up()
+        if not up:
             return {
                 "success": False,
                 "wasRunning": was_running,
                 "modelsInterrupted": models_interrupted,
                 "ownedByUs": True,
-                "error": "Ollama did not come back up within 30 seconds",
+                "error": "Ollama did not come back up within 30 seconds (two spawn attempts)",
             }
         log_info("[ollama] Restart successful — Ollama is back up")
         return {"success": True, "wasRunning": was_running, "modelsInterrupted": models_interrupted, "ownedByUs": True}

@@ -206,6 +206,7 @@ class TestEnsureOllamaAtStartup:
     @pytest.fixture(autouse=True)
     def zero_grace(self, monkeypatch):
         monkeypatch.setattr(ollama_mod, "_STARTUP_GRACE_S", 0.0)
+        monkeypatch.setattr(ollama_mod, "_STARTUP_SPAWN_RETRY_S", 0.0)
 
     async def test_spawns_ollama_when_dead(self, monkeypatch, reset_state):
         """Ollama not running at boot → restart_ollama with saved tuning."""
@@ -252,6 +253,75 @@ class TestEnsureOllamaAtStartup:
 
         await ollama_mod.ensure_ollama_running_at_startup()
         assert called is False
+
+    async def test_retries_after_a_failed_spawn(self, monkeypatch, reset_state):
+        """The previous instance still releasing port 11434 makes the first
+        spawn die. One failed respawn used to leave every client with 502s on
+        /api/models (and chat failing) until someone restarted the app."""
+        attempts = {"n": 0}
+
+        async def fake_running():
+            return False
+
+        async def fake_settings():
+            return {}
+
+        async def fake_restart(*a, **k):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                return {"success": False, "error": "bind: Only one usage of each socket address"}
+            return {"success": True}
+
+        monkeypatch.setattr(ollama_mod, "is_ollama_running", fake_running)
+        monkeypatch.setattr(ollama_mod, "load_settings", fake_settings)
+        monkeypatch.setattr(ollama_mod, "restart_ollama", fake_restart)
+
+        await ollama_mod.ensure_ollama_running_at_startup()
+        assert attempts["n"] == 2
+
+    async def test_gives_up_after_a_bounded_number_of_attempts(self, monkeypatch, reset_state):
+        attempts = {"n": 0}
+
+        async def fake_running():
+            return False
+
+        async def fake_settings():
+            return {}
+
+        async def fake_restart(*a, **k):
+            attempts["n"] += 1
+            return {"success": False, "error": "no exe"}
+
+        monkeypatch.setattr(ollama_mod, "is_ollama_running", fake_running)
+        monkeypatch.setattr(ollama_mod, "load_settings", fake_settings)
+        monkeypatch.setattr(ollama_mod, "restart_ollama", fake_restart)
+
+        await ollama_mod.ensure_ollama_running_at_startup()  # must not raise
+        assert attempts["n"] == ollama_mod._STARTUP_SPAWN_ATTEMPTS
+
+    async def test_stops_retrying_when_ollama_comes_up_by_itself(self, monkeypatch, reset_state):
+        """A slow tray instance can win the race while we back off — stop
+        spawning the moment /api/tags answers."""
+        attempts = {"n": 0}
+        checks = {"n": 0}
+
+        async def fake_running():
+            checks["n"] += 1
+            return checks["n"] >= 2  # the pre-spawn check still says dead
+
+        async def fake_settings():
+            return {}
+
+        async def fake_restart(*a, **k):
+            attempts["n"] += 1
+            return {"success": False, "error": "still binding"}
+
+        monkeypatch.setattr(ollama_mod, "is_ollama_running", fake_running)
+        monkeypatch.setattr(ollama_mod, "load_settings", fake_settings)
+        monkeypatch.setattr(ollama_mod, "restart_ollama", fake_restart)
+
+        await ollama_mod.ensure_ollama_running_at_startup()
+        assert attempts["n"] == 1
 
     async def test_survives_spawn_failure(self, monkeypatch, reset_state):
         """A failed spawn must not raise — startup continues without Ollama."""
@@ -422,3 +492,58 @@ class TestParallelUnsupportedDetection:
     def test_status_exposes_archs(self):
         status = ollama_mod.get_ollama_status()
         assert "parallelUnsupportedArchs" in status
+
+
+class TestRestartOllamaRetriesOnce:
+    """`ollama serve` exits on a bind error while the previous instance is
+    still releasing port 11434 — the retry inside restart_ollama is what turns
+    a one-shot failure into a working model backend."""
+
+    async def test_second_spawn_after_a_failed_wait(self, monkeypatch, reset_state):
+        spawns = {"n": 0}
+        waits = {"n": 0}
+        killed = {"n": 0}
+
+        async def fake_running():
+            return False
+
+        async def fake_spawn(env_overrides=None):
+            spawns["n"] += 1
+
+        async def fake_wait(max_ms=30_000):
+            waits["n"] += 1
+            return waits["n"] >= 2
+
+        monkeypatch.setattr(ollama_mod, "is_ollama_running", fake_running)
+        monkeypatch.setattr(ollama_mod, "_spawn_ollama", fake_spawn)
+        monkeypatch.setattr(ollama_mod, "_wait_for_ollama_up", fake_wait)
+        monkeypatch.setattr(ollama_mod, "_kill_ollama_sync", lambda: killed.__setitem__("n", killed["n"] + 1))
+        monkeypatch.setattr(ollama_mod, "_wait_for_port_free", lambda *a, **k: _async(None))
+
+        result = await ollama_mod.restart_ollama(True, "f16", confirm=True)
+        assert result["success"] is True
+        assert spawns["n"] == 2
+        assert killed["n"] == 1  # leftovers cleared before the second spawn
+
+    async def test_reports_failure_after_both_attempts(self, monkeypatch, reset_state):
+        spawns = {"n": 0}
+
+        async def fake_running():
+            return False
+
+        async def fake_spawn(env_overrides=None):
+            spawns["n"] += 1
+
+        async def fake_wait(max_ms=30_000):
+            return False
+
+        monkeypatch.setattr(ollama_mod, "is_ollama_running", fake_running)
+        monkeypatch.setattr(ollama_mod, "_spawn_ollama", fake_spawn)
+        monkeypatch.setattr(ollama_mod, "_wait_for_ollama_up", fake_wait)
+        monkeypatch.setattr(ollama_mod, "_kill_ollama_sync", lambda: None)
+        monkeypatch.setattr(ollama_mod, "_wait_for_port_free", lambda *a, **k: _async(None))
+
+        result = await ollama_mod.restart_ollama(True, "f16", confirm=True)
+        assert result["success"] is False
+        assert spawns["n"] == 2
+        assert "two spawn attempts" in result["error"]

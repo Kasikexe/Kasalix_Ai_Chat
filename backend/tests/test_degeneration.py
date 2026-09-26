@@ -149,3 +149,45 @@ class TestStreamAbort:
 
         err = GenerationRepetitionError("The model got stuck repeating itself (degeneration).")
         assert is_transient_error(err) is False
+
+
+# ─── Local model backend unreachable ────────────────────────────────────
+class TestLocalBackendUnreachable:
+    """The "server reachable but sends fail" state after a server restart:
+    the backend answers /api/health while Ollama is down, and httpx's raw
+    "All connection attempts failed" told the user nothing about what broke."""
+
+    def test_local_connect_failure_names_the_model_backend(self):
+        from app.ollama_client import OllamaError
+
+        with pytest.raises(OllamaError) as err:
+            asyncio.run(
+                _stream_response(
+                    "http://127.0.0.1:9",
+                    {"model": "m", "messages": [], "stream": True},
+                    StreamOptions(),
+                    "[ollama] test",
+                    None,
+                    False,
+                )
+            )
+        message = str(err.value)
+        assert "model backend (Ollama) is not answering" in message
+        assert "127.0.0.1:9" in message
+        assert "starting after a server restart" in message
+
+    def test_a_custom_endpoint_keeps_its_own_transport_error(self):
+        """A cloud endpoint's own error is more useful than our wording."""
+        import httpx
+
+        with pytest.raises(httpx.TransportError):
+            asyncio.run(
+                _stream_response(
+                    "http://127.0.0.1:9",
+                    {"model": "m", "messages": [], "stream": True},
+                    StreamOptions(base_url="http://127.0.0.1:9"),
+                    "[ollama] test",
+                    None,
+                    False,
+                )
+            )

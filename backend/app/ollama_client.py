@@ -412,6 +412,21 @@ async def _stream_response(
             if opts.signal is not None and opts.signal.is_set():
                 raise asyncio.CancelledError()
             raise
+        except httpx.TransportError as e:
+            # A dead or still-starting local Ollama surfaces as an opaque httpx
+            # message ("All connection attempts failed") that tells the user
+            # nothing. Name the real problem: the server is up, the MODEL
+            # backend is not answering — the exact "server reachable but I
+            # cannot send" state after a server restart.
+            if opts.signal is not None and opts.signal.is_set():
+                raise asyncio.CancelledError()
+            if opts.base_url:
+                raise  # a cloud/custom endpoint's own error is more useful
+            raise OllamaError(
+                f"The model backend (Ollama) is not answering at {endpoint} — it may still be "
+                "starting after a server restart, or it is not running. Wait a few seconds "
+                "and send again, or start Ollama."
+            ) from e
         finally:
             if stop_task is not None and not stop_task.done():
                 stop_task.cancel()
