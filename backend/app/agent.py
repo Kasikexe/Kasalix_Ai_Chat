@@ -584,6 +584,8 @@ TOOL_JSON_EXAMPLES = f"""Available tools — to use one, respond with ONLY a sin
 {{"tool": "write_file", "args": {{"path": "src/app.ts", "content": "..."}}}} — for an EXISTING file only your changed lines are applied; the rest is preserved
 {{"tool": "delete_file", "args": {{"path": "src/old.ts"}}}}
 {{"tool": "gen_image", "args": {{"path": "assets/icon.png", "svg": "<svg ...>...</svg>"}}}} — write a project image asset (same SVG rules as draw_image)
+{{"tool": "draw_image", "args": {{"svg": "<svg ...>...</svg>"}}}} — DRAW the picture the user asked for straight into your reply (logo/icon/illustration); same SVG rules as gen_image, and the result tells you the exact markdown to include
+{{"tool": "read_image", "args": {{"path": "screenshots/ui.png"}}}} — have the vision model DESCRIBE a workspace image (screenshot, mockup, captured frame)
 {{"tool": "git_status", "args": {{}}}}
 {{"tool": "git_diff", "args": {{}}}}
 {{"tool": "git_commit", "args": {{"summary": "Raise max connections to 500"}}}}
@@ -604,7 +606,13 @@ TOOL_JSON_EXAMPLES = f"""Available tools — to use one, respond with ONLY a sin
 {{"tool": "count_lines", "args": {{"path": "src/app.ts"}}}}
 {{"tool": "glob", "args": {{"pattern": "**/*.py"}}}}
 {{"tool": "glob", "args": {{"pattern": "src/**/*.tsx"}}}}
-{{"tool": "multi_edit", "args": {{"path": "src/app.ts", "edits": [{{"old_string": "const x = 1;", "new_string": "const x = 2;"}}, {{"old_string": "foo();", "new_string": "bar();"}}]}}}}"""
+{{"tool": "multi_edit", "args": {{"path": "src/app.ts", "edits": [{{"old_string": "const x = 1;", "new_string": "const x = 2;"}}, {{"old_string": "foo();", "new_string": "bar();"}}]}}}}
+{{"tool": "preview_start", "args": {{"entry": "index.html"}}}} — serve the workspace and open the live preview window so you can test web work
+{{"tool": "preview_screenshot", "args": {{}}}} — SEE the preview page (the image is attached to the result; judge what is actually visible)
+{{"tool": "preview_console", "args": {{}}}} — read the preview page's console log/warn/error output and uncaught JS errors
+{{"tool": "preview_eval", "args": {{"code": "document.querySelectorAll('.tile').length"}}}} — run JavaScript inside the preview page and get the value back
+{{"tool": "preview_stop", "args": {{}}}} — stop the preview server and close the window when you are done validating
+"""
 
 
 # ─── Workspace listing ──────────────────────────────────────────────────

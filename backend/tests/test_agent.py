@@ -296,6 +296,14 @@ class TestAgentPromptGuards:
         assert '"tool": "web_search", "args": {"query"' in p
         assert "call web_search instead of guessing" in p
 
+    def test_every_tool_has_a_worked_example(self):
+        """The examples block is what the model copies — a tool with no example
+        there is a tool that barely gets called (web_search, draw_image and the
+        preview tools were all missing theirs)."""
+        from app.agent import AGENT_TOOL_DEFS, TOOL_JSON_EXAMPLES
+        missing = [t["name"] for t in AGENT_TOOL_DEFS if f'"{t["name"]}"' not in TOOL_JSON_EXAMPLES]
+        assert missing == []
+
     def test_user_deletion_intent_regex(self):
         import re
         assert re.search(r"\b(delet?e|remove|get rid of|clean up)\b", "please delete the old file", re.I)
