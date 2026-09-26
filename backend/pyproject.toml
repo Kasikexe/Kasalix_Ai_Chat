@@ -1,6 +1,6 @@
 [project]
 name = "kasalix-backend"
-version = "0.11.0"
+version = "0.12.0"
 description = "Kasalix AI Chat backend (Python port of the TypeScript/Hono backend)"
 requires-python = ">=3.12"
 dependencies = [
