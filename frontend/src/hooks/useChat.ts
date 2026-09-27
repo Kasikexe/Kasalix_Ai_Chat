@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ConversationMode, Message } from '../types';
+import type { AlcStreamEvent, ConversationMode, Message } from '../types';
 import { api } from '../services/api';
+import { describeAlcEvent } from '../utils/alc';
 
 const SYSTEM_PROMPT_KEY = 'ai-chat:systemPrompt';
 
@@ -46,6 +47,8 @@ interface StreamHandlers {
   onQuestion?: (q: { key: string; question: string }) => void;
   onApprovalRequest?: (q: { key: string; tool: string; args: Record<string, unknown> }) => void;
   onPlan?: (plan: string) => void;
+  /** ALC mode: one step of the cycle */
+  onAlcEvent?: (event: AlcStreamEvent) => void;
 }
 
 interface LiveEntry {
@@ -214,7 +217,10 @@ export function useChat(
   onApprovalRequest?: (q: { key: string; tool: string; args: Record<string, unknown> }) => void,
   onPlan?: (plan: string) => void,
   planMode?: 'off' | 'on' | 'auto',
-  toolPermission?: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit'
+  toolPermission?: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit',
+  /** ALC (Advanced Learning Cycle): gather evidence before answering */
+  alc = false,
+  onAlcEvent?: (event: AlcStreamEvent) => void
 ) {
   const key = initialConversationId ?? 'new';
   ensureLiveTimer();
@@ -228,6 +234,7 @@ export function useChat(
     onQuestion,
     onApprovalRequest,
     onPlan,
+    onAlcEvent,
   });
 
   // The entry lives in the module store; this ref ALWAYS points at the store
@@ -591,6 +598,41 @@ export function useChat(
             // Chat message is emitted by the backend (onChunk) — no duplicate injection here.
             notify(e);
           },
+          onAlcEvent: (event) => {
+            // ALC narrates its own cycle: stages drive the status line, the other
+            // steps become rows in the reply's timeline — never text in the
+            // answer itself (docs/ALC_DESIGN.md D10).
+            e.handlers.onAlcEvent?.(event);
+            if (event.type === 'alc:stage') {
+              e.currentStage = typeof event.stage === 'string' ? event.stage : '';
+            }
+            const step = describeAlcEvent(event);
+            if (step) {
+              const msgs = e.messages;
+              let assistantIdx = -1;
+              for (let i = msgs.length - 1; i >= 0; i--) {
+                if (msgs[i].role === 'assistant') { assistantIdx = i; break; }
+              }
+              if (assistantIdx >= 0) {
+                const msg = msgs[assistantIdx];
+                const timeline = [...(msg.timeline || [])];
+                // Flush any pending thinking first so the order stays
+                // thinking → ALC step → answer.
+                if (e.thinkingBuffer.trim()) {
+                  const last = timeline[timeline.length - 1];
+                  if (last && last.type === 'thinking' && (last as any).live) {
+                    timeline[timeline.length - 1] = { type: 'thinking', content: e.thinkingBuffer } as any;
+                  } else {
+                    timeline.push({ type: 'thinking' as const, content: e.thinkingBuffer });
+                  }
+                  e.thinkingBuffer = '';
+                }
+                timeline.push({ type: 'alc' as const, kind: step.kind, label: step.label, detail: step.detail, ok: step.ok });
+                e.messages = msgs.map((m, i) => i === assistantIdx ? { ...m, timeline } : m);
+              }
+            }
+            notify(e);
+          },
           onError: (err) => {
             // Store duration even on error if there's partial content
             const duration = Date.now() - e.startTime;
@@ -630,7 +672,8 @@ export function useChat(
         planningEnabled,
         autoApply,
         planMode,
-        toolPermission
+        toolPermission,
+        alc
       );
       return e.conversationId;
     } catch (err) {
@@ -642,7 +685,7 @@ export function useChat(
       e.liveTps = null;
       notify(e);
     }
-  }, [model, mode, workspacePath, planningEnabled, autoApply, planMode, toolPermission]);
+  }, [model, mode, workspacePath, planningEnabled, autoApply, planMode, toolPermission, alc]);
 
   const sendMessage = useCallback(
     async (content: string): Promise<string | undefined> => {

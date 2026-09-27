@@ -9,6 +9,8 @@ interface Props {
  conversationId?: string;
  model: string;
  thinkingEnabled?: boolean;
+ /** ALC toggle saved on this conversation (the backend persists it per chat) */
+ initialAlc?: boolean;
  onMessageSent: () => void;
  onConversationCreated: (id: string) => void;
  searchQuery?: string;
@@ -22,10 +24,14 @@ interface Props {
 }
 
 export function ChatView({
- initialMessages, conversationId, model, thinkingEnabled = false, onMessageSent, onConversationCreated,
+ initialMessages, conversationId, model, thinkingEnabled = false, initialAlc = false, onMessageSent, onConversationCreated,
  searchQuery, onSearchChange, onSearchNext, onSearchPrev, onForkConversation, onConversationUpdate, onConversationStarted,
-}: Props) {  const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, conversationId: convId, currentStage, liveDuration, liveTps } = useChat(
- model, initialMessages, conversationId, thinkingEnabled, 'chat', undefined, onConversationUpdate, false, false, undefined, undefined, undefined, undefined, onConversationStarted
+}: Props) {
+ // Normal | ALC for this chat. Normal must stay byte-identical to what the app
+ // did before ALC existed, so this defaults to off and is never forced on.
+ const [alc, setAlc] = useState(initialAlc);
+ const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, conversationId: convId, currentStage, liveDuration, liveTps } = useChat(
+ model, initialMessages, conversationId, thinkingEnabled, 'chat', undefined, onConversationUpdate, false, false, undefined, undefined, undefined, undefined, onConversationStarted, undefined, undefined, undefined, undefined, alc
  );
 
  // Multi-message selection state
@@ -133,7 +139,14 @@ export function ChatView({
  selectable={selectMode}
  onFork={selectMode ? undefined : handleFork}
  />
- <InputBar onSend={handleSend} onStop={stopGeneration} isStreaming={isStreaming} draftKey={conversationId ?? 'new'} />
+ <InputBar
+ onSend={handleSend}
+ onStop={stopGeneration}
+ isStreaming={isStreaming}
+ alc={alc}
+ onAlcChange={setAlc}
+ draftKey={conversationId ?? 'new'}
+ />
  </>
  );
 }

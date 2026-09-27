@@ -51,6 +51,10 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
   const planningEnabled = planMode !== 'off';
   const setPlanningEnabled = (v: boolean) => setPlanMode(v ? 'auto' : 'off');
   const [toolPermission, setToolPermission] = useState<'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit'>('auto');
+  // ALC (Advanced Learning Cycle): gather from the docs, the project's own notes
+  // and the web, then hand the agent a briefing. Off by default — Normal Koding
+  // behaviour must not change unless the user asks for it.
+  const [alc, setAlc] = useState(conversation?.alc === true);
 
   // Auto-apply is always ON — the AI writes/deletes files directly.
   const autoApply = true;
@@ -151,7 +155,8 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     handleApprovalRequest,
     undefined,
     planMode,
-    toolPermission
+    toolPermission,
+    alc
   );
 
   // ─── Layout State ──────────────────────────────────────────
@@ -961,6 +966,8 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
             onPlanModeChange={setPlanMode}
             toolPermission={toolPermission}
             onToolPermissionChange={setToolPermission}
+            alc={alc}
+            onAlcChange={setAlc}
             draftKey={convKey}
           />
         </div>

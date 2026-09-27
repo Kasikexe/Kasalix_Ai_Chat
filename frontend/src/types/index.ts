@@ -1,11 +1,45 @@
 export type Role = 'user' | 'assistant' | 'system' | 'activity';
 export type ConversationMode = 'chat' | 'agent';
 
+/**
+ * ALC (Advanced Learning Cycle) steps. Every one of these arrives as an `alc:*`
+ * SSE event while the cycle runs — they are the cycle's own narration and never
+ * mix into the answer text (docs/ALC_DESIGN.md D10).
+ */
+export type AlcEventKind =
+  | 'start'
+  | 'stage'
+  | 'goal'
+  | 'decision'
+  | 'search'
+  | 'result'
+  | 'finding'
+  | 'reject'
+  | 'gap'
+  | 'budget'
+  | 'index'
+  | 'knowledge-written'
+  | 'done'
+  | 'notice';
+
+/** A raw `alc:*` payload from the backend. Fields depend on the kind. */
+export interface AlcStreamEvent {
+  type: string;
+  kind: AlcEventKind;
+  [key: string]: unknown;
+}
+
 /** A single event in the agent's execution timeline (thinking, tool call, etc.) */
 export type TimelineEvent =
   | { type: 'thinking'; content: string }
   | { type: 'narration'; content: string }
-  | { type: 'tool'; tool: string; args: string; status?: 'running' | 'done' | 'error'; result?: string; ok?: boolean };
+  | { type: 'tool'; tool: string; args: string; status?: 'running' | 'done' | 'error'; result?: string; ok?: boolean }
+  /**
+   * One step of the ALC cycle. `label` is the step's headline ("Searched the
+   * docs for …") and `detail` the expandable extra line (the query's findings,
+   * a rejection reason, the gaps left open, …).
+   */
+  | { type: 'alc'; kind: AlcEventKind; label: string; detail?: string; ok?: boolean };
 
 /** A page a web search actually used, shown under the answer as a link. */
 export interface SearchSource {
@@ -48,6 +82,8 @@ export interface Conversation {
   messages: Message[];
   model: string;
   mode: ConversationMode;
+  /** ALC toggle — persisted per conversation so re-opening one restores its mode */
+  alc?: boolean;
   workspacePath?: string;
   ownerId: string;
   createdAt: number;

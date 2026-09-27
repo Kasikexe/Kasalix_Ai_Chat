@@ -434,6 +434,8 @@ const stageIcons: Record<string, LucideIcon> = {
  'chat:thinking': MessageSquare, 'vision:analyzing': Eye, 'planning:create': ClipboardList,
  'planning:evaluating': ClipboardList, 'image:generating': Palette, 'code:generating': Code2,
  'writing:files': PenLine, 'summary:writing': Sparkles, 'cloud:warming': Cloud, 'cloud:unavailable': CloudOff,
+ // ALC (Advanced Learning Cycle) stages
+ 'alc:analyzing': Brain, 'alc:indexing': Layers, 'alc:gathering': Search, 'alc:answering': Sparkles,
  'agent': Bot, 'reading': FolderOpen, 'writing': PenLine, 'code': Code2, 'editing': PenLine,
  'summary': Sparkles, 'chat': MessageSquare, 'search': Globe, 'planning': ClipboardList, 'vision': Eye,
 };
@@ -462,6 +464,11 @@ const stageLabels: Record<string, string> = {
  'writing:files': 'Writing files', 'summary:writing': 'Polishing response',
   'cloud:warming': 'Cloud model warming up (this may take a few minutes)...',
   'cloud:unavailable': 'Cloud unavailable — using local model',
+ // ALC (Advanced Learning Cycle) stages
+ 'alc:analyzing': 'ALC — reading the task',
+ 'alc:indexing': 'ALC — indexing documentation',
+ 'alc:gathering': 'ALC — gathering information',
+ 'alc:answering': 'ALC — answering from the evidence',
  // Fallbacks for legacy / unknown namespaced stages
  'agent': 'Working',
  'reading': 'Reading workspace',
@@ -529,6 +536,41 @@ function TimelineRow({ event, isStreaming, isLast }: { event: TimelineEvent; isS
      <div className="flex items-start gap-2 px-2.5 py-1 text-[11px] italic text-gray-400">
        <Sparkles size={10} className="text-[#9b8cc6] flex-shrink-0 mt-0.5"/>
        <span className="min-w-0">{event.content}</span>
+     </div>
+   );
+ }
+
+ if (event.type === 'alc') {
+   // One step of the ALC cycle. Deliberately quieter than a tool row: these are
+   // the cycle's working notes (what it searched, what it kept, what it could
+   // not find) and the answer below them is still the point.
+   const alcIcons: Partial<Record<string, LucideIcon>> = {
+     start: Sparkles, goal: ClipboardList, decision: Brain, search: Search,
+     result: FileText, finding: Check, reject: Trash2, gap: HelpCircle,
+     budget: Gauge, index: Layers, 'knowledge-written': BookOpen, done: CheckCircle2,
+     notice: HelpCircle,
+   };
+   const AlcIcon = alcIcons[event.kind] || Sparkles;
+   const isGap = event.ok === false;
+   const hasDetail = !!event.detail && event.detail.length > 0;
+   return (
+     <div className={`rounded-md border overflow-hidden ${isGap ? 'border-amber-900/40 bg-amber-950/10' : 'border-teal-900/40 bg-[#0b1716]'}`}>
+       <button
+         onClick={hasDetail ? () => setExpanded((v) => !v) : undefined}
+         className={`w-full flex items-center gap-2 px-2.5 py-1 text-left text-[11px] ${hasDetail ? 'cursor-pointer hover:bg-gray-800/30' : ''} transition-colors`}
+       >
+         <AlcIcon size={10} className={`flex-shrink-0 ${isGap ? 'text-amber-500/80' : 'text-teal-400/80'}`} />
+         <span className={`flex-shrink-0 text-[9px] font-semibold uppercase tracking-wider ${isGap ? 'text-amber-600/80' : 'text-teal-500/80'}`}>ALC</span>
+         <span className="min-w-0 truncate text-gray-300">{event.label}</span>
+         {hasDetail && (
+           <ChevronDown size={10} className={`ml-auto flex-shrink-0 text-gray-600 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+         )}
+       </button>
+       {expanded && hasDetail && (
+         <div className="px-2.5 pb-2 pt-1 text-[10px] text-gray-500 leading-relaxed whitespace-pre-wrap border-t border-gray-800/40 font-mono max-h-48 overflow-y-auto">
+           {event.detail}
+         </div>
+       )}
      </div>
    );
  }

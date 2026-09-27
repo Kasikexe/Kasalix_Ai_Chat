@@ -34,6 +34,9 @@ ADMIN_PATHS = [
 # admin_authenticated() always allows requests now.
 
 SESSION_PROTECTED_PATHS = [
+    # /api/alc only *reports on* folders the user configured, but those folders
+    # live on the server's disk — keep it behind the session like /api/files.
+    "/api/alc",
     "/api/chat",
     "/api/conversations",
     "/api/files",

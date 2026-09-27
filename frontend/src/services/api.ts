@@ -1,4 +1,4 @@
-import type { Conversation, ConversationMode, Message, OllamaModel, FileEntry, MemoryData, SearchSource } from '../types';
+import type { AlcStreamEvent, Conversation, ConversationMode, Message, OllamaModel, FileEntry, MemoryData, SearchSource } from '../types';
 
 // ─── Server URL Configuration ────────────────────────────
 // On desktop (Electron / browser dev), the Vite proxy handles '/api' -> 'localhost:3001'.
@@ -129,6 +129,46 @@ export interface AppSettings {
   modelAssignments?: Record<string, string>;
   cloudModelAssignments?: Record<string, string>;
   updatedAt: number;
+  // ─── ALC (Advanced Learning Cycle) — docs/ALC_DESIGN.md ───
+  /** Folders ALC may search for documentation */
+  alcDocsPaths?: string[];
+  alcMaxCycles?: number;
+  alcMaxToolCalls?: number;
+  alcMaxTokens?: number;
+  /** May ALC search the web (needs a Tavily key) */
+  alcWebEnabled?: boolean;
+  /** May ALC save what it learned into ALC/knowledge for later cycles */
+  alcWriteKnowledge?: boolean;
+}
+
+/** What the documentation index currently holds (GET /api/alc/index) */
+export interface AlcIndexInfo {
+  /** How many folders the user configured (existing + unusable) */
+  configured: number;
+  /** Existing, deduplicated folders the index was built from */
+  roots: string[];
+  /** Configured entries that are not usable directories */
+  missing: string[];
+  /** Whether this server's SQLite has FTS5 (else search falls back to scanning) */
+  fts5: boolean;
+  indexPath: string;
+  status: { built: boolean; files: number; chunks: number; lastBuiltAt: number };
+}
+
+export interface AlcKnowledgeTopic {
+  /** Slug used as the note file name */
+  topic: string;
+  title: string;
+  notes: number;
+  tags: string[];
+}
+
+export interface AlcKnowledgeInfo {
+  workspace: string;
+  available: boolean;
+  topics: AlcKnowledgeTopic[];
+  stats: { topics?: number; notes?: number; bytes?: number; known?: boolean };
+  error?: string;
 }
 
 export interface UserProfile {
@@ -365,7 +405,11 @@ export const api = {
     );
   },
 
-  async saveSettings(payload: { hiddenModels?: string[]; modelAssignments?: Record<string, string>; cloudModelAssignments?: Record<string, string> }): Promise<AppSettings> {
+  async saveSettings(payload: Partial<Pick<AppSettings,
+    'hiddenModels' | 'modelAssignments' | 'cloudModelAssignments' |
+    'alcDocsPaths' | 'alcMaxCycles' | 'alcMaxToolCalls' | 'alcMaxTokens' |
+    'alcWebEnabled' | 'alcWriteKnowledge'
+  >>): Promise<AppSettings> {
     return handleResponse<AppSettings>(
       await fetch(`${API_BASE}/settings`, authedFetch(`${API_BASE}/settings`, {
         method: 'PUT',
@@ -380,6 +424,41 @@ export const api = {
       await fetch(`${API_BASE}/settings/reset`, authedFetch(`${API_BASE}/settings/reset`, {
         method: 'POST',
       }))
+    );
+  },
+
+  // ─── ALC (Advanced Learning Cycle) ────────────────────
+  /** What the documentation index holds right now (cheap — no folder walk) */
+  async getAlcIndex(): Promise<AlcIndexInfo> {
+    return handleResponse<AlcIndexInfo>(
+      await fetch(`${API_BASE}/alc/index`, authedFetch(`${API_BASE}/alc/index`))
+    );
+  },
+
+  /** Build/refresh the documentation index now (force ignores mtime+hash skips) */
+  async rebuildAlcIndex(force = true): Promise<{ ok: boolean; error?: string; roots: string[]; status: AlcIndexInfo['status'] }> {
+    return handleResponse(
+      await fetch(`${API_BASE}/alc/index`, authedFetch(`${API_BASE}/alc/index`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force }),
+      }))
+    );
+  },
+
+  /** Forget every indexed document (it is a cache — it can be rebuilt) */
+  async clearAlcIndex(): Promise<{ ok: boolean; status: AlcIndexInfo['status'] }> {
+    return handleResponse(
+      await fetch(`${API_BASE}/alc/index`, authedFetch(`${API_BASE}/alc/index`, {
+        method: 'DELETE',
+      }))
+    );
+  },
+
+  /** What ALC remembered for a workspace (ALC/knowledge/*.md) */
+  async getAlcKnowledge(workspace: string): Promise<AlcKnowledgeInfo> {
+    return handleResponse<AlcKnowledgeInfo>(
+      await fetch(`${API_BASE}/alc/knowledge?workspace=${encodeURIComponent(workspace)}`, authedFetch(`${API_BASE}/alc/knowledge`))
     );
   },
 
@@ -662,6 +741,8 @@ streamChat(
     onPlan?: (plan: string) => void;
     /** Agent mode: the model's own words between tool calls */
     onNarration?: (text: string) => void;
+    /** ALC mode: one step of the cycle (alc:start, alc:search, alc:finding, …) */
+    onAlcEvent?: (event: AlcStreamEvent) => void;
   },
   signal?: AbortSignal,
   mode?: ConversationMode,
@@ -672,7 +753,9 @@ streamChat(
   planningEnabled?: boolean,
   autoApply?: boolean,
   planMode?: 'off' | 'on' | 'auto',
-  toolPermission?: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit'
+  toolPermission?: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit',
+  /** ALC (Advanced Learning Cycle): gather evidence before answering */
+  alc?: boolean
 ): Promise<void> {
   return (async () => {
     const profile = loadProfile();
@@ -721,6 +804,7 @@ streamChat(
         autoApply: autoApply === true,
         planMode: planMode || 'off',
         toolPermission: toolPermission || 'auto',
+        alc: alc === true,
       }),
       signal: controller.signal,
     }));
@@ -772,6 +856,13 @@ streamChat(
             case 'sources': callbacks.onSources?.(Array.isArray(parsed.sources) ? parsed.sources : []); break;
             case 'done': callbacks.onDone(); return true;
             case 'error': callbacks.onError(parsed.error); return true;
+            default:
+              // ALC steps travel as their own `alc:*` types — one vocabulary for
+              // the whole cycle, so new steps never need a case added here.
+              if (typeof parsed.type === 'string' && parsed.type.startsWith('alc:')) {
+                callbacks.onAlcEvent?.(parsed as AlcStreamEvent);
+              }
+              break;
           }
         } catch (e) {
           console.error('SSE parse error:', e);

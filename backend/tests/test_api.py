@@ -79,6 +79,23 @@ class TestSettings:
         data = client.get("/api/settings").json()
         assert data.get("kvCacheOffload") is False
 
+    def test_put_settings_accepts_the_alc_keys(self, client, admin_cookies):
+        """Every ALC key must survive the settings allowlist — a missing entry
+        means the ALC settings UI would silently save nothing."""
+        payload = {
+            "alcDocsPaths": ["C:/docs"],
+            "alcMaxCycles": 2,
+            "alcMaxToolCalls": 5,
+            "alcMaxTokens": 1500,
+            "alcWebEnabled": False,
+            "alcWriteKnowledge": False,
+        }
+        r = client.put("/api/settings", cookies=admin_cookies, json=payload)
+        assert r.status_code == 200, r.text
+        data = client.get("/api/settings").json()
+        for key, value in payload.items():
+            assert data.get(key) == value, f"{key} did not round-trip through /api/settings"
+
 
 class TestConversations:
     def test_crud(self, client, auth):

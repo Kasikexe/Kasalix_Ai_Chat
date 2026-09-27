@@ -1,0 +1,256 @@
+"""ALC scratchpad — the controller's working memory for one turn.
+
+The whole point of ALC's context management is that raw tool output never
+accumulates in the model's context. It is fetched, judged, reduced to a bounded
+finding, and the raw text is dropped in the same round. Four context classes
+(see docs/ALC_DESIGN.md §4.4) map onto this object:
+
+    active context          -> render() (goal + questions + findings + gaps)
+    retrieved information   -> Finding (bounded chars, with its source)
+    no longer needed        -> rejected / dropped (metadata only, never re-injected)
+    persistent knowledge    -> Phase 2 (ALC/knowledge in the workspace)
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+# One finding is a bounded excerpt, not a document: ~800 chars is enough for
+# the model to judge and reuse, and small enough that ten of them still fit a
+# 1.7B model's context next to the conversation.
+MAX_FINDING_CHARS = 800
+DEFAULT_BUDGET_TOKENS = 4000
+MAX_FINDINGS = 24
+
+
+def estimate_tokens(text: str) -> int:
+    """Same heuristic as the pipeline/agent (≈4 chars per token)."""
+    return max(1, (len(text) + 3) // 4)
+
+
+def normalize_query(query: str) -> str:
+    """Dedupe key for queries: casing, spacing and punctuation must not matter."""
+    text = " ".join(str(query or "").split()).strip().strip("\"'").lower()
+    return text.rstrip(" ?!.,;:")
+
+
+def _clip(text: str, limit: int = MAX_FINDING_CHARS) -> str:
+    text = " ".join(str(text or "").split()).strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+@dataclass
+class Finding:
+    """One piece of retained information, always with its provenance."""
+
+    source: str
+    text: str
+    query: str = ""
+    score: float = 0.0
+    data: dict[str, Any] = field(default_factory=dict)
+
+    def key(self) -> str:
+        return f"{self.source}|{_clip(self.text, 96).lower()}"
+
+
+@dataclass
+class Scratchpad:
+    goal: str = ""
+    questions: list[str] = field(default_factory=list)
+    # What the project already knows (Koding only): topic -> note count. A small
+    # model will not think to search a store it does not know exists.
+    knowledge_topics: list[dict[str, Any]] = field(default_factory=list)
+    findings: list[Finding] = field(default_factory=list)
+    rejected: list[dict[str, str]] = field(default_factory=list)
+    dropped: list[Finding] = field(default_factory=list)
+    gaps: list[str] = field(default_factory=list)
+    queries: list[str] = field(default_factory=list)
+    # Tools that produced nothing this turn. A small model will happily ask the
+    # same empty source again; the controller uses this to fall back to a source
+    # that has not been tried (see _gather).
+    failed_sources: list[str] = field(default_factory=list)
+    cycles: int = 0
+    tool_calls: int = 0
+
+    # ── mutation ────────────────────────────────────────────────────────
+    def add_question(self, question: str) -> None:
+        q = " ".join(str(question or "").split()).strip()
+        if q and q not in self.questions:
+            self.questions.append(q)
+
+    def set_knowledge_topics(self, topics: list[dict[str, Any]]) -> None:
+        self.knowledge_topics = list(topics or [])[:20]
+
+    def note_query(self, query: str, tool: str = "") -> None:
+        key = self._query_key(query, tool)
+        if key and key not in self.queries:
+            self.queries.append(key)
+
+    def has_query(self, query: str, tool: str = "") -> bool:
+        """True when this exact lookup was already made against this source.
+
+        Tracked PER SOURCE on purpose: asking the documentation and then the
+        project knowledge with the same question is normal retrieval, and a
+        global dedupe would forbid the second — which is how a cycle that missed
+        the documentation answer failed to find the same fact in project notes.
+        """
+        return self._query_key(query, tool) in self.queries
+
+    @staticmethod
+    def _query_key(query: str, tool: str = "") -> str:
+        normalized = normalize_query(query)
+        if not normalized:
+            return ""
+        return f"{tool}:{normalized}" if tool else normalized
+
+    def add_finding(
+        self,
+        *,
+        source: str,
+        text: str,
+        query: str = "",
+        score: float = 0.0,
+        data: dict[str, Any] | None = None,
+    ) -> Finding | None:
+        """Keep one piece of information. Returns None when it is a duplicate."""
+        clipped = _clip(text)
+        if not clipped:
+            return None
+        finding = Finding(
+            source=str(source or "unknown"),
+            text=clipped,
+            query=query,
+            score=float(score or 0.0),
+            data=dict(data or {}),
+        )
+        existing = {f.key() for f in self.findings}
+        if finding.key() in existing:
+            return None
+        self.findings.append(finding)
+        while len(self.findings) > MAX_FINDINGS:
+            self._drop(self.findings.pop(0), "over the finding limit")
+        return finding
+
+    def add_reject(self, source: str, reason: str) -> None:
+        """Remember what was discarded so it is not fetched and re-judged."""
+        entry = {"source": str(source or "unknown"), "reason": str(reason or "")}
+        if entry not in self.rejected:
+            self.rejected.append(entry)
+
+    def mark_failed(self, tool_name: str) -> None:
+        name = str(tool_name or "").strip()
+        if name and name not in self.failed_sources:
+            self.failed_sources.append(name)
+
+    def add_gap(self, gap: str) -> None:
+        g = " ".join(str(gap or "").split()).strip()
+        if g and g not in self.gaps:
+            self.gaps.append(g)
+
+    def _drop(self, finding: Finding, reason: str) -> None:
+        self.dropped.append(finding)
+        self.add_reject(finding.source, reason)
+
+    def prune(self, max_tokens: int = DEFAULT_BUDGET_TOKENS) -> int:
+        """Shrink to the token budget, cheapest findings first. Returns tokens after."""
+        while len(self.findings) > 1 and self.tokens() > max_tokens:
+            # Drop the least useful: lowest judge score, oldest on a tie.
+            worst = min(range(len(self.findings)), key=lambda i: (self.findings[i].score, i))
+            self._drop(self.findings.pop(worst), "dropped to stay inside the context budget")
+        return self.tokens()
+
+    # ── rendering ───────────────────────────────────────────────────────
+    def tokens(self) -> int:
+        return estimate_tokens(self.render())
+
+    def render(self) -> str:
+        """The controller's own view of the turn — what it feeds the model."""
+        lines: list[str] = []
+        lines.append(f"TASK: {self.goal or '(unknown)'}")
+        if self.questions:
+            lines.append("")
+            lines.append("OPEN QUESTIONS:")
+            lines.extend(f"- {q}" for q in self.questions)
+        if self.knowledge_topics:
+            lines.append("")
+            lines.append(
+                "PROJECT KNOWLEDGE ALREADY STORED for this project "
+                "(search it with knowledge_search before using the web):"
+            )
+            for topic in self.knowledge_topics:
+                notes = int(topic.get("notes") or 0)
+                lines.append(f"- {topic.get('topic') or topic.get('title')} ({notes} note{'s' if notes != 1 else ''})")
+        if self.findings:
+            lines.append("")
+            lines.append("GATHERED INFORMATION (already available — do not fetch it again):")
+            for i, f in enumerate(self.findings, start=1):
+                lines.append(f"[{i}] ({f.source}) {f.text}")
+        if self.failed_sources:
+            lines.append("")
+            lines.append(
+                "SOURCES THAT CAME UP EMPTY (do not ask these again): "
+                + ", ".join(self.failed_sources)
+            )
+        if self.rejected:
+            lines.append("")
+            lines.append("ALREADY REJECTED (off-topic, empty or duplicate — do not fetch again):")
+            for r in self.rejected[-8:]:
+                lines.append(f"- {r['source']} — {r['reason']}")
+        if self.gaps:
+            lines.append("")
+            lines.append("UNRESOLVED GAPS:")
+            lines.extend(f"- {g}" for g in self.gaps)
+        if self.queries:
+            lines.append("")
+            lines.append("QUERIES ALREADY TRIED: " + " | ".join(self.queries[-12:]))
+        return "\n".join(lines)
+
+    def to_briefing(self) -> str:
+        """What the acting phase receives: the findings, not the bookkeeping."""
+        if not self.findings:
+            return ""
+        lines = [
+            "[ALC — INFORMATION GATHERED IN THIS CYCLE]",
+            "The following was retrieved before answering. It is not a summary and not a "
+            "suggestion: it is the evidence for this turn.",
+            "",
+        ]
+        for i, f in enumerate(self.findings, start=1):
+            lines.append(f"[{i}] ({f.source})")
+            lines.append(f.text)
+            lines.append("")
+        lines.append("INSTRUCTIONS:")
+        lines.append("- Answer the user's question using this information as your primary source of truth.")
+        lines.append("- Cite the source of a specific fact only when it is useful to the user.")
+        lines.append("- Do not invent versions, numbers, dates or APIs that are not here or in the user's message.")
+        if self.gaps:
+            lines.append(
+                "- These could not be resolved: " + "; ".join(self.gaps) + ". Say so plainly "
+                "instead of guessing."
+            )
+        return "\n".join(lines)
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "cycles": self.cycles,
+            "toolCalls": self.tool_calls,
+            "findings": len(self.findings),
+            "rejected": len(self.rejected),
+            "gaps": list(self.gaps),
+            "knowledgeTopics": len(self.knowledge_topics),
+            "tokens": self.tokens(),
+        }
+
+
+def looks_like_greeting(text: str) -> bool:
+    """Tiny guard used by the heuristic fallback paths (not a router)."""
+    return bool(
+        re.fullmatch(
+            r"(hi|hey|hello|yo|thanks|thank you|ok|okay|k|cool|nice|great|bye|good (morning|night))[!. ]*",
+            (text or "").strip().lower(),
+        )
+    )

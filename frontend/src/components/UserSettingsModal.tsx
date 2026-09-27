@@ -9,6 +9,7 @@ import {
 import type { UserProfile, MemoryData } from '../types';
 import { useToast } from '../hooks/useToast';
 import { getSavedServerUrl } from '../services/api';
+import { AlcSettings } from './AlcSettings';
 
 const AUTO_UPDATE_KEY = 'ai-chat:autoUpdate';
 
@@ -48,12 +49,13 @@ interface Props {
  onEditMemoryEntry: (category: string, key: string, value: string) => void;
  onRemoveMemoryEntry: (category: string, key: string) => void;
  onAddMemoryCategory: (category: string) => void;
- onRemoveMemoryCategory: (category: string) => void;
- onResetMemory: () => void;
- onRefreshMemory?: () => void;
+ onRemoveMemoryCategory: (category: string) => void;  onResetMemory: () => void;
+  onRefreshMemory?: () => void;
+  /** Workspace of the open conversation — where ALC keeps its project knowledge */
+  alcWorkspacePath?: string;
 }
 
-type TabId = 'profile' | 'preferences' | 'appearance' | 'memory' | 'account';
+type TabId = 'profile' | 'preferences' | 'appearance' | 'memory' | 'alc' | 'account';
 type Section = 'core' | 'koding';
 
 interface TabDef {
@@ -67,6 +69,7 @@ const TABS: TabDef[] = [
  { id: 'preferences', label: 'AI', icon: <Brain size={16} /> },
  { id: 'appearance', label: 'Theme', icon: <Sun size={16} /> },
  { id: 'memory', label: 'Memory', icon: <Database size={16} /> },
+ { id: 'alc', label: 'ALC', icon: <BookOpen size={16} /> },
  { id: 'account', label: 'Account', icon: <Shield size={16} /> },
 ];
 
@@ -80,6 +83,7 @@ export function UserSettingsModal({
  onAddMemoryCategory, onRemoveMemoryCategory,
  onResetMemory,
  onRefreshMemory,
+ alcWorkspacePath,
 }: Props) {
  const [activeTab, setActiveTab] = useState<TabId>('profile');
  const [section, setSection] = useState<Section>('core');
@@ -1077,6 +1081,9 @@ export function UserSettingsModal({
  )}
 
  {/* ==================== ACCOUNT TAB ==================== */}
+ {/* ==================== ALC TAB ==================== */}
+ {activeTab === 'alc' && <AlcSettings workspacePath={alcWorkspacePath} />}
+
  {activeTab === 'account' && (
  <div key="tab-account"className="space-y-4 animate-fade-in">
  <div className="space-y-3">

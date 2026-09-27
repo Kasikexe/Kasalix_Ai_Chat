@@ -1091,6 +1091,68 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
     except Exception:  # noqa: BLE001
         pass
 
+    # ─── ALC (Advanced Learning Cycle) ────────────────────
+    # Orthogonal to mode: ALC overlays whichever engine is running. It inherits
+    # everything resolved above (cloud probe, model swap, `think`), so an ALC
+    # turn can never answer with a different model than Normal mode would.
+    if opts.get("alc") is True:
+        from .alc import emit_alc_notice
+
+        alc_opts: dict[str, Any] = {
+            **opts,
+            "model": model,
+            "messages": messages,
+            "think": think,
+            "intent": intent,
+            "workspacePath": workspace_path,
+            "cloudEndpoint": _cloud_endpoint.get() or None,
+            "cloudApiKey": _cloud_api_key.get() or None,
+            "onChunk": on_chunk,
+            "onThinking": on_thinking,
+            "onStage": on_stage,
+            "onMetrics": on_metrics,
+        }
+
+        if intent["hasImage"]:
+            emit_alc_notice(
+                alc_opts,
+                "unsupported-turn",
+                "ALC skipped this turn because it starts from an image.",
+            )
+        elif mode == "agent" and opts.get("autoApply") is True:
+            # Koding: gather the evidence HERE, then let the normal agent branch
+            # below do the work with it as `extraContext`. Routing stays in one
+            # place, so the code model, plan mode and tool permissions behave
+            # exactly as in Normal mode.
+            from .alc import run_alc_gather
+
+            collected: list[dict[str, Any]] = []
+            forward_alc_event = opts.get("onAlcEvent")
+
+            def _capture_alc_event(event: dict[str, Any]) -> None:
+                collected.append(event)
+                if callable(forward_alc_event):
+                    try:
+                        forward_alc_event(event)
+                    except Exception:  # noqa: BLE001
+                        pass
+
+            log_info("[pipeline] ALC mode (Koding) — gathering before the agent loop")
+            alc_opts["onAlcEvent"] = _capture_alc_event
+            opts["alcBriefing"] = await run_alc_gather(alc_opts)
+            opts["alcEvents"] = collected
+        elif mode == "agent":
+            emit_alc_notice(
+                alc_opts,
+                "unsupported-turn",
+                "ALC in Koding needs the coding agent (auto-apply) — this turn ran normally.",
+            )
+        else:
+            from .alc import run_alc_turn
+
+            log_info("[pipeline] ALC mode — running the learning cycle")
+            return await run_alc_turn(alc_opts)
+
     # ─── IMAGE REQUESTS IN AGENT (KODING) MODE ────────────
     if mode == "agent" and not intent["hasImage"]:
         agent_user_text = re.sub(r"\[image:[^\]]+\]", "", last_user_for_think.get("content", "") if last_user_for_think else "").strip()
@@ -1173,7 +1235,13 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
                 "temperature": temperature,
                 "top_p": top_p,
                 "max_tokens": max_tokens,
-                "extraContext": memory_context or None,
+                # ALC (when on) hands the agent the evidence it gathered before
+                # the loop started, alongside the per-user memory.
+                "extraContext": "\n\n".join(
+                    part for part in (memory_context, opts.get("alcBriefing")) if part
+                )
+                or None,
+                "alcEvents": opts.get("alcEvents") or None,
             }
         )
 

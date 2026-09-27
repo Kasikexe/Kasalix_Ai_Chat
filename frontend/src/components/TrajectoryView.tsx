@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Play, Square, MessageSquare, Wrench, ClipboardList, FileText, CheckCircle2, Search, Brain, RefreshCw, XCircle, type LucideIcon } from 'lucide-react';
+import { Play, Square, MessageSquare, Wrench, ClipboardList, FileText, CheckCircle2, Search, Brain, RefreshCw, XCircle, Sparkles, Gauge, HelpCircle, Layers, BookOpen, Trash2, type LucideIcon } from 'lucide-react';
 
 // ─── Event types (mirrors backend session-log.ts) ──────────────────────
 
@@ -39,6 +39,23 @@ const EVENT_STYLES: Record<string, { bg: string; border: string; icon: LucideIco
  'thinking': { bg: 'bg-purple-900/20', border: 'border-[#2a3a52]', icon: Brain, label: 'Thinking' },
  'stage': { bg: 'bg-sky-900/20', border: 'border-sky-700/50', icon: RefreshCw, label: 'Stage' },
  'error': { bg: 'bg-red-900/20', border: 'border-[#5a3030]', icon: XCircle, label: 'Error' },
+ // ALC (Advanced Learning Cycle) — one style per step of the cycle. These are
+ // written to the session log before the agent loop starts (agent.py), so the
+ // trajectory shows how the briefing's evidence was gathered.
+ 'alc:start': { bg: 'bg-teal-900/20', border: 'border-teal-700/50', icon: Sparkles, label: 'ALC Started' },
+ 'alc:stage': { bg: 'bg-teal-900/10', border: 'border-teal-800/40', icon: RefreshCw, label: 'ALC Stage' },
+ 'alc:goal': { bg: 'bg-teal-900/20', border: 'border-teal-700/50', icon: ClipboardList, label: 'ALC Goal' },
+ 'alc:decision': { bg: 'bg-teal-900/20', border: 'border-teal-700/50', icon: Brain, label: 'ALC Decision' },
+ 'alc:search': { bg: 'bg-teal-900/20', border: 'border-teal-700/50', icon: Search, label: 'ALC Search' },
+ 'alc:result': { bg: 'bg-teal-900/10', border: 'border-teal-800/40', icon: FileText, label: 'ALC Result' },
+ 'alc:finding': { bg: 'bg-emerald-900/20', border: 'border-emerald-700/50', icon: CheckCircle2, label: 'ALC Finding' },
+ 'alc:reject': { bg: 'bg-[#1a1610]', border: 'border-[#5a4a30]', icon: Trash2, label: 'ALC Dropped' },
+ 'alc:gap': { bg: 'bg-amber-900/20', border: 'border-amber-700/50', icon: HelpCircle, label: 'ALC Gap' },
+ 'alc:budget': { bg: 'bg-gray-800/40', border: 'border-gray-700/50', icon: Gauge, label: 'ALC Budget' },
+ 'alc:index': { bg: 'bg-teal-900/10', border: 'border-teal-800/40', icon: Layers, label: 'ALC Index' },
+ 'alc:knowledge-written': { bg: 'bg-emerald-900/20', border: 'border-emerald-700/50', icon: BookOpen, label: 'ALC Remembered' },
+ 'alc:done': { bg: 'bg-emerald-900/20', border: 'border-[#1a3a33]', icon: CheckCircle2, label: 'ALC Done' },
+ 'alc:notice': { bg: 'bg-amber-900/20', border: 'border-amber-700/50', icon: XCircle, label: 'ALC Notice' },
 };
 
 // ─── Props ──────────────────────────────────────────────────────────────

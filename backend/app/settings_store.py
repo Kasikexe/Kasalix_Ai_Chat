@@ -40,6 +40,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "ollamaNumParallel": 0,
     "ollamaMaxLoadedModels": 0,
     "ollamaKeepAlive": "",
+    # ALC (Advanced Learning Cycle) — see docs/ALC_DESIGN.md
+    "alcDocsPaths": [],
+    "alcMaxCycles": 3,
+    "alcMaxToolCalls": 12,
+    "alcMaxTokens": 4000,
+    "alcWebEnabled": True,
+    "alcWriteKnowledge": True,
     "updatedAt": 0,
 }
 
@@ -130,4 +137,51 @@ async def get_ollama_settings() -> dict[str, Any]:
         "ollamaNumParallel": coerce_num_setting(parsed.get("ollamaNumParallel")),
         "ollamaMaxLoadedModels": coerce_num_setting(parsed.get("ollamaMaxLoadedModels")),
         "ollamaKeepAlive": coerce_keep_alive(parsed.get("ollamaKeepAlive")),
+    }
+
+
+# ─── ALC (Advanced Learning Cycle) ──────────────────────────────────────
+# Budgets are clamped here, not in the UI: a hand-edited settings.json must not
+# be able to turn the gather loop unbounded.
+ALC_MAX_CYCLES_LIMIT = 6
+ALC_MAX_TOOL_CALLS_LIMIT = 20
+ALC_MAX_TOKENS_LIMIT = 6000
+ALC_MAX_DOC_PATHS = 20
+
+
+def coerce_limit(value: Any, default: int, low: int, high: int) -> int:
+    """Clamp an ALC budget setting; junk falls back to the default."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(parsed, high))
+
+
+def coerce_alc_paths(value: Any) -> list[str]:
+    """Documentation folders: list of non-empty strings, de-duplicated and capped."""
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return []
+    paths: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str):
+            continue
+        path = entry.strip()
+        if path and path not in paths:
+            paths.append(path)
+    return paths[:ALC_MAX_DOC_PATHS]
+
+
+async def get_alc_settings() -> dict[str, Any]:
+    """ALC settings — used by the ALC controller for every cycle."""
+    parsed = read_settings_cached()
+    return {
+        "alcDocsPaths": coerce_alc_paths(parsed.get("alcDocsPaths")),
+        "alcMaxCycles": coerce_limit(parsed.get("alcMaxCycles"), 3, 1, ALC_MAX_CYCLES_LIMIT),
+        "alcMaxToolCalls": coerce_limit(parsed.get("alcMaxToolCalls"), 12, 1, ALC_MAX_TOOL_CALLS_LIMIT),
+        "alcMaxTokens": coerce_limit(parsed.get("alcMaxTokens"), 4000, 500, ALC_MAX_TOKENS_LIMIT),
+        "alcWebEnabled": parsed.get("alcWebEnabled") is not False,
+        "alcWriteKnowledge": parsed.get("alcWriteKnowledge") is not False,
     }

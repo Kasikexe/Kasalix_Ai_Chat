@@ -40,6 +40,7 @@ from .config import (
 from .deps import SESSION_PROTECTED_PATHS, session_authenticated, user_id_from_request
 from .logger import error as log_error, info as log_info, warn as log_warn
 from .routes import (
+    alc as alc_routes,
     attachments as attachments_routes,
     auth as auth_routes,
     changelog as changelog_routes,
@@ -166,6 +167,7 @@ async def session_protect(request: Request, call_next: Any) -> Any:
 
 # ─── API routes ───────────────────────────────────────────────
 app.include_router(models_routes.router, prefix="/api/models")
+app.include_router(alc_routes.router, prefix="/api/alc")
 app.include_router(chat_routes.router, prefix="/api/chat")
 app.include_router(conversations_routes.router, prefix="/api/conversations")
 app.include_router(settings_routes.router, prefix="/api/settings")

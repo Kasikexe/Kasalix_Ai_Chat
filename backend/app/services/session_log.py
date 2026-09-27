@@ -33,6 +33,26 @@ SESSION_EVENT_TYPES = (
     "stage",
 )
 
+# ALC activity recorded by ``agent.run_agent_loop`` at run start (the cycle
+# itself runs before the loop and emits these over SSE). See docs/ALC_DESIGN.md
+# §4.8 — the frontend styles them in the trajectory view.
+ALC_EVENT_TYPES = (
+    "alc:start",
+    "alc:stage",
+    "alc:goal",
+    "alc:decision",
+    "alc:search",
+    "alc:result",
+    "alc:finding",
+    "alc:reject",
+    "alc:gap",
+    "alc:budget",
+    "alc:index",
+    "alc:knowledge-written",
+    "alc:done",
+    "alc:notice",
+)
+
 
 class SessionLog:
     """Append-only JSONL writer for a single agent run."""

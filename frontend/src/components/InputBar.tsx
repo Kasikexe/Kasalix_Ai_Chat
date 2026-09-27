@@ -1,5 +1,5 @@
 import { useRef, useState, KeyboardEvent, useEffect, DragEvent } from 'react';
-import { Send, Square, Paperclip, X, Mic, Zap, Lock, HelpCircle } from 'lucide-react';
+import { Send, Square, Paperclip, X, Mic, Zap, Lock, HelpCircle, BookOpen } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
 
 interface Props {
@@ -13,6 +13,9 @@ interface Props {
   onPlanModeChange?: (mode: 'off' | 'on' | 'auto') => void;
   toolPermission?: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit';
   onToolPermissionChange?: (mode: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit') => void;
+  /** ALC (Advanced Learning Cycle) — available in both Chat and Koding */
+  alc?: boolean;
+  onAlcChange?: (alc: boolean) => void;
   /** Key identifying which conversation this draft belongs to (survives remounts). */
   draftKey?: string;
 }
@@ -22,7 +25,7 @@ interface Props {
 // re-attach, etc.) instead of silently wiping it.
 const draftCache = new Map<string, { value: string; image: string | null }>();
 
-export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnabled, onPlanningToggle, planMode, onPlanModeChange, toolPermission, onToolPermissionChange, draftKey }: Props) {
+export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnabled, onPlanningToggle, planMode, onPlanModeChange, toolPermission, onToolPermissionChange, alc, onAlcChange, draftKey }: Props) {
   const [value, setValue] = useState(() => (draftKey ? draftCache.get(draftKey)?.value ?? '' : ''));
   const [image, setImage] = useState<string | null>(() => (draftKey ? draftCache.get(draftKey)?.image ?? null : null));
 
@@ -211,7 +214,10 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
     setIsRecording(true);
   };
 
-  const hasToolbar = onPlanModeChange !== undefined || onToolPermissionChange !== undefined;
+  const hasToolbar =
+    onPlanModeChange !== undefined ||
+    onToolPermissionChange !== undefined ||
+    onAlcChange !== undefined;
 
   return (
     <div
@@ -300,6 +306,36 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
                     }
                   >
                     {m === 'auto' ? <><Zap size={11}/> Auto</> : m === 'ask-each' ? <><HelpCircle size={11}/> Ask</> : <><Lock size={11}/> Read-only</>}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Separator */}
+            {onAlcChange !== undefined && (onPlanModeChange !== undefined || onToolPermissionChange !== undefined) && (
+              <div className="w-px h-4 bg-gray-700" />
+            )}
+
+            {/* ALC toggle — Normal answers from the model, ALC gathers first */}
+            {onAlcChange !== undefined && (
+              <div className="flex items-center gap-0.5 bg-gray-800 rounded-lg p-0.5 border border-gray-700/50">
+                {([false, true] as const).map((on) => (
+                  <button
+                    key={String(on)}
+                    onClick={() => onAlcChange(on)}
+                    disabled={disabled || isStreaming}
+                    className={`flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded transition-colors ${
+                      (alc === true) === on
+                        ? on ? 'bg-teal-600 text-white shadow-sm' : 'bg-gray-600 text-white'
+                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700'
+                    }`}
+                    title={
+                      on
+                        ? 'ALC: search your documentation, project knowledge and the web first, then answer. Slower, but grounded — and it shows every step it took.'
+                        : 'Normal: answer straight from the model (default)'
+                    }
+                  >
+                    {on ? <><BookOpen size={11}/> ALC</> : 'Normal'}
                   </button>
                 ))}
               </div>

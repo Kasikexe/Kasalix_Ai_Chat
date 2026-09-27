@@ -70,6 +70,7 @@ async def chat_route(request: Request) -> Any:
     conv_id: str | None = None
     conv_mode = "chat"
     conv_workspace_path: str | None = None
+    conv_alc = False
 
     try:
         owner_id = user_id_from_request(request)
@@ -88,6 +89,8 @@ async def chat_route(request: Request) -> Any:
             else "auto"
         )
         mode = "agent" if body.get("mode") == "agent" else "chat"
+        # ALC (Advanced Learning Cycle) is orthogonal to mode — see docs/ALC_DESIGN.md.
+        alc_enabled = body.get("alc") is True
         req_workspace_path: str | None = body.get("workspacePath")
         temperature = body.get("temperature")
         top_p = body.get("top_p")
@@ -115,6 +118,7 @@ async def chat_route(request: Request) -> Any:
             conv_id = provided_conv_id
             conv_mode = existing.get("mode") or "chat"
             conv_workspace_path = existing.get("workspacePath") or req_workspace_path
+            conv_alc = bool(existing.get("alc"))
             agent_state = existing.get("agentState")
             if existing.get("mode") == "agent" and isinstance(agent_state, dict) and agent_state.get("history"):
                 resume_state = agent_state
@@ -127,6 +131,11 @@ async def chat_route(request: Request) -> Any:
             conv_id = new_conv["id"]
             conv_mode = mode
             conv_workspace_path = new_conv.get("workspacePath") or req_workspace_path
+
+        # Remember the ALC toggle on the conversation so reopening it keeps the
+        # mode the user chose. Written only when it actually changes.
+        if conv_id and conv_alc != alc_enabled:
+            await update_conversation(conv_id, owner_id, {"alc": alc_enabled})
 
         last_message = messages[-1]
         if last_message.get("role") == "user" and conv_id:
@@ -300,6 +309,8 @@ async def chat_route(request: Request) -> Any:
                             "top_p": top_p,
                             "max_tokens": max_tokens,
                             "toolPermission": tool_permission,
+                            "alc": alc_enabled,
+                            "onAlcEvent": lambda ev: emit(ev),
                         }
                     )
 

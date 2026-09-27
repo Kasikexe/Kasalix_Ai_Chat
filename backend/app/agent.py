@@ -3540,6 +3540,24 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     await session_log.init()
     log_info(f"[agent] Session log: {session_log.get_file_path()}")
 
+    # ALC ran before this loop started (Koding + ALC on): record what it did, so
+    # the trajectory shows how the evidence in `extraContext` was gathered.
+    for alc_event in opts.get("alcEvents") or []:
+        try:
+            kind = str(alc_event.get("type") or "alc")
+            payload = {key: value for key, value in alc_event.items() if key != "type"}
+            await session_log.append(
+                {
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "type": kind,
+                    "label": kind.replace("alc:", ""),
+                    "content": json.dumps(payload, ensure_ascii=False)[:4000],
+                    "meta": {"from": "alc"},
+                }
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
     _cb(opts, "onStage", "agent:thinking")
 
     file_tree = await list_workspace_tree(root)
