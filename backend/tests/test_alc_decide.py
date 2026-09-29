@@ -326,3 +326,183 @@ def test_reformulate_query_drops_question_phrasing():
 def test_reformulate_query_gives_up_on_a_single_term():
     assert decide.reformulate_query("pygame") is None
     assert decide.reformulate_query("!!!") is None
+
+
+# ─── Judging: quotes that software can verify ───────────────────────────
+CANDIDATE = {
+    "source": "docs:pace.md",
+    "text": "VINTRA_PACE is the pace limiter. It defaults to 16 in the reference config.",
+}
+
+
+def test_quote_supported_requires_the_words_to_be_in_the_candidate():
+    assert decide.quote_supported("defaults to 16", CANDIDATE["text"])
+    assert decide.quote_supported("It   defaults\nto 16", CANDIDATE["text"])  # whitespace-insensitive
+    assert not decide.quote_supported("defaults to 99", CANDIDATE["text"])
+    # Too short to be evidence of anything.
+    assert not decide.quote_supported("16", CANDIDATE["text"])
+    assert not decide.quote_supported("", CANDIDATE["text"])
+
+
+async def test_a_verified_quote_is_kept_and_recorded(monkeypatch):
+    scripted(
+        monkeypatch,
+        '{"keep": [{"i": 1, "quote": "It defaults to 16", "why": "states the default"}], "drop": []}',
+    )
+    decisions, used_fallback = await decide.judge_results("what is the default pace", [CANDIDATE], CONN)
+    assert used_fallback is False
+    assert decisions[0]["keep"] is True
+    assert decisions[0]["quoteVerified"] is True
+
+
+async def test_an_invented_citation_is_dropped(monkeypatch):
+    """A quote that is not in the passage it cites is worse than no quote at all."""
+    scripted(
+        monkeypatch,
+        '{"keep": [{"i": 1, "quote": "it defaults to 99", "why": "states the default"}], "drop": []}',
+    )
+    decisions, _used = await decide.judge_results("what is the default pace", [CANDIDATE], CONN)
+    assert decisions[0]["keep"] is False
+    assert "not in that candidate" in decisions[0]["reason"]
+    assert decisions[0]["quoteVerified"] is False
+
+
+async def test_a_keep_without_a_quote_is_still_kept(monkeypatch):
+    """Small models often omit the quote; that must not throw away a good hit."""
+    scripted(monkeypatch, '{"keep": [{"i": 1, "why": "answers it"}], "drop": []}')
+    decisions, _used = await decide.judge_results("q", [CANDIDATE], CONN)
+    assert decisions[0]["keep"] is True
+    assert decisions[0]["quoteVerified"] is False
+
+
+# ─── Judging: a passage about another named thing is not evidence ──────
+def test_named_subjects_ignores_the_word_that_starts_the_sentence():
+    # The capital is grammar here, not a name.
+    assert decide.named_subjects("Halyard does things") == []
+    assert decide.named_subjects("Which ceiling value does Brimwall use by default?") == [
+        "Brimwall"
+    ]
+    assert decide.named_subjects("In Halvard vs Brimwall, and Halyard too") == [
+        "Halvard",
+        "Brimwall",
+        "Halyard",
+    ]
+    assert decide.named_subjects("") == []
+
+
+def test_off_subject_names_the_other_thing_a_passage_is_about():
+    halyard = {
+        "source": "docs:halyard-config.md",
+        "heading": "Halyard config > Limits",
+        "text": "HALYARD_MAX_FRAMES is 240; above it the Halyard clock clamps.",
+    }
+    brimwall = {
+        "source": "docs:brimwall-limits.md",
+        "heading": "Brimwall limits",
+        "text": "Brimwall ceilings are set in brimwall.toml.",
+    }
+    assert decide.off_subject("Which ceiling value does Brimwall use by default?", halyard) == (
+        "Halyard"
+    )
+    # The reason names the thing, not a symbol out of it.
+    symbolic = {
+        "source": "docs:x.md",
+        "heading": "Halyard configuration > Limits",
+        "text": "HALYARD_MAX_FRAMES is 240.",
+    }
+    assert decide.off_subject("Which ceiling does Brimwall use?", symbolic) == "Halyard"
+    assert decide.off_subject("Which ceiling value does Brimwall use by default?", brimwall) == ""
+
+
+def test_off_subject_keeps_what_it_cannot_judge():
+    """No named subject in the question, or none in the passage: leave it alone."""
+    note = {"source": "ALC/knowledge/pace.md", "text": "the pace default is 16 in this project"}
+    halyard = {"source": "docs:halyard-config.md", "text": "HALYARD_MAX_FRAMES is 240."}
+    assert decide.off_subject("what is the default pace?", halyard) == ""
+    assert decide.off_subject("Which ceiling does Brimwall use?", note) == ""
+
+
+# ─── Judging: an identifier the question names is not a judgement call ───
+VINTRA_NEW = {
+    "source": "docs:vintra-pacing.md",
+    "text": "vintra_pace_default returns 16 in the reference configuration.",
+}
+
+
+def test_question_anchors_reads_identifiers_and_nothing_else():
+    assert decide.question_anchors("What does vintra_pace_default() return?") == [
+        "vintra_pace_default"
+    ]
+    assert decide.question_anchors("What does the Quorvex error code QUORVEX-4513 mean?") == [
+        "QUORVEX-4513"
+    ]
+    # Question words and bare numbers must not become anchors, or almost any
+    # passage would count as "relevant" and the judge would be pointless.
+    assert decide.question_anchors("What is the default frame count?") == []
+    assert decide.question_anchors("What is 12 in the config?") == []
+    assert decide.question_anchors("") == []
+
+
+def test_anchor_in_names_what_it_matched():
+    assert decide.anchor_in("vintra_pace_default default?", VINTRA_NEW["text"]) == (
+        "vintra_pace_default"
+    )
+    assert decide.anchor_in("halyard_set_pace default?", VINTRA_NEW["text"]) == ""
+
+
+async def test_the_judge_cannot_discard_the_passage_naming_the_question_identifier(monkeypatch):
+    """Measured live: the judge called this passage "off-topic" and kept an older file."""
+    scripted(monkeypatch, '{"keep": [], "drop": [{"i": 1, "why": "off-topic"}]}')
+    decisions, used_fallback = await decide.judge_results(
+        "What is the purpose of vintra_pace_default()?",
+        [VINTRA_NEW],
+        CONN,
+        goal="What does vintra_pace_default() return?",
+    )
+    assert used_fallback is False
+    assert decisions[0]["keep"] is True
+    assert "vintra_pace_default" in decisions[0]["reason"]
+    assert decisions[0]["quoteVerified"] is False
+
+
+async def test_an_unverifiable_quote_loses_the_citation_not_the_evidence(monkeypatch):
+    """The quote was invented; the passage is the one the question names."""
+    scripted(
+        monkeypatch,
+        '{"keep": [{"i": 1, "quote": "returns 99 by default", "why": "answers it"}], "drop": []}',
+    )
+    decisions, _ = await decide.judge_results("vintra_pace_default", [VINTRA_NEW], CONN)
+    assert decisions[0]["keep"] is True
+    assert decisions[0]["quote"] == ""
+    assert decisions[0]["quoteVerified"] is False
+    assert "could not be verified" in decisions[0]["reason"]
+
+
+async def test_the_judge_is_told_the_goal_as_well_as_the_lookup(monkeypatch):
+    seen: list[str] = []
+
+    async def fake_generate(conn, system, user, *, max_tokens=256):
+        seen.append(user)
+        return '{"keep": [], "drop": []}'
+
+    monkeypatch.setattr(decide, "generate", fake_generate)
+    await decide.judge_results(
+        "What is the purpose of vintra_pace_default()?",
+        [VINTRA_NEW],
+        CONN,
+        goal="What does vintra_pace_default() return?",
+    )
+    assert "USER'S QUESTION: What does vintra_pace_default() return?" in seen[0]
+    assert "THE LOOKUP THIS TEXT CAME FROM: What is the purpose of" in seen[0]
+
+
+def test_dedupe_candidates_drops_the_same_wording_twice():
+    same = "VINTRA_PACE defaults to 16 in the reference configuration file for the limiter."
+    candidates = [
+        {"source": "docs:a.md", "text": same},
+        {"source": "docs:b.md", "text": same},
+        {"source": "docs:c.md", "text": "A different passage about something else entirely."},
+    ]
+    kept = decide.dedupe_candidates(candidates)
+    assert [item["source"] for item in kept] == ["docs:a.md", "docs:c.md"]
+    assert decide.dedupe_candidates([]) == []

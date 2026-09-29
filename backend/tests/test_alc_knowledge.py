@@ -135,7 +135,14 @@ def test_topics_summarize_what_the_project_knows(workspace):
 
 
 def test_stats_report_an_empty_store_honestly(workspace):
-    assert knowledge.stats(workspace) == {"topics": 0, "notes": 0, "bytes": 0, "known": False}
+    assert knowledge.stats(workspace) == {
+        "topics": 0,
+        "notes": 0,
+        "studies": 0,
+        "bytes": 0,
+        "known": False,
+        "updatedAt": 0.0,
+    }
     knowledge.remember(workspace, "build", "npm run build")
     stats = knowledge.stats(workspace)
     assert stats["known"] is True

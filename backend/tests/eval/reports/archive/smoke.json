@@ -1,0 +1,178 @@
+{
+  "label": "smoke",
+  "args": {
+    "model": "qwen3:1.7b",
+    "arms": "normal,alc-none",
+    "cases": "",
+    "limit": 2,
+    "docs": "on",
+    "web": "off",
+    "fake": "",
+    "label": "smoke",
+    "out_dir": "C:\\Users\\filik\\Documents\\GitHub\\Kasalix_Ai_Chat\\backend\\tests\\eval\\reports",
+    "resume": false,
+    "keep": false,
+    "run_dir": "",
+    "timeout": 600.0,
+    "list": false
+  },
+  "corpusRoot": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-eval-ibhzy35l",
+  "rows": [
+    {
+      "key": "normal|halyard-pace|single",
+      "arm": "normal",
+      "case": "halyard-pace",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace in the Halyard documentation?",
+      "verdict": "partial",
+      "matched": [
+        "halyard_set_pace"
+      ],
+      "missing": [
+        "12"
+      ],
+      "invented": [],
+      "reason": "missing 12",
+      "answer": "I don't know the exact default frame count for `halyard_set_pace` in the Halyard documentation. You might want to check the official Halyard documentation or refer to the specific implementation details for more accurate information.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 5.493,
+      "total": 5.74,
+      "calls": 2,
+      "callSeconds": 5.72,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|halyard-mode|single",
+      "arm": "normal",
+      "case": "halyard-mode",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which HalyardMode member is documented for letting the clock fall behind without raising?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "halyardmode.glide"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "I don't know. The HalyardMode is a term used in some contexts, but I don't have specific information about a member documented for letting the clock fall behind without raising. If you can provide more context, I'd be happy to help further.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.694,
+      "total": 1.028,
+      "calls": 2,
+      "callSeconds": 1.024,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|halyard-pace|single",
+      "arm": "alc-none",
+      "case": "halyard-pace",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace in the Halyard documentation?",
+      "verdict": "correct",
+      "matched": [
+        "halyard_set_pace",
+        "12"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The default frame count for `halyard_set_pace` is **12**.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.142,
+      "total": 3.239,
+      "calls": 5,
+      "callSeconds": 3.171,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:index": 4,
+        "alc:decision": 3,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 1,
+        "alc:reject": 4,
+        "alc:budget": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 1,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|halyard-mode|single",
+      "arm": "alc-none",
+      "case": "halyard-mode",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which HalyardMode member is documented for letting the clock fall behind without raising?",
+      "verdict": "correct",
+      "matched": [
+        "halyardmode.glide"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "HalyardMode.GLIDE",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.851,
+      "total": 2.893,
+      "calls": 5,
+      "callSeconds": 2.886,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 2,
+        "alc:reject": 2,
+        "alc:budget": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 2,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    }
+  ]
+}

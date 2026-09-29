@@ -72,6 +72,7 @@ async def update_settings(request: Request) -> dict:
             "alcMaxTokens",
             "alcWebEnabled",
             "alcWriteKnowledge",
+            "alcStudyMaxTopics",
         ):
             if key in body:
                 next_settings[key] = body[key]

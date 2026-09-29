@@ -49,6 +49,7 @@ ALC_EVENT_TYPES = (
     "alc:budget",
     "alc:index",
     "alc:knowledge-written",
+    "alc:study",
     "alc:done",
     "alc:notice",
 )

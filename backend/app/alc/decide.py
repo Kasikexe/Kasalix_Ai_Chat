@@ -324,13 +324,177 @@ async def choose_action(
 JUDGE_SYSTEM = (
     "You judge retrieved text for one question. Keep only what genuinely helps answer it.\n"
     "Reply with ONLY one JSON object — no markdown, no explanation:\n"
-    '{"keep": [{"i": 1, "why": "short reason"}], "drop": [{"i": 2, "why": "off-topic"}]}\n'
+    '{"keep": [{"i": 1, "quote": "words copied from candidate 1", "why": "short reason"}], '
+    '"drop": [{"i": 2, "why": "off-topic"}]}\n'
     "Rules:\n"
     "- i is the number in square brackets in the candidate list.\n"
     "- Keep at most {max_keep} — the most specific ones.\n"
-    "- Drop anything off-topic, too vague to use, or a duplicate of a kept item.\n"
+    "- quote must be copied CHARACTER FOR CHARACTER from that candidate. A keep with a quote "
+    "that is not in the candidate is thrown away, so never invent one.\n"
+    "- Keep a passage that DISAGREES with another candidate instead of filing it as a "
+    "duplicate — both are needed to tell which value is current.\n"
+    "- A candidate that helps answer the USER'S QUESTION is relevant even when it does "
+    "not match the lookup's wording.\n"
+    "- Drop anything off-topic, too vague to use, or a true duplicate of a kept item.\n"
     "- If nothing helps, reply {\"keep\": [], \"drop\": []}.\n"
 )
+
+
+def _normalise_ws(text: str) -> str:
+    return " ".join(str(text or "").lower().split())
+
+
+def quote_supported(quote: str, text: str) -> bool:
+    """Whether a judge's quote really came from the candidate it cites.
+
+    A fabricated citation is worse than a missing one: it makes the reasoning
+    look grounded while the passage says something else. Software checks it
+    because the model cannot (docs/ALC_DESIGN.md §4.8).
+    """
+    needle = _normalise_ws(quote)[:120]
+    if len(needle) < 8:
+        return False
+    return needle in _normalise_ws(text)
+
+
+#: Identifier shapes that make a term decisive: when the question itself names
+#: one, a passage containing it is evidence rather than noise (D16).
+ANCHOR_KINDS = ("snake", "const", "dotted", "code", "path")
+
+
+def question_anchors(question: str) -> list[str]:
+    """The exact identifiers a question names — `vintra_pace_default`, `QUORVEX-4513`.
+
+    A small judge throws away the passage that holds the answer often enough to
+    matter. Measured on the `vintra-pace` case: the file naming the current value
+    was dropped as "off-topic" while an older, contradictory file was kept — on
+    the shipped arm *and* on the ablation of the guarantee meant to catch it.
+    A question naming `vintra_pace_default` is proof that a passage containing it
+    is on-topic, and that is something software can check without judging content,
+    which is why it does. Every other call stays the model's.
+    """
+    from .study import SPECIFICITY_PATTERNS  # local: study imports this module
+
+    found: list[str] = []
+    for kind, pattern in SPECIFICITY_PATTERNS:
+        if kind not in ANCHOR_KINDS:
+            continue
+        for match in pattern.finditer(str(question or "")):
+            token = match.group(0).strip("._")
+            if len(token) < 4:
+                continue
+            if token not in found:
+                found.append(token)
+    return found
+
+
+def anchor_in(question: str, text: str) -> str:
+    """The identifier the question names that this passage contains, or ""."""
+    body = str(text or "")
+    for anchor in question_anchors(question):
+        if anchor in body:
+            return anchor
+    return ""
+
+
+#: Capitalised words that name nothing: they are capitalised by grammar, or they
+#: are so common in questions that matching on them would mean nothing.
+_GENERIC_CAPITALS = {
+    "i",
+    "the",
+    "this",
+    "that",
+    "then",
+    "also",
+    "note",
+    "yes",
+    "no",
+}
+_SUBJECT_RE = re.compile(r"\b[A-Z][A-Za-z0-9_]{2,}\b")
+_SENTENCE_END_RE = re.compile(r"(?:^|[.!?]\s|\n\s*)\s*$")
+
+
+def named_subjects(text: str, *, first_word_counts: bool = False) -> list[str]:
+    """Proper names a text uses, ignoring the capitalised first word of a sentence.
+
+    "What does Halyard\u2026" names one subject, not two: the first word is capitalised
+    because it starts the sentence. Mid-sentence capitals are names (`Halyard`,
+    `Quorvex`), which is exactly the signal needed to tell whether a passage is
+    even *about* the thing that was asked (see :func:`off_subject`). A *heading*
+    is a title rather than a sentence, so its first word does count — that is what
+    ``first_word_counts`` is for.
+    """
+    body = str(text or "")
+    found: list[str] = []
+    for match in _SUBJECT_RE.finditer(body):
+        if not first_word_counts and _SENTENCE_END_RE.search(body[: match.start()]):
+            continue
+        token = match.group(0)
+        if token.lower() in _GENERIC_CAPITALS or token in found:
+            continue
+        found.append(token)
+    return found
+
+
+def off_subject(question: str, candidate: dict[str, Any]) -> str:
+    """The subject a passage is about when it is *not* the one the question names.
+
+    A question that names a thing is about that thing, and a passage that mentions
+    a different name and never the one asked about is not evidence for it.
+    Measured live, on a held-out case: `halyard-config.md` (Halyard's 240) was
+    retrieved for a question about Brimwall's ceiling, and the answering model
+    reported Halyard's value as Brimwall's. No answer check can catch that, because
+    the number really is in the gathered evidence — the only honest fix is not to
+    hand it over in the first place.
+
+    Returns "" when the question names nothing (`named_subjects` is empty), when
+    the passage mentions the question's subject, or when the passage names nothing
+    at all — a note or a code block is not "about" a different thing just because
+    it has no proper noun in it.
+    """
+    subjects = named_subjects(question)
+    if not subjects:
+        return ""
+    # The heading is a title, so its first word names something rather than opening
+    # a sentence ("Halyard config > Limits"). The file path is left out because a
+    # store's own folder is not a subject (`ALC/knowledge/...`).
+    body = str(candidate.get("text") or "")
+    heading = str(candidate.get("heading") or "")
+    present: list[str] = []
+    for subject in named_subjects(body) + named_subjects(heading, first_word_counts=True):
+        if subject not in present:
+            present.append(subject)
+    if not present:
+        return ""
+    lowered = f"{body}\n{heading}".lower()
+    if any(subject.lower() in lowered for subject in subjects):
+        return ""
+    # Name the *thing* in the reason, not a symbol from it: "about Halyard" reads
+    # as a decision, "about HALYARD_MAX_FRAMES" reads as a bug.
+    return next(
+        (token for token in present if "_" not in token and not token.isupper()),
+        present[0],
+    )
+
+
+def dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop candidates whose opening text repeats one already listed.
+
+    The same wording arrives from two files (a README copied into a manual) often
+    enough that judging it twice wastes the judge's small budget and doubles the
+    evidence the answering model has to wade through. The better-scoring copy
+    wins; the kept one is preferred when the scores tie.
+    """
+    out: list[dict[str, Any]] = []
+    seen: list[str] = []
+    for candidate in candidates or []:
+        head = _normalise_ws(candidate.get("text"))[:160]
+        if head and any(head[:100] in existing or existing[:100] == head[:100] for existing in seen):
+            continue
+        if head:
+            seen.append(head)
+        out.append(candidate)
+    return out
 
 
 def _overlap_score(question: str, text: str) -> float:
@@ -380,25 +544,43 @@ async def judge_results(
     candidates: list[dict[str, Any]],
     conn: LLMConn,
     *,
+    goal: str = "",
     max_keep: int = MAX_KEEP,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """Returns (decisions, used_fallback) — one entry per candidate, in order."""
+    """Returns (decisions, used_fallback) — one entry per candidate, in order.
+
+    ``question`` is the lookup that produced these candidates and ``goal`` is what
+    the user actually asked. The judge is given both, because a passage can answer
+    the user's question without matching the wording of the sub-question the model
+    chose to search: judged against the sub-question alone, evidence for the real
+    question is filed as "off-topic" (measured on `vintra-pace`).
+    """
     if not candidates:
         return [], False
+    asked = " ".join(str(question or "").split()).strip()
+    topic = " ".join(str(goal or "").split()).strip()
+    #: What "relevant" is judged against: the goal, plus the lookup when it is a
+    #: different question. Software decides this, so the judge cannot answer a
+    #: narrower question than the user asked.
+    whole = f"{topic} {asked}".strip() or asked
+    header = f"USER'S QUESTION: {topic or asked}\n"
+    if topic and asked and asked.lower() not in topic.lower():
+        header += f"THE LOOKUP THIS TEXT CAME FROM: {asked}\n"
     listing = "\n\n".join(
         f"[{i + 1}] source={candidate.get('source') or candidate.get('path') or 'unknown'}\n"
         f"{str(candidate.get('text') or '')[:900]}"
         for i, candidate in enumerate(candidates)
     )
-    user = f"QUESTION: {question}\n\nCANDIDATES:\n{listing}\n\nYour JSON:"
+    user = f"{header}\nCANDIDATES:\n{listing}\n\nYour JSON:"
     system = JUDGE_SYSTEM.replace("{max_keep}", str(max_keep))
     raw = await generate(conn, system, user, max_tokens=MAX_DECISION_TOKENS)
     parsed = extract_json_object(raw)
     if not parsed:
-        return heuristic_judge(question, candidates, max_keep=max_keep), True
+        return heuristic_judge(whole, candidates, max_keep=max_keep), True
 
     keep_reasons: dict[int, str] = {}
     drop_reasons: dict[int, str] = {}
+    quotes: dict[int, str] = {}
     for bucket, target in (("keep", keep_reasons), ("drop", drop_reasons)):
         items = parsed.get(bucket)
         if isinstance(items, dict):
@@ -406,11 +588,14 @@ async def judge_results(
         if not isinstance(items, list):
             continue
         for item in items:
+            raw_quote = ""
             if isinstance(item, int):
                 index, why = item, ""
             elif isinstance(item, dict):
                 index = item.get("i") or item.get("index") or item.get("id")
                 why = _as_str(item.get("why") or item.get("reason"), 200)
+                if bucket == "keep":
+                    raw_quote = _as_str(item.get("quote"), 400)
             else:
                 continue
             try:
@@ -419,16 +604,76 @@ async def judge_results(
                 continue
             if 0 <= index < len(candidates):
                 target[index] = why
+                if raw_quote:
+                    quotes[index] = raw_quote
 
     if not keep_reasons and not drop_reasons:
-        return heuristic_judge(question, candidates, max_keep=max_keep), True
+        return heuristic_judge(whole, candidates, max_keep=max_keep), True
 
     decisions: list[dict[str, Any]] = []
     kept = 0
     for index in range(len(candidates)):
-        if index in keep_reasons and kept < max_keep:
+        wanted = index in keep_reasons
+        text = str(candidates[index].get("text") or "")
+        anchor = anchor_in(whole, text)
+        if kept >= max_keep and (wanted or anchor):
+            decisions.append({"i": index, "keep": False, "reason": "over the keep limit"})
+            continue
+        if wanted:
+            quote = str(quotes.get(index) or "")
+            verified = bool(quote) and quote_supported(quote, text)
+            if quote and not verified and not anchor:
+                # The citation does not exist in the passage it cites, and nothing
+                # else vouches for the passage, so the model's own grounds for
+                # keeping it are gone.
+                decisions.append(
+                    {
+                        "i": index,
+                        "keep": False,
+                        "reason": "the quoted evidence is not in that candidate",
+                        "quoteVerified": False,
+                    }
+                )
+                continue
             kept += 1
-            decisions.append({"i": index, "keep": True, "reason": keep_reasons[index] or "relevant"})
+            if quote and not verified:
+                # The citation is fabricated; the passage is not. It is kept on the
+                # identifier it contains, the citation is discarded, and the reason
+                # says so — the answer keeps its evidence and the record keeps the
+                # honesty about where it came from.
+                decisions.append(
+                    {
+                        "i": index,
+                        "keep": True,
+                        "reason": f"kept — the passage contains {anchor}; the model's quote "
+                        "could not be verified",
+                        "quote": "",
+                        "quoteVerified": False,
+                    }
+                )
+                continue
+            decisions.append(
+                {
+                    "i": index,
+                    "keep": True,
+                    "reason": keep_reasons[index] or "relevant",
+                    "quote": quote,
+                    "quoteVerified": verified,
+                }
+            )
+        elif anchor:
+            # The judge threw away a passage that names something the question
+            # names. That is not a judgement call.
+            kept += 1
+            decisions.append(
+                {
+                    "i": index,
+                    "keep": True,
+                    "reason": f"kept — the passage contains {anchor}, which the question names",
+                    "quote": "",
+                    "quoteVerified": False,
+                }
+            )
         else:
             reason = drop_reasons.get(index) or "over the keep limit"
             decisions.append({"i": index, "keep": False, "reason": reason})

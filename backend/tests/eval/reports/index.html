@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ALC Benchmark</title>
+<style>
+  :root {
+    --bg: #12151a; --panel: #1a1f27; --line: #2a323e; --ink: #e6eaf0;
+    --dim: #8d99ab; --good: #3fb27f; --warn: #d8a13a; --bad: #d9634f; --accent: #5aa9e6;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f4f6f9; --panel:#fff; --line:#dde3ec; --ink:#1b2027; --dim:#5d6879;
+            --good:#1f8f5f; --warn:#a9741a; --bad:#c0402c; --accent:#2b6fa8; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.5 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width:1080px; margin:0 auto; padding:28px 20px 60px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  h2 { font-size:15px; margin:28px 0 10px; text-transform:uppercase;
+       letter-spacing:.08em; color:var(--dim); font-weight:600; }
+  .lede { color:var(--dim); margin:0 0 6px; max-width:70ch; }
+  .lede b { color:var(--ink); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          padding:14px 16px; margin-bottom:10px; cursor:pointer; }
+  .card:hover { border-color:var(--accent); }
+  .card.sel { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+  .top { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+  .name { font-weight:650; font-size:15px; }
+  .meta { color:var(--dim); font-size:12.5px; }
+  .badge { font-size:11px; padding:1px 7px; border-radius:999px; border:1px solid var(--line);
+           color:var(--dim); }
+  .row { display:grid; grid-template-columns:148px 1fr 116px; gap:10px; align-items:center;
+         margin-top:8px; }
+  .armname { font-size:12.5px; color:var(--dim); }
+  .armname .diag { display:block; font-size:11px; opacity:.7; }
+  .score { text-align:right; }
+  .score .pct { font-variant-numeric:tabular-nums; font-weight:600; }
+  .score .pill { margin-left:0; margin-top:3px; }
+  .track { position:relative; height:16px; background:#0c0f13; border-radius:8px;
+           overflow:hidden; border:1px solid var(--line); }
+  @media (prefers-color-scheme: light) { .track { background:#eef2f7; } }
+  .fill { height:100%; border-radius:7px 0 0 7px; }
+  .ref { position:absolute; top:-2px; bottom:-2px; width:2px; background:var(--dim); opacity:.85; }
+  .pill { display:inline-block; font-size:11px; padding:1px 7px; border-radius:999px;
+          margin-left:6px; white-space:nowrap; }
+  .pill.bad { background:rgba(217,99,79,.18); color:var(--bad); border:1px solid var(--bad); }
+  .pill.good { background:rgba(63,178,127,.16); color:var(--good); border:1px solid var(--good); }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th, td { text-align:right; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:var(--dim); font-weight:600; font-size:12px; }
+  .muted { color:var(--dim); }
+  .better { color:var(--good); } .worse { color:var(--bad); } .same { color:var(--dim); }
+  select { background:var(--panel); color:var(--ink); border:1px solid var(--line);
+           border-radius:7px; padding:6px 9px; font:inherit; max-width:320px; }
+  .warning { border:1px solid var(--warn); color:var(--warn); border-radius:8px;
+             padding:10px 12px; margin:0 0 12px; }
+  .hint { color:var(--dim); font-size:12.5px; }
+  .empty { background:var(--panel); border:1px dashed var(--line); border-radius:10px;
+           padding:26px; text-align:center; color:var(--dim); }
+  footer { margin-top:34px; color:var(--dim); font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ALC Benchmark</h1>
+  <p class="lede">
+    Does the Advanced Learning Cycle actually help? One number per run, <b>credit</b>:
+    the answer was right, <b>or</b> the model said plainly it could not find out.
+    Making a value up is never credit — that is what the red pill counts. The thin
+    grey mark on each bar is <b>ALC off</b>, the baseline to read the bar against.
+  </p>
+
+  <h2>Saved runs</h2>
+  <div id="runs"></div>
+
+  <div id="detail"></div>
+
+  <h2>Compare two runs</h2>
+  <div id="compare"></div>
+
+  <footer id="foot"></footer>
+</div>
+
+<script>const DATA = {"generated": "2026-09-29 15:21 UTC", "thresholds": {"credit": 0.02, "seconds": 0.05, "count": 0.5}, "runs": [{"label": "ALC v2", "when": "2026-09-29 15:12:07 UTC", "tag": "ALC v2", "model": "qwen3:1.7b", "variant": "classic", "docs": true, "web": false, "arms": [{"name": "normal", "display": "ALC off", "advanced": false, "credit": 0.071, "correct": 0.0, "admitted": 1.0, "partial": 4.0, "invented": 3.0, "wrong": 6.0, "turns": 14, "ttft": 0.71, "turn": 1.06, "calls": 2.0, "carryKept": 0.167, "carryWiped": 0.167}, {"name": "alc-study", "display": "ALC on", "advanced": false, "credit": 0.857, "correct": 11.0, "admitted": 1.0, "partial": 1.0, "invented": 0.0, "wrong": 1.0, "turns": 14, "ttft": 3.93, "turn": 5.88, "calls": 8.5, "carryKept": 0.833, "carryWiped": 0.167}]}]};</script>
+<script>
+const T = DATA.thresholds;
+const runs = DATA.runs;
+let selected = runs.length ? runs[0].label : null;
+
+const pct = (x) => Math.round(x * 100) + '%';
+const num = (x, d) => (Math.round(x * 10 ** d) / 10 ** d).toFixed(d);
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+// Colour by how much of the answer was right, and say the number too — colour
+// alone is not a label.
+function tone(credit) {
+  if (credit >= 0.7) return 'var(--good)';
+  if (credit >= 0.4) return 'var(--warn)';
+  return 'var(--bad)';
+}
+
+// The one arm a run is judged by: ALC on if it ran, otherwise whatever it ran.
+function mainArm(run) {
+  return run.arms.find((a) => a.name !== 'normal') || run.arms[0] || null;
+}
+const refArm = (run) => run.arms.find((a) => a.name === 'normal') || null;
+
+function armRow(arm, ref) {
+  const bar = Math.max(0, Math.min(1, arm.credit)) * 100;
+  const marker = ref ? `<span class="ref" style="left:${Math.max(0, Math.min(1, ref.credit)) * 100}%"></span>` : '';
+  const invented = arm.invented > 0
+    ? `<span class="pill bad">made up: ${arm.invented}</span>`
+    : '';
+  const diag = arm.advanced ? '<span class="diag">diagnostic arm</span>' : '';
+  return `<div class="row">
+    <div class="armname">${esc(arm.display)}${diag}</div>
+    <div class="track"><div class="fill" style="width:${bar}%;background:${tone(arm.credit)}"></div>${marker}</div>
+    <div class="score"><div class="pct">${pct(arm.credit)}</div>${invented}</div>
+  </div>`;
+}
+
+function renderRuns() {
+  const host = document.getElementById('runs');
+  if (!runs.length) {
+    host.innerHTML = `<div class="empty">No saved runs yet.<br>
+      Run one from the menu (<b>ALC_Benchmark.bat</b>, option 1) and it will appear here.</div>`;
+    return;
+  }
+  host.innerHTML = runs.map((run) => {
+    const main = mainArm(run), ref = refArm(run);
+    const badges = [
+      run.model ? `<span class="badge">${esc(run.model)}</span>` : '',
+      `<span class="badge">facts: ${esc(run.variant)}</span>`,
+      run.docs ? '<span class="badge">docs on</span>' : '<span class="badge">docs off</span>',
+      run.web ? '<span class="badge">web on</span>' : '',
+    ].join(' ');
+    return `<div class="card${run.label === selected ? ' sel' : ''}" data-label="${esc(run.label)}">
+      <div class="top">
+        <span class="name">${esc(run.label)}</span>
+        <span class="meta">${esc(run.tag && run.tag !== run.label ? run.tag : '')}</span>
+        <span class="meta">· ${esc(run.when)}</span>
+        ${badges}
+      </div>
+      ${main ? armRow(main, ref) : '<div class="hint">no scored rows</div>'}
+      ${ref && main !== ref ? armRow(ref, null) : ''}
+    </div>`;
+  }).join('');
+  host.querySelectorAll('.card').forEach((card) => {
+    card.onclick = () => { selected = card.dataset.label; renderRuns(); renderDetail(); };
+  });
+}
+
+function renderDetail() {
+  const host = document.getElementById('detail');
+  const run = runs.find((r) => r.label === selected);
+  if (!run) { host.innerHTML = ''; return; }
+  const ref = refArm(run);
+  const rows = run.arms.map((a) => {
+    const lift = ref && a !== ref ? ` (${a.credit - ref.credit >= 0 ? '+' : ''}${pct(a.credit - ref.credit)} vs ALC off)` : '';
+    const carry = a.carryKept >= 0 ? `${pct(a.carryKept)} / ${pct(a.carryWiped)}` : '—';
+    return `<tr>
+      <td>${esc(a.display)}${a.advanced ? ' <span class="muted">(diagnostic)</span>' : ''}</td>
+      <td>${pct(a.credit)}<span class="muted">${lift}</span></td>
+      <td>${a.correct}/${a.turns}</td>
+      <td>${a.admitted}</td>
+      <td class="${a.invented > 0 ? 'worse' : 'muted'}">${a.invented}</td>
+      <td>${num(a.turn, 2)}s</td>
+      <td>${num(a.calls, 1)}</td>
+      <td>${carry}</td>
+    </tr>`;
+  }).join('');
+  host.innerHTML = `<h2>${esc(run.label)} — every arm</h2>
+    <div class="card" style="cursor:default">
+      <table>
+        <tr><th>arm</th><th>credit</th><th>correct</th><th>said “not found”</th>
+            <th>made up</th><th>time/turn</th><th>model calls</th><th>carry kept/wiped</th></tr>
+        ${rows}
+      </table>
+      <p class="hint">correct = answered with the invented fact. “said not found” is also credit:
+      on a question the documentation cannot answer, saying so is the right answer.
+      carry = a later session with the documentation removed, so only the notes it wrote can answer.</p>
+    </div>`;
+}
+
+function delta(value, was, kind) {
+  // Each metric knows which direction is good, so a change cannot be read backwards.
+  const d = value - was;
+  const tol = kind === 'time' ? T.seconds : kind === 'count' ? T.count : T.credit;
+  if (Math.abs(d) < tol) return `<span class="same">${kind === 'time' ? num(value, 2) + 's' : kind === 'count' ? value : pct(value)} same</span>`;
+  const good = kind === 'time' || kind === 'count' ? d < 0 : d > 0;
+  const shown = kind === 'time' ? `${num(was, 2)}s→${num(value, 2)}s` : kind === 'count' ? `${was}→${value}` : `${pct(was)}→${pct(value)}`;
+  return `<span class="${good ? 'better' : 'worse'}">${shown} ${good ? 'better' : 'worse'}</span>`;
+}
+
+function renderCompare() {
+  const host = document.getElementById('compare');
+  if (runs.length < 1) { host.innerHTML = '<p class="hint">Nothing to compare yet.</p>'; return; }
+  const options = runs.map((r) => `<option value="${esc(r.label)}">${esc(r.label)} — ${esc(r.when)}</option>`).join('');
+  host.innerHTML = `
+    <p class="hint">Pick the older run, then the newer one. Read only rows that changed;
+    <b>ALC off</b> is the control — if it moves, the change is the model's mood, not the code.</p>
+    <p><select id="newer">${options}</select> <span class="muted">vs</span> <select id="older">${options}</select></p>
+    <div id="cmpOut"></div>`;
+  const newerSel = document.getElementById('newer');
+  const olderSel = document.getElementById('older');
+  newerSel.selectedIndex = 0;
+  olderSel.selectedIndex = Math.min(1, runs.length - 1);
+  const draw = () => drawCompare(newerSel.value, olderSel.value);
+  newerSel.onchange = draw; olderSel.onchange = draw;
+  draw();
+}
+
+function drawCompare(newerLabel, olderLabel) {
+  const host = document.getElementById('cmpOut');
+  const newer = runs.find((r) => r.label === newerLabel);
+  const older = runs.find((r) => r.label === olderLabel);
+  if (!newer || !older) { host.innerHTML = ''; return; }
+  if (newer.label === older.label) {
+    host.innerHTML = '<p class="hint">Same run on both sides — pick two different runs.</p>';
+    return;
+  }
+  const warn = newer.variant !== older.variant
+    ? `<div class="warning"><b>Different fact sets</b> (${esc(older.variant)} vs ${esc(newer.variant)}) —
+       these numbers are not comparable. Re-run one on the other's fact set.</div>`
+    : '';
+  const names = [...new Set([...newer.arms, ...older.arms].map((a) => a.name))];
+  const rows = names.map((name) => {
+    const a = newer.arms.find((x) => x.name === name);
+    const b = older.arms.find((x) => x.name === name);
+    if (!a || !b) return `<tr><td>${esc((a || b).display)}</td><td colspan="4" class="muted">only in one run</td></tr>`;
+    const move = a.credit - b.credit;
+    const verdict = Math.abs(move) < T.credit ? 'unchanged' : (move > 0 ? 'BETTER' : 'WORSE');
+    return `<tr>
+      <td>${esc(a.display)}<div class="muted" style="font-size:12px">${verdict}</div></td>
+      <td>${delta(a.credit, b.credit, 'credit')}</td>
+      <td>${delta(a.correct, b.correct, 'count')}</td>
+      <td>${delta(a.invented, b.invented, 'count')}</td>
+      <td>${delta(a.turn, b.turn, 'time')}</td>
+    </tr>`;
+  }).join('');
+  host.innerHTML = `${warn}
+    <div class="card" style="cursor:default">
+      <table>
+        <tr><th>arm</th><th>credit (higher better)</th><th>correct</th>
+            <th>made up (lower better)</th><th>time/turn (lower better)</th></tr>
+        ${rows}
+      </table>
+      <p class="hint">“same” means inside the run-to-run noise band — under
+      ${pct(T.credit)} credit or ${num(T.seconds, 2)}s. A ${pct(T.credit)} gap is a single question.</p>
+    </div>`;
+}
+
+if (runs.length) { renderRuns(); renderDetail(); }
+else { renderRuns(); }
+renderCompare();
+document.getElementById('foot').textContent = 'generated ' + DATA.generated +
+  ' · ' + runs.length + ' run(s) · rebuild with:  python -m tests.eval.benchmark --dashboard';
+</script>
+</body>
+</html>

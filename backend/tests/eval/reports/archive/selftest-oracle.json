@@ -1,0 +1,249 @@
+{
+  "label": "selftest-oracle",
+  "args": {
+    "model": "qwen3:1.7b",
+    "arms": "normal,alc-none",
+    "cases": "",
+    "limit": 3,
+    "docs": "on",
+    "web": "off",
+    "fake": "oracle",
+    "label": "selftest-oracle",
+    "out_dir": "C:\\Users\\filik\\Documents\\GitHub\\Kasalix_Ai_Chat\\backend\\tests\\eval\\reports",
+    "resume": false,
+    "keep": false,
+    "run_dir": "",
+    "timeout": 600.0,
+    "list": false
+  },
+  "corpusRoot": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-eval-yrzawm7x",
+  "rows": [
+    {
+      "key": "normal|halyard-pace|single",
+      "arm": "normal",
+      "case": "halyard-pace",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace in the Halyard documentation?",
+      "verdict": "partial",
+      "matched": [
+        "halyard_set_pace"
+      ],
+      "missing": [
+        "12"
+      ],
+      "invented": [],
+      "reason": "missing 12",
+      "answer": "According to the documentation: halyard_set_pace.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.019,
+      "total": 0.019,
+      "calls": 2,
+      "callSeconds": 0.0,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|halyard-mode|single",
+      "arm": "normal",
+      "case": "halyard-mode",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which HalyardMode member is documented for letting the clock fall behind without raising?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "halyardmode.glide"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "I could not find that in the documentation, so I cannot confirm a value.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.002,
+      "total": 0.002,
+      "calls": 2,
+      "callSeconds": 0.0,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|halyard-drift|single",
+      "arm": "normal",
+      "case": "halyard-drift",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What value does the Halyard documentation recommend for the halyard-drift command line option?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "loose"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "I could not find that in the documentation, so I cannot confirm a value.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.001,
+      "total": 0.001,
+      "calls": 2,
+      "callSeconds": 0.0,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|halyard-pace|single",
+      "arm": "alc-none",
+      "case": "halyard-pace",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace in the Halyard documentation?",
+      "verdict": "correct",
+      "matched": [
+        "halyard_set_pace",
+        "12"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "According to the documentation: halyard_set_pace, 12.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.055,
+      "total": 0.055,
+      "calls": 5,
+      "callSeconds": 0.0,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:index": 4,
+        "alc:decision": 2,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 4,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 4,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|halyard-mode|single",
+      "arm": "alc-none",
+      "case": "halyard-mode",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which HalyardMode member is documented for letting the clock fall behind without raising?",
+      "verdict": "correct",
+      "matched": [
+        "halyardmode.glide"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "According to the documentation: halyardmode.glide.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.004,
+      "total": 0.004,
+      "calls": 5,
+      "callSeconds": 0.0,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 3,
+        "alc:reject": 1,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 3,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|halyard-drift|single",
+      "arm": "alc-none",
+      "case": "halyard-drift",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What value does the Halyard documentation recommend for the halyard-drift command line option?",
+      "verdict": "correct",
+      "matched": [
+        "loose"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "According to the documentation: loose.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.005,
+      "total": 0.005,
+      "calls": 5,
+      "callSeconds": 0.0,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 4,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 4,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    }
+  ]
+}

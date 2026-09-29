@@ -1,0 +1,622 @@
+{
+  "label": "stores",
+  "args": {
+    "model": "qwen3:1.7b",
+    "arms": "alc-raw,alc-study",
+    "cases": "peltarn-carry,halyard-carry",
+    "limit": 0,
+    "docs": "on",
+    "web": "off",
+    "fake": "",
+    "label": "stores",
+    "out_dir": "C:\\Users\\filik\\Documents\\GitHub\\Kasalix_Ai_Chat\\backend\\tests\\eval\\reports",
+    "resume": false,
+    "keep": true,
+    "run_dir": "C:/Users/filik/AppData/Local/Temp/alc-store-compare",
+    "timeout": 600.0,
+    "list": false
+  },
+  "corpusRoot": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-store-compare",
+  "rows": [
+    {
+      "key": "alc-raw|peltarn-carry|seed",
+      "arm": "alc-raw",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit?",
+      "verdict": "correct",
+      "matched": [
+        "peltarn_write_quota",
+        "7",
+        "900"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "`peltarn_write_quota()` returns 7, and the Peltarn rate limit is 900 requests per minute per project key.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 8.916,
+      "total": 9.081,
+      "calls": 7,
+      "callSeconds": 8.978,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:index": 4,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 3,
+        "alc:reject": 5,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 3,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "pace.md",
+        "quota.md",
+        "rate-limit.md"
+      ],
+      "learned": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-store-compare\\alc-raw\\learned\\peltarn-carry-seed"
+    },
+    {
+      "key": "alc-raw|peltarn-carry|warm",
+      "arm": "alc-raw",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "invented",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [
+        "1000"
+      ],
+      "reason": "asserted 1000 \u2014 in no source for this case",
+      "answer": "peltarn_write_quota() returns the current write quota for a key, and the Peltarn rate limit per key is typically set to 1000 operations.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 1.682,
+      "total": 1.848,
+      "calls": 3,
+      "callSeconds": 1.843,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 2,
+        "alc:goal": 1,
+        "alc:decision": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 1,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "pace.md",
+        "quota.md",
+        "rate-limit.md"
+      ],
+      "learned": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-store-compare\\alc-raw\\learned\\peltarn-carry-warm"
+    },
+    {
+      "key": "alc-raw|peltarn-carry|cold",
+      "arm": "alc-raw",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "invented",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [
+        "1000"
+      ],
+      "reason": "asserted 1000 \u2014 in no source for this case",
+      "answer": "peltarn_write_quota() returns the current write quota for a key, and the Peltarn rate limit per key is typically set to 1000 operations per second.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.425,
+      "total": 2.604,
+      "calls": 4,
+      "callSeconds": 2.6,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 1,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [],
+      "learned": ""
+    },
+    {
+      "key": "alc-raw|halyard-carry|seed",
+      "arm": "alc-raw",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "correct",
+      "matched": [
+        "12",
+        "240"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The default frame count for `halyard_set_pace` is **12 frames**, as specified in the documentation. The hard ceiling constant is `HALYARD_MAX_FRAMES = 240`, which is a hard limit that values above this are clamped, not rejected.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.139,
+      "total": 4.425,
+      "calls": 7,
+      "callSeconds": 4.406,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 2,
+        "alc:reject": 4,
+        "alc:knowledge-written": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 2,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "limits.md",
+        "the-frame-clock.md"
+      ],
+      "learned": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-store-compare\\alc-raw\\learned\\halyard-carry-seed"
+    },
+    {
+      "key": "alc-raw|halyard-carry|warm",
+      "arm": "alc-raw",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "partial",
+      "matched": [
+        "12"
+      ],
+      "missing": [
+        "240"
+      ],
+      "invented": [],
+      "reason": "missing 240",
+      "answer": "The default frame count for `halyard_set_pace` is **12**, and the hard ceiling constant is **12**.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.884,
+      "total": 3.024,
+      "calls": 5,
+      "callSeconds": 3.002,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 1,
+        "alc:reject": 2,
+        "alc:budget": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 1,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "limits.md",
+        "the-frame-clock.md"
+      ],
+      "learned": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-store-compare\\alc-raw\\learned\\halyard-carry-warm"
+    },
+    {
+      "key": "alc-raw|halyard-carry|cold",
+      "arm": "alc-raw",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "invented",
+      "matched": [],
+      "missing": [
+        "12",
+        "240"
+      ],
+      "invented": [
+        "60"
+      ],
+      "reason": "asserted 60 \u2014 in no source for this case",
+      "answer": "The default frame count for `halyard_set_pace` is typically 60 frames per second, and the hard ceiling constant is generally set to 60.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.43,
+      "total": 2.646,
+      "calls": 4,
+      "callSeconds": 2.642,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 2,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [],
+      "learned": ""
+    },
+    {
+      "key": "alc-study|peltarn-carry|seed",
+      "arm": "alc-study",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit?",
+      "verdict": "partial",
+      "matched": [
+        "peltarn_write_quota",
+        "7"
+      ],
+      "missing": [
+        "900"
+      ],
+      "invented": [],
+      "reason": "missing 900",
+      "answer": "`peltarn_write_quota()` returns the number of concurrent writes a key may make, and the documented value is 7.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.56,
+      "total": 4.832,
+      "calls": 7,
+      "callSeconds": 4.762,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:index": 4,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 1,
+        "alc:budget": 2,
+        "alc:finding": 1,
+        "alc:reject": 3,
+        "alc:study": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 1,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "quota.md"
+      ],
+      "learned": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-store-compare\\alc-study\\learned\\peltarn-carry-seed"
+    },
+    {
+      "key": "alc-study|peltarn-carry|warm",
+      "arm": "alc-study",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "partial",
+      "matched": [
+        "peltarn_write_quota",
+        "7"
+      ],
+      "missing": [
+        "900"
+      ],
+      "invented": [],
+      "reason": "missing 900",
+      "answer": "peltarn_write_quota() returns the number of concurrent writes a key may make, and the Peltarn rate limit per key is documented as 7.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.83,
+      "total": 3.007,
+      "calls": 5,
+      "callSeconds": 2.995,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 1,
+        "alc:budget": 2,
+        "alc:reject": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 1,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "quota.md"
+      ],
+      "learned": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-store-compare\\alc-study\\learned\\peltarn-carry-warm"
+    },
+    {
+      "key": "alc-study|peltarn-carry|cold",
+      "arm": "alc-study",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "invented",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [
+        "1000"
+      ],
+      "reason": "asserted 1000 \u2014 in no source for this case",
+      "answer": "peltarn_write_quota() returns the current write quota for a key, and the Peltarn rate limit per key is typically set to 1000 operations.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.314,
+      "total": 2.523,
+      "calls": 4,
+      "callSeconds": 2.52,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 2,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [],
+      "learned": ""
+    },
+    {
+      "key": "alc-study|halyard-carry|seed",
+      "arm": "alc-study",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "partial",
+      "matched": [
+        "12"
+      ],
+      "missing": [
+        "240"
+      ],
+      "invented": [],
+      "reason": "missing 240",
+      "answer": "The default frame count for `halyard_set_pace` is **12 frames**, as specified in the documentation. The hard ceiling constant is not explicitly mentioned in the provided information.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.334,
+      "total": 5.818,
+      "calls": 8,
+      "callSeconds": 5.805,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 1,
+        "alc:reject": 6,
+        "alc:study": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 1,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "the-frame-clock.md"
+      ],
+      "learned": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-store-compare\\alc-study\\learned\\halyard-carry-seed"
+    },
+    {
+      "key": "alc-study|halyard-carry|warm",
+      "arm": "alc-study",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "partial",
+      "matched": [
+        "12"
+      ],
+      "missing": [
+        "240"
+      ],
+      "invented": [],
+      "reason": "missing 240",
+      "answer": "The default frame count for `halyard_set_pace` is 12 frames. The hard ceiling constant is not explicitly mentioned in the provided information.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.036,
+      "total": 3.207,
+      "calls": 5,
+      "callSeconds": 3.196,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 1,
+        "alc:budget": 2,
+        "alc:reject": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 1,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "the-frame-clock.md"
+      ],
+      "learned": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-store-compare\\alc-study\\learned\\halyard-carry-warm"
+    },
+    {
+      "key": "alc-study|halyard-carry|cold",
+      "arm": "alc-study",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "invented",
+      "matched": [],
+      "missing": [
+        "12",
+        "240"
+      ],
+      "invented": [
+        "16",
+        "255"
+      ],
+      "reason": "asserted 16, 255 \u2014 in no source for this case",
+      "answer": "The default frame count for `halyard_set_pace` is typically 16, and the hard ceiling constant is 255.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.549,
+      "total": 2.737,
+      "calls": 4,
+      "callSeconds": 2.733,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 1,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [],
+      "learned": ""
+    }
+  ]
+}

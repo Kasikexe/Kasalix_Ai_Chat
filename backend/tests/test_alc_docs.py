@@ -226,3 +226,110 @@ def test_open_doc_reports_a_missing_file(docs_root):
     result = docs.open_doc(missing, roots=[docs_root])
     assert result["ok"] is False
     assert "could not read" in result["error"]
+
+
+# ─── Word-shape robustness (D12) ────────────────────────────────────────
+SPELLINGS_DOC = "\n".join(
+    [
+        "# Limiter",
+        "",
+        "## Cadence limiter",
+        "",
+        "The cadence limiter throttles the clock. Configuration lives in limiter.conf, "
+        "and the configured ceiling is 4000 frames per second.",
+        "",
+        "## Notes",
+        "",
+        "Nothing else here.",
+        "",
+    ]
+)
+
+
+@pytest.fixture()
+def spelling_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    root = tmp_path / "spellings"
+    root.mkdir()
+    (root / "limiter.md").write_text(SPELLINGS_DOC, encoding="utf-8")
+    docs.build_index([str(root)])
+    docs._vocabulary_cache = None  # the index changed; the words changed with it
+    return str(root)
+
+
+def test_a_prefix_of_a_documented_word_still_finds_it(spelling_root):
+    # "configure" must reach "configuration"/"configured": a question asked in the
+    # model's own words is the normal case, not the exception.
+    hits = docs.search("how do I configure the limiter", roots=[spelling_root])
+    assert hits
+    assert any("cadence limiter" in hit["heading"].lower() or "limiter" in hit["text"].lower() for hit in hits)
+
+
+def test_expand_terms_maps_an_undocumented_shape_to_a_documented_one():
+    # The machinery is lexish on purpose: a word with no counterpart in the index
+    # is replaced by a documented word sharing its stem or its prefix.
+    words = ["cadence", "limiter", "ceiling", "throttles"]
+    assert docs.expand_terms(["limiters"], words) == ["limiter"]
+    assert docs.expand_terms(["cadencing"], words) == ["cadence"]
+    assert docs.expand_terms(["cadence"], words) == []  # already documented
+    assert docs.expand_terms(["zzz"], words) == []
+
+
+def test_a_thin_result_set_is_asked_again_with_the_documented_words(spelling_root, monkeypatch):
+    """The widening pass itself: the first attempt as written, then a second one.
+
+    This pins the PLUMBING, not any claim that lexical search can bridge a
+    synonym: the Porter tokenizer already covers inflections and the prefix query
+    covers truncations, so what matters is that a thin result really does trigger
+    a second attempt and that its hits are merged in.
+    """
+    issued: list[str] = []
+    real = docs._search_rows
+
+    def spy(query, *, k=docs.DEFAULT_RESULTS, roots=None):
+        issued.append(query)
+        return real(query, k=k, roots=roots)
+
+    monkeypatch.setattr(docs, "_search_rows", spy)
+    monkeypatch.setattr(docs, "vocabulary", lambda **_: ["cadence"])
+
+    hits = docs.search_docs("cade", roots=[spelling_root], k=3)
+
+    assert len(issued) == 2, f"expected a second attempt, saw {issued}"
+    assert issued[0] == "cade"
+    assert "cadence" in issued[1]
+    assert hits and any("cadence" in (hit.get("text") or "").lower() for hit in hits)
+
+
+def test_a_query_that_already_matched_is_never_widened(spelling_root, monkeypatch):
+    monkeypatch.setattr(docs, "vocabulary", lambda **_: ["something_else"])
+    hits = docs.search_docs("cadence limiter", roots=[spelling_root], k=1)
+    assert hits
+    assert all("something_else" not in (hit.get("text") or "") for hit in hits)
+
+
+def test_the_heading_counts_for_more_than_the_body(spelling_root):
+    # The words appear in one chunk's heading; ranking must prefer that chunk.
+    hits = docs.search("cadence limiter", roots=[spelling_root], k=4)
+    assert hits
+    assert "cadence limiter" in (hits[0]["heading"] or "").lower()
+
+
+def test_neighbours_are_the_other_chunks_of_the_same_file(spelling_root):
+    hits = docs.search("cadence limiter", roots=[spelling_root], k=1)
+    target = hits[0]
+    around = docs.neighbours(target["path"], int(target["chunk"]), span=1)
+    assert all(item["path"] == target["path"] for item in around)
+    assert all(int(item["chunk"]) != int(target["chunk"]) for item in around)
+    assert docs.neighbours(str(Path(spelling_root) / "absent.md"), 0) == []
+
+
+def test_merge_keeps_the_better_copy_of_a_chunk():
+    merged = docs._merge(
+        [{"path": "a.md", "chunk": 0, "score": 1.0, "text": "first"}],
+        [
+            {"path": "a.md", "chunk": 0, "score": 9.0, "text": "better"},
+            {"path": "b.md", "chunk": 1, "score": 2.0, "text": "other"},
+        ],
+    )
+    assert [item["text"] for item in merged] == ["better", "other"]

@@ -1,0 +1,540 @@
+{
+  "label": "alc-0.13.0",
+  "tag": "alc-0.13.0",
+  "variant": "classic",
+  "model": "qwen3:1.7b",
+  "startedAt": "2026-09-29T15:09:23+00:00",
+  "args": {
+    "model": "qwen3:1.7b",
+    "arms": "normal,alc-study",
+    "cases": "halyard-pace,peltarn-rate,brimwall-absent,peltarn-carry",
+    "limit": 0,
+    "docs": "on",
+    "web": "off",
+    "fake": "",
+    "label": "alc-0.13.0",
+    "out_dir": "tests\\eval\\reports",
+    "resume": true,
+    "keep": false,
+    "run_dir": "",
+    "timeout": 600.0,
+    "variant": "classic",
+    "tag": "alc-0.13.0",
+    "list": false
+  },
+  "corpusRoot": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-eval-oejtdk_1",
+  "rows": [
+    {
+      "key": "normal|halyard-pace|single",
+      "arm": "normal",
+      "case": "halyard-pace",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace in the Halyard documentation?",
+      "verdict": "partial",
+      "matched": [
+        "halyard_set_pace"
+      ],
+      "missing": [
+        "12"
+      ],
+      "invented": [],
+      "reason": "missing 12",
+      "answer": "I don't know the exact default frame count for `halyard_set_pace` in the Halyard documentation. You might want to check the official Halyard documentation or refer to the specific implementation details for more accurate information.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 5.211,
+      "total": 5.433,
+      "calls": 2,
+      "callSeconds": 5.413,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [],
+      "learned": ""
+    },
+    {
+      "key": "normal|peltarn-rate|single",
+      "arm": "normal",
+      "case": "peltarn-rate",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the Peltarn rate limit in requests per minute?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "900"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "I don't know the exact value for the Peltarn rate limit in requests per minute. The information I have is not from a live web search, and I cannot provide specific numbers or details about this limit. If you have more context or a specific source where this information is mentioned, I'd be happy to help you find it.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.768,
+      "total": 1.084,
+      "calls": 2,
+      "callSeconds": 1.083,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "search:web",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [],
+      "learned": ""
+    },
+    {
+      "key": "normal|brimwall-absent|single",
+      "arm": "normal",
+      "case": "brimwall-absent",
+      "kind": "absent",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default value of brimwall_set_ceiling() in the Brimwall documentation?",
+      "verdict": "admitted",
+      "matched": [],
+      "missing": [],
+      "invented": [],
+      "reason": "said plainly it could not find it",
+      "answer": "I don't know the specific default value of `brimwall_set_ceiling()` from the Brimwall documentation. You would need to consult the official Brimwall documentation or source code to find this information.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.709,
+      "total": 0.959,
+      "calls": 2,
+      "callSeconds": 0.958,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [],
+      "learned": ""
+    },
+    {
+      "key": "normal|peltarn-carry|seed",
+      "arm": "normal",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit?",
+      "verdict": "partial",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [],
+      "reason": "missing 7, 900",
+      "answer": "Peltarn is a cryptocurrency platform, and the function `peltarn_write_quota()` is likely related to its rate-limiting mechanism. However, I don't have specific information about the exact behavior of this function or the Peltarn rate limit. If you're referring to a specific API or feature, providing more context would help me give a more accurate answer.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.709,
+      "total": 1.099,
+      "calls": 2,
+      "callSeconds": 1.098,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [],
+      "learned": ""
+    },
+    {
+      "key": "normal|peltarn-carry|warm",
+      "arm": "normal",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "partial",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [],
+      "reason": "missing 7, 900",
+      "answer": "I don't know the exact details about the `peltarn_write_quota()` function or the Peltarn rate limit per key. You would need to refer to the official documentation or source code for Peltarn to get the precise information.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.701,
+      "total": 0.982,
+      "calls": 2,
+      "callSeconds": 0.979,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [],
+      "learned": ""
+    },
+    {
+      "key": "normal|peltarn-carry|cold",
+      "arm": "normal",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "partial",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [],
+      "reason": "missing 7, 900",
+      "answer": "I don't know the exact details about the `peltarn_write_quota()` function or the Peltarn rate limit per key. You would need to refer to the official documentation or source code for Peltarn to get accurate information. If you have access to the Peltarn API or documentation, I'd be happy to help you understand it better.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.687,
+      "total": 1.074,
+      "calls": 2,
+      "callSeconds": 1.072,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [],
+      "learned": ""
+    },
+    {
+      "key": "alc-study|halyard-pace|single",
+      "arm": "alc-study",
+      "case": "halyard-pace",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace in the Halyard documentation?",
+      "verdict": "correct",
+      "matched": [
+        "halyard_set_pace",
+        "12"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The default frame count for `halyard_set_pace` in the Halyard documentation is **12**.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.435,
+      "total": 6.472,
+      "calls": 9,
+      "callSeconds": 6.396,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 8,
+        "alc:goal": 1,
+        "alc:index": 4,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 2,
+        "alc:reject": 5,
+        "alc:study": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 2,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "1-4-0.md",
+        "the-frame-clock.md"
+      ],
+      "learned": ""
+    },
+    {
+      "key": "alc-study|peltarn-rate|single",
+      "arm": "alc-study",
+      "case": "peltarn-rate",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the Peltarn rate limit in requests per minute?",
+      "verdict": "correct",
+      "matched": [
+        "900"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The Peltarn rate limit is 900 requests per minute per project key.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.128,
+      "total": 6.527,
+      "calls": 9,
+      "callSeconds": 6.493,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 7,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 3,
+        "alc:reject": 4,
+        "alc:study": 2,
+        "alc:knowledge-written": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 3,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "cross-references.md",
+        "quota.md",
+        "rate-limit.md"
+      ],
+      "learned": ""
+    },
+    {
+      "key": "alc-study|brimwall-absent|single",
+      "arm": "alc-study",
+      "case": "brimwall-absent",
+      "kind": "absent",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default value of brimwall_set_ceiling() in the Brimwall documentation?",
+      "verdict": "admitted",
+      "matched": [],
+      "missing": [],
+      "invented": [],
+      "reason": "said plainly it could not find it",
+      "answer": "The default value of `brimwall_set_ceiling()` is not specified in the provided documentation.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.58,
+      "total": 6.22,
+      "calls": 8,
+      "callSeconds": 6.189,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 3,
+        "alc:reject": 1,
+        "alc:study": 2,
+        "alc:knowledge-written": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 3,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "1-4-0.md",
+        "pace.md",
+        "the-frame-clock.md"
+      ],
+      "learned": ""
+    },
+    {
+      "key": "alc-study|peltarn-carry|seed",
+      "arm": "alc-study",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit?",
+      "verdict": "partial",
+      "matched": [
+        "peltarn_write_quota",
+        "7"
+      ],
+      "missing": [
+        "900"
+      ],
+      "invented": [],
+      "reason": "missing 900",
+      "answer": "`peltarn_write_quota()` returns the number of concurrent writes a key may make, and the documented value is 7.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.478,
+      "total": 4.644,
+      "calls": 7,
+      "callSeconds": 4.634,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 1,
+        "alc:budget": 2,
+        "alc:finding": 1,
+        "alc:reject": 3,
+        "alc:study": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 1,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "quota.md"
+      ],
+      "learned": ""
+    },
+    {
+      "key": "alc-study|peltarn-carry|warm",
+      "arm": "alc-study",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "partial",
+      "matched": [
+        "peltarn_write_quota",
+        "7"
+      ],
+      "missing": [
+        "900"
+      ],
+      "invented": [],
+      "reason": "missing 900",
+      "answer": "`peltarn_write_quota()` returns the number of concurrent writes a key may make, and the Peltarn rate limit per key is 7.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.967,
+      "total": 3.118,
+      "calls": 5,
+      "callSeconds": 3.106,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 1,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 1,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "quota.md"
+      ],
+      "learned": ""
+    },
+    {
+      "key": "alc-study|peltarn-carry|cold",
+      "arm": "alc-study",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "invented",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [
+        "1000"
+      ],
+      "reason": "asserted 1000 \u2014 in no source for this case",
+      "answer": "peltarn_write_quota() returns the current write quota for a key, and the Peltarn rate limit per key is typically set to 1000 operations.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.333,
+      "total": 2.535,
+      "calls": 4,
+      "callSeconds": 2.532,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 2,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [],
+      "learned": ""
+    }
+  ]
+}

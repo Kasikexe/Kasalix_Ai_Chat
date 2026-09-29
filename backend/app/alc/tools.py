@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from ..logger import error as log_error, info as log_info
@@ -41,15 +42,24 @@ class ALCToolContext:
     roots: list[str] = field(default_factory=list)
     signal: Any = None
     web_enabled: bool = True
-    # Project knowledge is a Koding-only source: chat has no project directory,
-    # so ALC must not claim to have one (docs/ALC_DESIGN.md D8).
+    # Kept so the cycle can report which engine it is running under.
     mode: str = "chat"
     allow_writes: bool = True
     opts: dict[str, Any] = field(default_factory=dict)
 
     @property
     def knowledge_enabled(self) -> bool:
-        return self.mode == "agent" and bool(self.workspace)
+        """Whether this turn has a project directory to remember things in.
+
+        The condition is the WORKSPACE, not the mode. Project knowledge was
+        originally Koding-only on the reasoning that "chat has no project
+        directory" — but a chat conversation with a workspace attached does, and
+        excluding it meant chat could never learn anything: it gathered, answered
+        and kept nothing, so every later turn re-searched the same facts. That is
+        the difference between a cycle and a cache, so the store is now gated on
+        what is actually available (docs/ALC_DESIGN.md D8, amended in Phase 4).
+        """
+        return bool(self.workspace)
 
 
 # ─── Tool definitions (schema + the example the model copies) ───────────
@@ -205,6 +215,14 @@ def is_placeholder(value: Any, tool: dict[str, Any] | None = None) -> bool:
 
 # ─── Dispatch ───────────────────────────────────────────────────────────
 def _web_candidates(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Web hits as candidates.
+
+    ``date`` is the PAGE's own publication/update date when the provider gives
+    one, and empty when it does not. It used to be today's date, which made every
+    web page look newer than every local document and let a stale page "win" a
+    conflict it should have lost. When a page IS dated the label says where the
+    date came from (see scratchpad._source_label).
+    """
     candidates: list[dict[str, Any]] = []
     for source in sources[:MAX_CANDIDATES]:
         url = str(source.get("url") or "")
@@ -218,9 +236,62 @@ def _web_candidates(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "text": text[:MAX_CANDIDATE_CHARS],
                 "url": url,
                 "title": str(source.get("title") or url),
+                "date": str(source.get("published_date") or source.get("date") or "")[:10],
+                "fetchedOn": _today(),
             }
         )
     return candidates
+
+
+def _today() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+#: How much of a document one finding may hold once it has been widened to its
+#: neighbouring chunk. Larger than ``scratchpad.MAX_FINDING_CHARS`` on purpose:
+#: the point is that BOTH halves of a multi-hop answer fit in one finding.
+EXPANDED_FINDING_CHARS = 1400
+
+
+def expand_doc_text(
+    candidate: dict[str, Any],
+    *,
+    query: str = "",
+    max_chars: int = EXPANDED_FINDING_CHARS,
+) -> str:
+    """One kept documentation hit, plus the neighbouring chunk that helps most.
+
+    Multi-hop documentation puts the name in one section and the value in the
+    next, so the single chunk that matched reads as a complete answer while the
+    answer is one chunk away. Only a neighbour that shares terms with the query
+    is added: an unrelated adjacent section is context the model has to unlearn.
+
+    Returns "" when there is nothing worth adding, and the caller keeps the
+    original text.
+    """
+    path = str(candidate.get("path") or "")
+    chunk_no = candidate.get("chunk")
+    if not path or chunk_no is None:
+        return ""
+    around = docs.neighbours(path, int(chunk_no), span=1)
+    if not around:
+        return ""
+    centre = " ".join(str(candidate.get("text") or "").split())
+    terms = docs.query_terms(f"{query} {candidate.get('heading') or ''}")
+    best = ""
+    best_hits = 0
+    for item in around:
+        lowered = str(item.get("text") or "").lower()
+        hits = sum(1 for term in terms if term in lowered)
+        if hits > best_hits:
+            best, best_hits = str(item.get("text") or ""), hits
+    if not best or best_hits == 0:
+        return ""
+    marker = "\n[same document, adjacent section]\n"
+    room = max_chars - len(marker) - len(best)
+    if room < 200:
+        return centre[:max_chars]
+    return (centre[:room] + marker + best)[:max_chars]
 
 
 async def dispatch(name: str, args: dict[str, Any], ctx: ALCToolContext) -> dict[str, Any]:
@@ -249,6 +320,12 @@ async def dispatch(name: str, args: dict[str, Any], ctx: ALCToolContext) -> dict
                     "text": hit["text"][:MAX_CANDIDATE_CHARS],
                     "path": hit["path"],
                     "heading": hit.get("heading") or "",
+                    # So the briefing can say WHEN a passage was written — the
+                    # only way to settle two sources that disagree.
+                    "date": docs.source_date(str(hit.get("path") or "")),
+                    # Which chunk of the file, so a kept hit can be widened to its
+                    # neighbouring chunk (expand_doc_text).
+                    "chunk": hit.get("chunk"),
                     "score": hit.get("score") or 0.0,
                     "matched": hit.get("matched") or [],
                 }
@@ -328,6 +405,7 @@ async def dispatch(name: str, args: dict[str, Any], ctx: ALCToolContext) -> dict
                     "source": hit["source"],
                     "text": str(hit["text"])[:MAX_CANDIDATE_CHARS],
                     "path": hit.get("path") or "",
+                    "date": str(hit.get("date") or ""),
                     "score": hit.get("score") or 0.0,
                     "matched": hit.get("matched") or [],
                 }
@@ -384,7 +462,13 @@ async def dispatch(name: str, args: dict[str, Any], ctx: ALCToolContext) -> dict
             clean = " ".join(text.split())
             result["ok"] = True
             result["candidates"] = [
-                {"source": f"web:{url}", "text": clean[:MAX_CANDIDATE_CHARS], "url": url}
+                {
+                    "source": f"web:{url}",
+                    "text": clean[:MAX_CANDIDATE_CHARS],
+                    "url": url,
+                    # A page's content is current as of when it was fetched.
+                    "date": _today(),
+                }
             ]
             result["output"] = clean[:MAX_OUTPUT_CHARS]
             return result

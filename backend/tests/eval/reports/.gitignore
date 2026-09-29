@@ -1,0 +1,2 @@
+# Run logs and scratch output are not source; the reports are.
+*.log

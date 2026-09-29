@@ -13,6 +13,7 @@ from app.alc.scratchpad import (
     Finding,
     Scratchpad,
     estimate_tokens,
+    family_of,
     looks_like_greeting,
     normalize_query,
 )
@@ -184,3 +185,122 @@ def test_finding_key_is_stable_for_identical_text():
     a = Finding(source="docs:a.md", text="same text")
     b = Finding(source="docs:a.md", text="same  text")
     assert a.key() == b.key()
+
+
+# ─── Families: what kind of source a finding came from ──────────────────
+def test_family_of_reads_the_source_prefix():
+    assert family_of("docs:library.md#Pace") == "docs"
+    assert family_of("web:https://example.com/x") == "web"
+    assert family_of("knowledge:theme") == "note"
+
+
+def test_the_web_label_says_fetched_and_never_updated():
+    # A page fetched now has not CHANGED now. Labelling it "updated today" is what
+    # made every web result look newer than every local document.
+    pad = Scratchpad()
+    pad.add_finding(
+        source="web:https://example.com/x",
+        text="Vintra pace is 16.",
+        data={"date": "", "fetchedOn": "2026-09-29"},
+    )
+    briefing = pad.to_briefing()
+    assert "fetched 2026-09-29" in briefing
+    assert "updated 2026-09-29" not in briefing
+
+
+def test_a_dated_document_still_says_updated():
+    pad = Scratchpad()
+    pad.add_finding(source="docs:a.md", text="Vintra pace is 16.", data={"date": "2026-01-02"})
+    assert "updated 2026-01-02" in pad.to_briefing()
+
+
+# ─── Contradictions inside one turn ─────────────────────────────────────
+def _conflicting_pad() -> Scratchpad:
+    pad = Scratchpad(goal="what is the Vintra pace?")
+    pad.add_finding(
+        source="docs:changelog.md",
+        text="VINTRA_PACE defaults to 12 in the older changelog.",
+        data={"date": "2025-01-01"},
+    )
+    pad.add_finding(
+        source="docs:pace.md",
+        text="VINTRA_PACE defaults to 16 in the current configuration file.",
+        data={"date": "2026-01-01"},
+    )
+    return pad
+
+
+def test_the_briefing_tells_the_model_which_value_is_current():
+    pad = _conflicting_pad()
+    briefing = pad.to_briefing()
+    assert "SOURCES DISAGREE" in briefing
+    assert "VINTRA_PACE" in briefing
+    assert "12" in briefing and "16" in briefing  # both reported, none hidden
+    assert "Use the current value" in briefing
+    assert pad.conflicts() and pad.conflicts()[0]["current"]["value"] == "16"
+
+
+def test_conflicts_can_be_switched_off_for_measurement():
+    pad = _conflicting_pad()  # the eval harness ablation: alcConflict=False
+    pad.conflict_guard = False
+    assert "SOURCES DISAGREE" not in pad.to_briefing()
+    assert pad.conflicts()  # still detectable, just not injected
+
+
+def test_no_conflict_block_when_sources_agree():
+    pad = Scratchpad(goal="pace")
+    pad.add_finding(source="docs:a.md", text="VINTRA_PACE defaults to 16.", data={"date": "2026-01-01"})
+    pad.add_finding(source="docs:b.md", text="VINTRA_PACE defaults to 16.", data={"date": "2026-02-01"})
+    assert "SOURCES DISAGREE" not in pad.to_briefing()
+
+
+# ─── Coverage: when may the cycle stop early? ───────────────────────────
+def test_coverage_needs_a_value_when_the_question_asks_for_one():
+    pad = Scratchpad(goal="What is the default pace for Vintra?")
+    pad.add_question("What is the default pace for Vintra?")
+    pad.add_finding(
+        source="docs:intro.md",
+        text="Vintra has a configurable default pace, described in the next section.",
+    )
+    # Names the subject, states no value: one more lookup is required.
+    assert not pad.covered()
+
+
+def test_coverage_is_reached_once_the_value_is_in_hand():
+    pad = Scratchpad(goal="What is the default pace for Vintra?")
+    pad.add_question("What is the default pace for Vintra?")
+    pad.add_finding(source="docs:pace.md", text="The Vintra default pace is 16 frames.")
+    assert pad.covered()
+
+
+def test_a_procedure_question_needs_no_number():
+    pad = Scratchpad(goal="How do I handle pygame key events?")
+    pad.add_question("How do I handle pygame key events?")
+    pad.add_finding(source="docs:games.md", text="Read pygame key events with pygame.event.get().")
+    assert pad.covered()
+
+
+def test_an_unresolved_gap_blocks_coverage():
+    pad = Scratchpad(goal="What is the default pace for Vintra?")
+    pad.add_question("What is the default pace for Vintra?")
+    pad.add_finding(source="docs:pace.md", text="The Vintra default pace is 16 frames.")
+    pad.add_gap("no usable information from web_search")
+    assert not pad.covered()
+    assert not Scratchpad().covered()  # nothing gathered at all
+
+
+def test_a_question_with_no_distinctive_terms_is_never_covered():
+    pad = Scratchpad(goal="what is it")
+    pad.add_question("what is it")
+    pad.add_finding(source="docs:a.md", text="It is 12.")
+    assert not pad.covered()
+
+
+# ─── Widened findings ───────────────────────────────────────────────────
+def test_a_widened_finding_may_exceed_the_default_clip():
+    pad = Scratchpad()
+    long_text = "x" * 1500
+    kept = pad.add_finding(source="docs:a.md", text=long_text, limit=1400)
+    assert kept is not None and len(kept.text) == 1400
+    clipped = pad.add_finding(source="docs:b.md", text=long_text)
+    assert clipped is not None and len(clipped.text) == MAX_FINDING_CHARS

@@ -54,6 +54,7 @@ const EVENT_STYLES: Record<string, { bg: string; border: string; icon: LucideIco
  'alc:budget': { bg: 'bg-gray-800/40', border: 'border-gray-700/50', icon: Gauge, label: 'ALC Budget' },
  'alc:index': { bg: 'bg-teal-900/10', border: 'border-teal-800/40', icon: Layers, label: 'ALC Index' },
  'alc:knowledge-written': { bg: 'bg-emerald-900/20', border: 'border-emerald-700/50', icon: BookOpen, label: 'ALC Remembered' },
+ 'alc:study': { bg: 'bg-emerald-900/20', border: 'border-emerald-700/50', icon: BookOpen, label: 'ALC Study' },
  'alc:done': { bg: 'bg-emerald-900/20', border: 'border-[#1a3a33]', icon: CheckCircle2, label: 'ALC Done' },
  'alc:notice': { bg: 'bg-amber-900/20', border: 'border-amber-700/50', icon: XCircle, label: 'ALC Notice' },
 };

@@ -24,6 +24,9 @@ export const ALC_STAGE_LABELS: Record<string, string> = {
   'alc:indexing': 'ALC — indexing documentation',
   'alc:gathering': 'ALC — gathering information',
   'alc:answering': 'ALC — answering from the evidence',
+  // Runs AFTER the answer has streamed: writing up what was learned must never
+  // hold the reply back.
+  'alc:studying': 'ALC — writing up what it learned',
 };
 
 /** Human name for an ALC source, so the timeline never shows a raw tool id. */
@@ -93,8 +96,12 @@ export function describeAlcEvent(event: AlcStreamEvent): AlcStep | null {
 
     case 'start': {
       const tools = strings(data.tools).map(alcSourceLabel);
+      const decideModel = str(data.decideModel);
       const bits = [
         data.model ? `model ${str(data.model)}` : '',
+        // Says plainly when the cycle's own decisions came from the software
+        // rather than the model — the difference is visible in the answer's cost.
+        decideModel === 'heuristics-only' ? 'decisions: software heuristics' : '',
         count(data.roots) ? plural(count(data.roots), 'documentation folder') : 'no documentation folders',
         data.webEnabled ? 'web search on' : 'web search off',
         tools.length ? `sources: ${tools.join(', ')}` : '',
@@ -173,6 +180,46 @@ export function describeAlcEvent(event: AlcStreamEvent): AlcStep | null {
         ok: true,
       };
 
+    case 'conflict': {
+      const names = strings(data.names);
+      return {
+        kind,
+        label: `${plural(count(data.count), 'contradiction')} in the sources — resolved by software`,
+        detail: [
+          names.length ? `Same name, different values:\n- ${names.join('\n- ')}` : '',
+          'The documentation outranks a web page, a project note never overrules the documentation it summarises, and within one kind the newer date wins.',
+        ].filter(Boolean).join('\n'),
+        ok: true,
+      };
+    }
+
+    case 'verify': {
+      const blocked = count(data.blocked);
+      const claims = strings(data.claims);
+      if (data.enabled === false) {
+        return {
+          kind,
+          label: 'Answer check off for this run',
+          detail: 'Whatever the model said was released as written.',
+          ok: false,
+        };
+      }
+      if (!blocked) {
+        return { kind, label: 'Answer checked against the evidence', ok: true };
+      }
+      // The sentence carrying these was NOT sent: the user never read a value no
+      // source states. Saying what was withheld is the honest report of that.
+      return {
+        kind,
+        label: `${plural(blocked, 'passage')} withheld — the sources do not state it`,
+        detail: [
+          claims.length ? `Not in any source I searched: ${claims.join(', ')}` : '',
+          'I said plainly that it could not be verified instead of stating it.',
+        ].filter(Boolean).join('\n'),
+        ok: false,
+      };
+    }
+
     case 'reject':
       return {
         kind,
@@ -205,6 +252,35 @@ export function describeAlcEvent(event: AlcStreamEvent): AlcStep | null {
         detail: [str(data.file), str(data.source) ? `from ${short(str(data.source), 120)}` : ''].filter(Boolean).join('\n') || undefined,
         ok: true,
       };
+
+    case 'study': {
+      const topic = str(data.topic) || 'the topic';
+      const dropped = count(data.dropped);
+      const conflicts = count(data.conflicts);
+      if (str(data.mode) !== 'synthesised') {
+        // The model wrote something the sources did not support, so the kept
+        // excerpt was stored instead. Saying why is the honest thing to show.
+        return {
+          kind,
+          label: `Kept the excerpt for “${topic}” instead of a written-up note`,
+          detail: str(data.reason) || undefined,
+          ok: false,
+        };
+      }
+      const bits = [
+        plural(count(data.bullets), 'fact'),
+        count(data.sources) ? `from ${plural(count(data.sources), 'source')}` : '',
+        dropped ? `${plural(dropped, 'unsourced line')} removed by software` : '',
+        conflicts ? `${plural(conflicts, 'conflicting source')} recorded` : '',
+        data.changed === false ? 'unchanged' : '',
+      ].filter(Boolean);
+      return {
+        kind,
+        label: `Wrote up “${topic}” for later sessions`,
+        detail: [str(data.file), bits.join(' · ')].filter(Boolean).join('\n') || undefined,
+        ok: true,
+      };
+    }
 
     case 'done':
       return { kind, label: 'ALC cycle finished', detail: formatAlcSummary(data) || undefined, ok: true };

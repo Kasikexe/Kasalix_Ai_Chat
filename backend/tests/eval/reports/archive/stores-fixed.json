@@ -1,0 +1,173 @@
+{
+  "label": "stores-fixed",
+  "args": {
+    "model": "qwen3:1.7b",
+    "arms": "alc-study",
+    "cases": "peltarn-carry",
+    "limit": 0,
+    "docs": "on",
+    "web": "off",
+    "fake": "",
+    "label": "stores-fixed",
+    "out_dir": "C:\\Users\\filik\\Documents\\GitHub\\Kasalix_Ai_Chat\\backend\\tests\\eval\\reports",
+    "resume": false,
+    "keep": true,
+    "run_dir": "C:/Users/filik/AppData/Local/Temp/alc-store-fixed",
+    "timeout": 600.0,
+    "list": false
+  },
+  "corpusRoot": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-store-fixed",
+  "rows": [
+    {
+      "key": "alc-study|peltarn-carry|seed",
+      "arm": "alc-study",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit?",
+      "verdict": "partial",
+      "matched": [
+        "peltarn_write_quota",
+        "7"
+      ],
+      "missing": [
+        "900"
+      ],
+      "invented": [],
+      "reason": "missing 900",
+      "answer": "`peltarn_write_quota()` returns the number of concurrent writes a key may make, and the documented value is 7.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 6.568,
+      "total": 7.407,
+      "calls": 7,
+      "callSeconds": 7.335,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:index": 4,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 1,
+        "alc:budget": 2,
+        "alc:finding": 1,
+        "alc:reject": 3,
+        "alc:study": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 1,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "quota.md"
+      ],
+      "learned": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-store-fixed\\alc-study\\learned\\peltarn-carry-seed"
+    },
+    {
+      "key": "alc-study|peltarn-carry|warm",
+      "arm": "alc-study",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "partial",
+      "matched": [
+        "peltarn_write_quota",
+        "7"
+      ],
+      "missing": [
+        "900"
+      ],
+      "invented": [],
+      "reason": "missing 900",
+      "answer": "peltarn_write_quota() returns 7, and the Peltarn rate limit per key is 7.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.881,
+      "total": 2.993,
+      "calls": 5,
+      "callSeconds": 2.981,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 1,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 1,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "quota.md"
+      ],
+      "learned": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-store-fixed\\alc-study\\learned\\peltarn-carry-warm"
+    },
+    {
+      "key": "alc-study|peltarn-carry|cold",
+      "arm": "alc-study",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "invented",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [
+        "1000"
+      ],
+      "reason": "asserted 1000 \u2014 in no source for this case",
+      "answer": "peltarn_write_quota() returns the current write quota for a key, and the Peltarn rate limit per key is typically set to 1000 operations.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.367,
+      "total": 2.577,
+      "calls": 4,
+      "callSeconds": 2.574,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 1,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [],
+      "learned": ""
+    }
+  ]
+}

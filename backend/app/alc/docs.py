@@ -23,6 +23,8 @@ import hashlib
 import os
 import re
 import sqlite3
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -342,6 +344,21 @@ def build_index(
     return stats
 
 
+def source_date(path: str) -> str:
+    """A documentation file's last-modified date, ISO, or "" when unreadable.
+
+    Findings carry this so a later turn can tell which of two contradicting
+    passages is the newer one — and so a study can record when what it says was
+    true. A note without a date cannot be re-checked when it turns out to be
+    wrong.
+    """
+    try:
+        stamp = Path(str(path or "")).stat().st_mtime
+    except (OSError, ValueError):
+        return ""
+    return datetime.fromtimestamp(stamp, timezone.utc).strftime("%Y-%m-%d")
+
+
 def index_status() -> dict[str, Any]:
     """What is indexed right now (cheap — used to decide whether to rebuild)."""
     status: dict[str, Any] = {"built": False, "files": 0, "chunks": 0, "lastBuiltAt": 0.0}
@@ -400,6 +417,17 @@ def _query_terms(query: str) -> list[str]:
     return terms
 
 
+def query_terms(query: str) -> list[str]:
+    """Public form of the query terms, for callers that need the same view."""
+    return _query_terms(query)
+
+
+#: Terms at least this long are also matched as prefixes, so "configure" reaches
+#: "configuration" and "pace" reaches "paces". Shorter terms would match half the
+#: corpus, which dilutes BM25 rather than improving recall.
+_PREFIX_MIN = 5
+
+
 def _fts_query(query: str) -> str | None:
     """A safe FTS5 MATCH expression: quoted terms OR'd together.
 
@@ -409,7 +437,87 @@ def _fts_query(query: str) -> str | None:
     terms = _query_terms(query)
     if not terms:
         return None
-    return " OR ".join(f'"{term}"' for term in terms[:12])
+    return " OR ".join(
+        f'"{term}"*' if len(term) >= _PREFIX_MIN else f'"{term}"' for term in terms[:12]
+    )
+
+
+def _stem(term: str) -> str:
+    """A cheap stem, good enough for matching a query word to a heading word.
+
+    No dependency and no correctness pretence: it only has to decide whether two
+    words are close enough that searching the other one is better than searching
+    nothing at all.
+    """
+    for suffix in ("ing", "ions", "ion", "ies", "ed", "es", "s"):
+        if len(term) > len(suffix) + 3 and term.endswith(suffix):
+            return term[: -len(suffix)]
+    return term
+
+
+def vocabulary(*, limit: int = 40_000) -> list[str]:
+    """The words the index actually contains, from its headings.
+
+    This is the honest, dependency-free form of query expansion: instead of a
+    hand-written synonym list guessing what the documentation might say, the
+    documentation's own vocabulary says which words exist to search for.
+    """
+    global _vocabulary_cache
+    now = time.time()
+    if _vocabulary_cache and now - _vocabulary_cache[1] < VOCABULARY_TTL_SECONDS:
+        return _vocabulary_cache[0]
+    words: list[str] = []
+    if fts5_available():
+        try:
+            conn = _connect()
+        except sqlite3.Error:
+            return []
+        try:
+            rows = conn.execute(
+                "SELECT heading, text FROM chunks ORDER BY chunk_no LIMIT ?", (limit,)
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+        finally:
+            conn.close()
+        seen: set[str] = set()
+        for heading, text in rows:
+            for token in _WORD_RE.findall(f"{heading or ''} {str(text or '')[:400]}"):
+                lower = token.lower()
+                if len(lower) < 4 or lower in _STOPWORDS or lower in seen:
+                    continue
+                seen.add(lower)
+                words.append(lower)
+    _vocabulary_cache = (words, now)
+    return words
+
+
+def expand_terms(terms: list[str], words: list[str]) -> list[str]:
+    """Query words with no counterpart in the documentation, replaced by its own.
+
+    A question phrased "rate cap" will never match a file that says "cadence
+    limiter" by term overlap alone — but if the index contains ``cadence`` and the
+    question says ``rate``, the closest documented word is a better search than
+    the word that matched nothing. Purely lexical, purely deterministic.
+    """
+    if not terms or not words:
+        return []
+    by_stem: dict[str, str] = {}
+    for word in words:
+        by_stem.setdefault(_stem(word), word)
+    out: list[str] = []
+    for term in terms:
+        if term in by_stem or term in words:
+            continue
+        candidate = by_stem.get(_stem(term))
+        if candidate is None:
+            # The first four letters: long enough to be specific, short enough to
+            # survive a spelling or truncation difference ("cade" -> "cadence").
+            prefix = term[:4]
+            candidate = next((word for word in words if word.startswith(prefix)), None)
+        if candidate and candidate not in out:
+            out.append(candidate)
+    return out[:6]
 
 
 def _like_prefixes(roots: Iterable[str] | None) -> tuple[str, list[str]]:
@@ -442,8 +550,14 @@ def _search_rows(
     except sqlite3.Error:
         return [], False
     try:
+        # bm25's weights follow the columns in declaration order (text, path,
+        # heading, chunk_no). The heading counts for more than the body: a query
+        # like "Vintra pace" is naming a section, and a hit IN that section is far
+        # more useful than the word appearing somewhere in the prose. chunk_no is
+        # UNINDEXED, so its weight is irrelevant and stays 0.
         rows = conn.execute(
-            "SELECT path, heading, text, chunk_no, bm25(chunks) AS score FROM chunks "
+            "SELECT path, heading, text, chunk_no, "
+            "bm25(chunks, 1.0, 0.4, 2.4, 0.0) AS score FROM chunks "
             f"WHERE chunks MATCH ?{clause} ORDER BY score LIMIT ?",
             [match, *params, limit],
         ).fetchall()
@@ -465,12 +579,54 @@ def _search_rows(
                 "path": path,
                 "heading": heading or "",
                 "text": snippet[:MAX_SNIPPET_CHARS],
+                # Which chunk of the file this is: the neighbouring chunks are
+                # what a multi-hop answer usually needs (see neighbours()).
+                "chunk": int(_chunk_no or 0),
                 "score": -float(score or 0.0),
                 "matched": [term for term in _query_terms(query) if term in snippet.lower()],
                 "source": f"docs:{os.path.basename(path)}" + (f"#{heading}" if heading else ""),
             }
         )
     return results, stale
+
+
+def neighbours(path: str, chunk_no: int, *, span: int = 1) -> list[dict[str, Any]]:
+    """The chunks around one hit in the same file — the rest of its section.
+
+    A document puts the name in one section and the value in the next; a single
+    chunk answer therefore reads as covered while the answer is one chunk away.
+    Blocking.
+    """
+    if not path or not fts5_available():
+        return []
+    low, high = int(chunk_no) - abs(int(span)), int(chunk_no) + abs(int(span))
+    try:
+        conn = _connect()
+    except sqlite3.Error:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT chunk_no, heading, text FROM chunks WHERE path = ? AND chunk_no BETWEEN ? "
+            "AND ? ORDER BY chunk_no",
+            (path, low, high),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    out: list[dict[str, Any]] = []
+    for number, heading, text in rows:
+        if int(number) == int(chunk_no):
+            continue
+        out.append(
+            {
+                "path": path,
+                "chunk": int(number),
+                "heading": heading or "",
+                "text": " ".join(str(text or "").split()),
+            }
+        )
+    return out
 
 
 def search(query: str, *, k: int = DEFAULT_RESULTS, roots: Iterable[str] | None = None) -> list[dict[str, Any]]:
@@ -519,20 +675,55 @@ def search_docs(
     k: int = DEFAULT_RESULTS,
     roots: Iterable[str] | None = None,
     allow_scan: bool = True,
+    expand: bool = True,
 ) -> list[dict[str, Any]]:
     """Search the index, falling back to a scan when the index has nothing.
 
     Also self-heals: if the index answered from files that have been deleted, it
     is rebuilt once and the query is re-run, so ALC never cites documentation
     that is no longer on disk.
+
+    A THIN result set is asked again with the documentation's own vocabulary
+    substituted for the words that matched nothing (D16). The first attempt is
+    always made as written: expansion can only add hits, and a cycle that stops
+    at one search still gets the honest answer for a well-worded question.
     """
     results, stale = _search_rows(query, k=k, roots=roots)
     if stale and list(roots or []):
         build_index(list(roots or []))
         results, _stale_again = _search_rows(query, k=k, roots=roots)
+    if expand and len(results) < max(1, int(k)):
+        results = _merge(results, _expanded_rows(query, k=k, roots=roots))
     if results or not allow_scan:
-        return results
+        return results[: max(1, min(int(k or DEFAULT_RESULTS), MAX_RESULTS))]
     return scan_search(query, list(roots or []), k=k)
+
+
+def _expanded_rows(
+    query: str, *, k: int, roots: Iterable[str] | None = None
+) -> list[dict[str, Any]]:
+    """The same search with undocumented query words replaced by documented ones."""
+    terms = _query_terms(query)
+    if not terms:
+        return []
+    extra = expand_terms(terms, vocabulary())
+    if not extra:
+        return []
+    widened, _stale = _search_rows(" ".join([query, *extra]), k=k, roots=roots)
+    return widened
+
+
+def _merge(
+    primary: list[dict[str, Any]], secondary: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Keep the better-ranked copy of each (file, chunk), best first."""
+    best: dict[tuple[str, int], dict[str, Any]] = {}
+    for item in [*primary, *secondary]:
+        key = (str(item.get("path") or ""), int(item.get("chunk") or 0))
+        current = best.get(key)
+        if current is None or float(item.get("score") or 0.0) > float(current.get("score") or 0.0):
+            best[key] = item
+    return sorted(best.values(), key=lambda item: float(item.get("score") or 0.0), reverse=True)
 
 
 # How long an index build is trusted before the folders are walked again. Short
@@ -540,6 +731,12 @@ def search_docs(
 # refresh. Removals do not wait for it — a hit whose file is gone is dropped and
 # triggers a rebuild immediately (see search_docs).
 INDEX_TTL_SECONDS = 60.0
+
+# How long the vocabulary used for query expansion is reused. Only cheap reads
+# depend on it, and a stale vocabulary at worst means one search is not widened.
+VOCABULARY_TTL_SECONDS = 300.0
+
+_vocabulary_cache: tuple[list[str], float] | None = None
 
 
 # ─── Reading a hit ──────────────────────────────────────────────────────

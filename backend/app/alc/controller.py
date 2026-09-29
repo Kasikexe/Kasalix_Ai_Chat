@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from ..ai_rules import with_ai_rules
@@ -27,10 +28,20 @@ from ..logger import info as log_info
 from ..settings_store import get_alc_settings
 from . import docs
 from . import knowledge
+from . import study as alc_study
 from . import tools as alc_tools
-from .decide import LLMConn, analyze_task, choose_action, judge_results, reformulate_query
+from .decide import (
+    LLMConn,
+    analyze_task,
+    choose_action,
+    dedupe_candidates,
+    judge_results,
+    off_subject,
+    reformulate_query,
+)
 from .events import emit_alc, emit_alc_notice
-from .scratchpad import Scratchpad, looks_like_greeting
+from .scratchpad import Finding, Scratchpad, looks_like_greeting, topic_shape
+from .verify import AnswerGate, evidence_norm, guard_hint
 
 # The acting prompt is ALC-specific on purpose: the plain chat persona says
 # nothing about retrieved evidence, and this turn HAS evidence that must win over
@@ -55,6 +66,22 @@ MAX_HISTORY = 30
 # How many kept findings one cycle may promote into project knowledge. A coding
 # turn can retrieve more than that; the rest stay in this turn's briefing.
 MAX_KNOWLEDGE_WRITES = 3
+
+# How many topics one cycle may synthesise a study for (before the setting is
+# consulted). Each study is one model call, so this is the hard ceiling.
+MAX_STUDY_TOPICS = 5
+
+#: In-turn conflict resolution (D13) and the answer verification gate (D14) are
+#: on unless the eval harness switches one off to measure it. They are opts keys,
+#: not settings: nothing in the UI should let a user turn honesty off.
+DEFAULT_ANSWER_GUARD = True
+DEFAULT_CONFLICT_GUARD = True
+
+#: Lookups that must happen before coverage may end the cycle. One search is not
+#: evidence that a question is answered — a multi-hop answer has its name in one
+#: file and its value in another, and stopping after the first would guarantee a
+#: wrong answer on exactly the cases the cycle exists to get right.
+COVERAGE_MIN_CALLS = 2
 
 
 @dataclass
@@ -179,6 +206,15 @@ async def _setup(opts: dict[str, Any], *, mode: str) -> _Setup:
     )
     roots = docs.resolve_roots(settings.get("alcDocsPaths"))
     model = str(opts.get("model") or "")
+    # The internal decision calls (intake / choose / judge) normally use the same
+    # model as the answer. ``alcDecideModel`` overrides them, and an explicit ""
+    # makes ``LLMConn.usable`` false so EVERY decision falls through to its
+    # software heuristic. That is the eval harness's control arm — the cycle
+    # without the model's judgement — and the switch is deliberately an opts key
+    # rather than a setting: nothing in the UI should let a user disable the
+    # deciding (docs/ALC_DESIGN.md §7).
+    decide_override = opts.get("alcDecideModel")
+    decide_model = model if decide_override is None else str(decide_override or "")
     messages = list(opts.get("messages") or [])
     read_only = str(opts.get("toolPermission") or "") == "read-only"
     ctx = alc_tools.ALCToolContext(
@@ -192,6 +228,7 @@ async def _setup(opts: dict[str, Any], *, mode: str) -> _Setup:
         opts=opts,
     )
     pad = Scratchpad(goal=_last_user_text(messages))
+    pad.conflict_guard = bool(opts.get("alcConflict", DEFAULT_CONFLICT_GUARD))
     if ctx.knowledge_enabled:
         # What the project already knows, so the model can decide to search it
         # instead of re-exploring the workspace.
@@ -202,7 +239,7 @@ async def _setup(opts: dict[str, Any], *, mode: str) -> _Setup:
         budget=budget,
         ctx=ctx,
         conn=LLMConn(
-            model=model,
+            model=decide_model,
             signal=opts.get("signal"),
             base_url=opts.get("cloudEndpoint") or None,
             api_key=opts.get("cloudApiKey") or None,
@@ -218,6 +255,9 @@ def _emit_start(setup: _Setup) -> None:
         setup.opts,
         "start",
         model=setup.conn.model,
+        # Same as model unless the harness overrode it. Empty means the cycle is
+        # deciding entirely on heuristics, and the event stream says so.
+        decideModel=setup.conn.model or "heuristics-only",
         mode=setup.ctx.mode,
         roots=len(setup.ctx.roots),
         tools=[tool["name"] for tool in setup.available],
@@ -281,6 +321,14 @@ async def run_alc_turn(opts: dict[str, Any]) -> str:
     await _intake(setup)
     setup.pad.prune(setup.budget.max_tokens)
     answer = await _act(opts, setup.pad, build_memory_context, run_chat_tool_loop, to_chat_tools)
+
+    # Learn AFTER answering, never before: turning what was gathered into durable
+    # knowledge costs a model call, and the user's reply must not wait on it. This
+    # is also what makes chat compound at all — before Phase 4 a chat turn
+    # gathered, answered and kept nothing, so every later turn re-searched the
+    # same facts from scratch (docs/ALC_DESIGN.md §4.7).
+    await _learn(setup)
+
     emit_alc(opts, "done", **setup.pad.summary())
     log_info(
         f"[alc] done: {setup.pad.summary()} (budget {setup.budget.max_cycles} cycles/"
@@ -313,7 +361,7 @@ async def run_alc_gather(opts: dict[str, Any]) -> str:
     needs_info = await _intake(setup)
     setup.pad.prune(setup.budget.max_tokens)
     if needs_info:
-        await _write_back(setup)
+        await _learn(setup)
 
     parts = [part for part in (setup.pad.to_briefing(), _knowledge_note(setup)) if part]
     emit_alc(opts, "done", **setup.pad.summary())
@@ -331,7 +379,7 @@ def _knowledge_note(setup: _Setup) -> str:
     if not setup.ctx.knowledge_enabled or not setup.pad.knowledge_topics:
         return ""
     listing = "\n".join(
-        f"- ALC/knowledge/{topic.get('topic')}.md ({int(topic.get('notes') or 0)} notes)"
+        f"- ALC/knowledge/{topic.get('topic')}.md ({topic_shape(topic)})"
         for topic in setup.pad.knowledge_topics
     )
     return (
@@ -342,12 +390,43 @@ def _knowledge_note(setup: _Setup) -> str:
     )
 
 
-async def _write_back(setup: _Setup) -> list[str]:
-    """Promote the most useful findings into project knowledge for later cycles.
+def _origin_of(finding: Finding) -> str:
+    return str(finding.data.get("url") or finding.data.get("path") or finding.source)
 
-    Software does this rather than asking the model to nominate what is worth
-    keeping: on a 1.7B that judgement is unreliable, and the store dedupes by
-    content hash, so a repeated fact is a no-op (docs/ALC_DESIGN.md D9).
+
+def _date_of(finding: Finding) -> str:
+    return str(finding.data.get("date") or "")
+
+
+def _group_findings(findings: list[Finding]) -> list[tuple[str, list[Finding]]]:
+    """Group kept findings by the topic they belong to, in the order they arrived.
+
+    A study is written per TOPIC, not per finding: the whole value of the phase is
+    that one topic becomes one coherent note instead of three loose excerpts.
+    Findings that came out of the store are skipped — writing them back only
+    creates near-duplicates.
+    """
+    groups: dict[str, list[Finding]] = {}
+    for finding in findings:
+        if finding.source.startswith("knowledge:"):
+            continue
+        topic = knowledge.for_finding(finding.source, str(finding.data.get("heading") or ""))
+        groups.setdefault(topic, []).append(finding)
+    return list(groups.items())
+
+
+async def _learn(setup: _Setup) -> list[str]:
+    """Turn this turn's findings into project knowledge for later turns.
+
+    Two mechanisms, in this order (docs/ALC_DESIGN.md D9 as amended in §4.7):
+
+    1. a synthesised STUDY — the model explains what the evidence means, and
+       software refuses every line whose specifics are not in the evidence
+       (:mod:`app.alc.study`). One topic, one coherent note.
+    2. the Phase 2 EXCERPT note — the kept passage appended verbatim.
+
+    (2) is also the fallback whenever (1) produces nothing usable, so a failed
+    generation can never leave the cycle worse off than it was before.
     """
     opts, pad, ctx = setup.opts, setup.pad, setup.ctx
     if not ctx.knowledge_enabled or not pad.findings:
@@ -362,13 +441,92 @@ async def _write_back(setup: _Setup) -> list[str]:
         )
         return []
 
+    groups = _group_findings(pad.findings)
+    if not groups:
+        return []
+
     written: list[str] = []
-    for finding in pad.findings[:MAX_KNOWLEDGE_WRITES]:
+    studied: set[str] = set()
+    # No model, no study: an unusable connection means the cycle is running on the
+    # software heuristics alone, and there is nothing to spend on a synthesis.
+    if opts.get("alcStudy") is not False and setup.conn.usable:
+        written.extend(await _write_studies(setup, groups))
+        studied = set(written)
+    written.extend(await _write_excerpts(setup, skip_topics=studied))
+    return written
+
+
+async def _write_studies(
+    setup: _Setup, groups: list[tuple[str, list[Finding]]]
+) -> list[str]:
+    """One synthesised study per topic, inside the per-turn call budget."""
+    opts, ctx = setup.opts, setup.ctx
+    limit = max(1, min(int(setup.settings.get("alcStudyMaxTopics") or 2), MAX_STUDY_TOPICS))
+    written: list[str] = []
+    for topic, findings in groups[:limit]:
+        evidence = alc_study.TopicEvidence(
+            topic=topic,
+            sources=[{"source": _origin_of(f), "date": _date_of(f)} for f in findings],
+            passages=[
+                {"source": _origin_of(f), "date": _date_of(f), "text": f.text} for f in findings
+            ],
+            existing=await asyncio.to_thread(knowledge.read_study, ctx.workspace, topic),
+        )
+        emit_alc(opts, "stage", stage="alc:studying")
+        result = await alc_study.synthesise(evidence, setup.conn, updated=_today())
+        if not result.ok:
+            # Say so honestly and let the excerpt note carry the fact instead.
+            emit_alc(opts, "study", topic=topic, mode="excerpt", reason=result.reason, dropped=result.dropped_count)
+            continue
+        saved = await asyncio.to_thread(
+            knowledge.write_study,
+            ctx.workspace,
+            topic,
+            result.body,
+            sources=evidence.sources,
+            updated=_today(),
+        )
+        if not saved.get("ok"):
+            continue
+        written.append(str(saved.get("topic")))
+        emit_alc(
+            opts,
+            "study",
+            topic=saved.get("topic"),
+            file=saved.get("file"),
+            mode="synthesised",
+            bullets=result.bullets,
+            dropped=result.dropped_count,
+            conflicts=len(result.conflicts),
+            sources=len(evidence.sources),
+            refreshed=bool(saved.get("replaced")),
+            changed=bool(saved.get("written")),
+        )
+    return written
+
+
+async def _write_excerpts(
+    setup: _Setup, *, skip_topics: set[str] | None = None
+) -> list[str]:
+    """Append the kept passages to the topic files (the Phase 2 behaviour).
+
+    Software picks rather than asking the model to nominate: on a 1.7B that
+    judgement is unreliable, and the store dedupes by content hash, so a repeated
+    fact is a no-op (docs/ALC_DESIGN.md D9).
+    """
+    opts, ctx = setup.opts, setup.ctx
+    skip = {name for name in (skip_topics or set())}
+    written: list[str] = []
+    for finding in setup.pad.findings[:MAX_KNOWLEDGE_WRITES]:
         if finding.source.startswith("knowledge:"):
             # It came out of the store — writing it back only makes a near-duplicate.
             continue
         topic = knowledge.for_finding(finding.source, str(finding.data.get("heading") or ""))
-        origin = str(finding.data.get("url") or finding.data.get("path") or finding.source)
+        if knowledge.slugify(topic) in skip:
+            # A study was just written for this topic and already contains the
+            # fact; appending the excerpt too would duplicate it in the same file.
+            continue
+        origin = _origin_of(finding)
         saved = await asyncio.to_thread(
             knowledge.remember,
             ctx.workspace,
@@ -387,6 +545,24 @@ async def _write_back(setup: _Setup) -> list[str]:
                 source=origin,
             )
     return written
+
+
+def _today() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+async def _widen(candidate: dict[str, Any], query: str) -> str:
+    """A kept documentation hit widened to its most relevant neighbouring chunk.
+
+    Best-effort by design: widening is a *bonus* over the chunk that matched, so
+    a failure here must leave the original text untouched rather than fail the
+    lookup.
+    """
+    try:
+        return await asyncio.to_thread(alc_tools.expand_doc_text, candidate, query=query)
+    except Exception as e:  # noqa: BLE001
+        log_info(f"[alc] Could not widen a documentation hit: {type(e).__name__}: {e}")
+        return ""
 
 
 # ─── The bounded gather loop ────────────────────────────────────────────
@@ -415,6 +591,18 @@ async def _gather(
             break
         if pad.tokens() >= budget.max_tokens:
             emit_alc(opts, "decision", action="act", forced=True, reason="context budget reached")
+            break
+        # Stop as soon as every open question is answered by what is already in
+        # hand (D15). The budgets above stay as ceilings; this is the floor that
+        # keeps a cycle from spending twelve lookups on a one-lookup question.
+        if pad.tool_calls >= COVERAGE_MIN_CALLS and pad.covered():
+            emit_alc(
+                opts,
+                "decision",
+                action="act",
+                forced=True,
+                reason="every open question is covered by what has been gathered",
+            )
             break
 
         decision = await choose_action(pad, available, conn, spec)
@@ -588,20 +776,56 @@ async def _gather(
             emit_alc(opts, "budget", **pad.summary())
             continue
 
-        decisions, _used_fallback = await judge_results(query or pad.goal, result["candidates"], conn)
+        # The same wording from two files (a README copied into a manual) would
+        # otherwise be judged twice for no benefit and doubled in the briefing.
+        candidates = dedupe_candidates(list(result["candidates"]))
+        # A passage about a different named thing is not evidence for this
+        # question, and handing the model another library's value is how a
+        # fabrication gets *grounded* in the wrong source (`off_subject`).
+        # Measured on a held-out case before this filter existed: a question about
+        # Brimwall's ceiling was answered with Halyard's 240.
+        on_subject: list[dict[str, Any]] = []
+        for candidate in candidates:
+            other = off_subject(pad.goal or query, candidate)
+            if other:
+                source = str(candidate.get("source") or "unknown")
+                reason = f"about {other}, not what the question names"
+                pad.add_reject(source, reason)
+                emit_alc(opts, "reject", source=source, reason=reason)
+                continue
+            on_subject.append(candidate)
+        candidates = on_subject
+        # The goal goes with the lookup: a passage can answer what the user asked
+        # without matching the sub-question the model happened to search, and the
+        # judge dropped exactly that passage on the `vintra-pace` case.
+        decisions, _used_fallback = await judge_results(
+            query or pad.goal, candidates, conn, goal=pad.goal
+        )
         kept = 0
         for verdict in decisions:
             index = int(verdict.get("i", -1))
-            if index < 0 or index >= len(result["candidates"]):
+            if index < 0 or index >= len(candidates):
                 continue
-            candidate = result["candidates"][index]
+            candidate = candidates[index]
             if verdict.get("keep"):
+                text = str(candidate.get("text") or "")
+                limit: int | None = None
+                if candidate.get("path") and candidate.get("chunk") is not None:
+                    widened = await _widen(candidate, query)
+                    if len(widened) > len(text):
+                        text, limit = widened, alc_tools.EXPANDED_FINDING_CHARS
                 added = pad.add_finding(
                     source=str(candidate.get("source") or "unknown"),
-                    text=str(candidate.get("text") or ""),
+                    text=text,
                     query=query,
                     score=float(candidate.get("score") or 0.0),
-                    data={k: v for k, v in candidate.items() if k in ("path", "url", "heading")},
+                    data={
+                        k: v
+                        for k, v in candidate.items()
+                        if k in ("path", "url", "heading", "date", "fetchedOn", "chunk")
+                    }
+                    | ({"expanded": True} if limit else {}),
+                    limit=limit,
                 )
                 if added is not None:
                     kept += 1
@@ -612,6 +836,11 @@ async def _gather(
                         text=added.text,
                         query=query,
                         reason=verdict.get("reason") or "",
+                        # A quote that software verified against the candidate —
+                        # an invented citation is dropped before it gets here.
+                        quote=verdict.get("quote") or "",
+                        quoteVerified=bool(verdict.get("quoteVerified")),
+                        expanded=bool(limit),
                     )
                 else:
                     pad.add_reject(str(candidate.get("source")), "duplicate of something already kept")
@@ -637,14 +866,33 @@ async def _act(
     run_chat_tool_loop: Any,
     to_chat_tools: Any,
 ) -> str:
-    """Answer with the retained findings in the system prompt."""
+    """Answer with the retained findings in the system prompt.
+
+    The answer is released through the verification gate (:mod:`app.alc.verify`):
+    software checks each sentence's specifics against this turn's evidence BEFORE
+    the client receives it, because the route forwards ``onChunk`` verbatim and
+    nothing reconciles the stream with the final message — a fabricated value
+    that streams once is in the transcript for good. The returned text is what
+    was released, so the transcript and the stored message cannot disagree.
+    """
     parts: list[str] = [await with_ai_rules(ACTING_SYSTEM, "chat")]
+    context_parts: list[str] = []
+
+    conflicts = pad.conflicts() if pad.conflict_guard else []
+    if conflicts:
+        emit_alc(
+            opts,
+            "conflict",
+            count=len(conflicts),
+            names=[str(conflict["name"]) for conflict in conflicts][:8],
+        )
 
     briefing = pad.to_briefing()
     if briefing:
-        parts.append(briefing)
+        context_parts.append(briefing)
     else:
-        parts.append(
+        # Nothing was retrieved: the honest answer is that nothing was checked.
+        context_parts.append(
             "[ALC] No external information was retrieved for this turn. Answer from your own "
             "knowledge, and if the question depends on facts you cannot verify, say plainly "
             "that you could not check them."
@@ -652,7 +900,19 @@ async def _act(
 
     memory_context = await build_memory_context(opts.get("userId"))
     if memory_context:
-        parts.append(memory_context)
+        context_parts.append(memory_context)
+
+    # Two different things, and conflating them was a real bug:
+    #
+    # * the GATE is held to the evidence plus the user's own words, so repeating a
+    #   value the user supplied is never treated as an invention;
+    # * the PROMPT hint lists only what the evidence contains. Listing the user's
+    #   message there would tell the model that the question's own tokens are
+    #   retrieved facts — which is how a question naming an undocumented function
+    #   let a model look like it had found the value.
+    evidence_text = "\n\n".join([*context_parts, pad.goal])
+    parts.extend(context_parts)
+    parts.append(guard_hint("\n\n".join(context_parts)))
 
     history = list(opts.get("messages") or [])
     if len(history) > MAX_HISTORY:
@@ -670,12 +930,23 @@ async def _act(
         on_stage("chat:thinking")
     emit_alc(opts, "stage", stage="alc:answering")
 
-    return await run_chat_tool_loop(
+    on_chunk = opts.get("onChunk")
+    streaming = callable(on_chunk)
+    gate = AnswerGate(
+        evidence_norm(evidence_text), enabled=bool(opts.get("alcAnswerGuard", DEFAULT_ANSWER_GUARD))
+    )
+
+    def gated_chunk(text: str) -> None:
+        safe = gate.feed(text)
+        if safe and streaming:
+            on_chunk(safe)
+
+    answer = await run_chat_tool_loop(
         "chat",
         str(opts.get("model") or ""),
         messages,
         bool(opts.get("think")),
-        opts.get("onChunk"),
+        gated_chunk,
         opts.get("signal"),
         {
             "temperature": opts.get("temperature"),
@@ -687,6 +958,31 @@ async def _act(
         to_chat_tools(),
         on_metrics=opts.get("onMetrics"),
     )
+    if not streaming:
+        # No live stream to gate (a non-streaming caller): verify the reply whole.
+        gate.feed(answer)
+    tail = gate.finish()
+    if tail and streaming:
+        on_chunk(tail)
+    note = gate.seal()
+    if note and streaming:
+        on_chunk(note)
+
+    withheld = [claim for entry in gate.result.withheld for claim in entry["claims"]]
+    emit_alc(
+        opts,
+        "verify",
+        enabled=gate.enabled,
+        blocked=gate.result.blocks,
+        claims=withheld[:8],
+        chars=len(gate.released),
+    )
+    if gate.result.changed:
+        log_info(
+            f"[alc] Answer check replaced {gate.result.blocks} passage(s) whose specifics "
+            f"were in no source: {withheld[:8]}"
+        )
+    return gate.released
 
 
 __all__ = ["Budget", "run_alc_gather", "run_alc_turn"]

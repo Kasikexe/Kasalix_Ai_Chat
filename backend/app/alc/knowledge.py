@@ -1,9 +1,20 @@
 """ALC project knowledge — the notes a cycle keeps for future cycles.
 
-Layout inside the workspace (Koding only — chat has no project directory):
+Layout inside the workspace (any turn that has a project directory — both engines,
+see docs/ALC_DESIGN.md D8):
 
     <project>/ALC/knowledge/index.json      machine index: topics, tags, sources, sizes
     <project>/ALC/knowledge/<slug>.md       human-readable notes, one file per topic
+
+Each topic file has two layers, both in the same file so that retrieval, dedupe
+and search keep working on one artifact:
+
+    # <topic>
+    <!-- ALC-STUDY:START -->   the synthesised study — REPLACED on every rewrite
+    ...                        (what a later turn should read first)
+    <!-- ALC-STUDY:END -->
+    ## <date> — <source>       appended notes — APPEND-ONLY, never rewritten
+    <excerpt>
 
 The markdown files are the payload and stay hand-editable; the index is what
 retrieval and dedupe use, so writing the same fact twice is a no-op instead of a
@@ -34,12 +45,24 @@ KNOWLEDGE_SUBDIR = "knowledge"
 INDEX_FILENAME = "index.json"
 INDEX_VERSION = 1
 
+# The study block is delimited by comments so it can be replaced in place while
+# the appended notes below it stay untouched.
+STUDY_START = "<!-- ALC-STUDY:START -->"
+STUDY_END = "<!-- ALC-STUDY:END -->"
+
 MAX_BODY_CHARS = 4000
+MAX_STUDY_CHARS = 6000
 MAX_TOPIC_BYTES = 64 * 1024          # cap a single topic file's read for search
 MAX_ENTRIES = 500
 MAX_SEARCH_FILES = 60
 SEARCH_SNIPPET_CHARS = 900
 MAX_TOPIC_LIST = 20
+MAX_INDEXED_SOURCES = 8
+
+#: Index entry kinds. A study is one per topic and is replaced; a note is
+#: append-only evidence.
+KIND_NOTE = "note"
+KIND_STUDY = "study"
 
 
 def knowledge_dir(workspace: str | None) -> Path | None:
@@ -57,6 +80,44 @@ def slugify(topic: str) -> str:
     return (slug or "notes")[:60]
 
 
+def _split_study(text: str) -> tuple[str, str]:
+    """Split a topic file into (study block inner, everything else).
+
+    Returns ``("", text)`` when there is no study block. Used by every writer and
+    reader so the two layers can never be confused for one another.
+    """
+    body = str(text or "")
+    start = body.find(STUDY_START)
+    end = body.find(STUDY_END)
+    if start == -1 or end == -1 or end < start:
+        return "", body
+    inner = body[start + len(STUDY_START) : end].strip("\n")
+    return inner, (body[:start] + body[end + len(STUDY_END) :]).strip("\n")
+
+
+def _title_and_rest(text: str, topic: str) -> tuple[str, str]:
+    """A topic file's ``# Title`` line and the appended-note body under it."""
+    body = str(text or "").strip("\n")
+    lines = body.splitlines()
+    if lines and lines[0].startswith("# "):
+        return lines[0], "\n".join(lines[1:]).strip("\n")
+    title = f"# {topic.strip() or slugify(topic)}"
+    return title, body
+
+
+def read_study(workspace: str | None, topic: str) -> str:
+    """The synthesised study for a topic, or "" when there is none."""
+    directory = knowledge_dir(workspace)
+    if directory is None:
+        return ""
+    path = directory / f"{slugify(topic)}.md"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")[:MAX_TOPIC_BYTES]
+    except OSError:
+        return ""
+    return _split_study(text)[0]
+
+
 def _hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:32]
 
@@ -67,6 +128,16 @@ def _now() -> float:
 
 def _today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _date_of(stamp: float) -> str:
+    """An ISO date for a stored timestamp, or "" when there is none."""
+    if not stamp:
+        return ""
+    try:
+        return datetime.fromtimestamp(float(stamp), timezone.utc).strftime("%Y-%m-%d")
+    except (OSError, OverflowError, ValueError):
+        return ""
 
 
 def _words(text: str) -> set[str]:
@@ -121,30 +192,51 @@ def _write_index(directory: Path, entries: list[dict[str, Any]]) -> None:
         log_error("[alc] Could not write the knowledge index:", e)
 
 
+def _kind(entry: dict[str, Any]) -> str:
+    return str(entry.get("kind") or KIND_NOTE)
+
+
 def topics(workspace: str | None, limit: int = MAX_TOPIC_LIST) -> list[dict[str, Any]]:
     """Known topics with their note counts — what the cycle can search."""
     grouped: dict[str, dict[str, Any]] = {}
     for entry in read_index(workspace):
         slug = str(entry.get("slug") or slugify(str(entry.get("topic") or "")))
         bucket = grouped.setdefault(
-            slug,
-            {"topic": slug, "title": str(entry.get("topic") or slug), "notes": 0, "tags": []},
+            slug,                {"topic": slug, "title": str(entry.get("topic") or slug), "notes": 0,
+                "studies": 0,
+                "updatedAt": 0.0,
+                "tags": [],
+            },
         )
-        bucket["notes"] = int(bucket["notes"]) + 1
+        if _kind(entry) == KIND_STUDY:
+            bucket["studies"] = int(bucket["studies"]) + 1
+        else:
+            bucket["notes"] = int(bucket["notes"]) + 1
+        bucket["updatedAt"] = max(
+            float(bucket["updatedAt"]), float(entry.get("updatedAt") or 0)
+        )
         for tag in entry.get("tags") or []:
             if isinstance(tag, str) and tag not in bucket["tags"]:
                 bucket["tags"].append(tag)
-    ordered = sorted(grouped.values(), key=lambda item: int(item["notes"]), reverse=True)
+    ordered = sorted(
+        grouped.values(),
+        key=lambda item: (int(item["notes"]) + int(item["studies"]) * 2, item["updatedAt"]),
+        reverse=True,
+    )
     return ordered[:limit]
 
 
 def stats(workspace: str | None) -> dict[str, Any]:
     entries = read_index(workspace)
+    notes = [entry for entry in entries if _kind(entry) != KIND_STUDY]
+    studies = [entry for entry in entries if _kind(entry) == KIND_STUDY]
     return {
         "topics": len({str(e.get("slug") or "") for e in entries}),
-        "notes": len(entries),
+        "notes": len(notes),
+        "studies": len(studies),
         "bytes": sum(int(e.get("bytes") or 0) for e in entries),
         "known": bool(entries),
+        "updatedAt": max((float(e.get("updatedAt") or 0) for e in entries), default=0.0),
     }
 
 
@@ -186,6 +278,7 @@ def search(workspace: str | None, query: str, *, k: int = 4) -> list[dict[str, A
         position = min((lowered.find(term) for term in hits if lowered.find(term) >= 0), default=0)
         snippet = " ".join(body[max(0, position - 120) : position + SEARCH_SNIPPET_CHARS].split())
         slug = str(group[0].get("slug") or path.stem)
+        updated = max((float(entry.get("updatedAt") or 0) for entry in group), default=0.0)
         scored.append(
             {
                 "source": f"knowledge:{slug}",
@@ -194,6 +287,9 @@ def search(workspace: str | None, query: str, *, k: int = 4) -> list[dict[str, A
                 "path": str(path),
                 "score": round(score, 3),
                 "matched": hits,
+                # When this topic was last written — what a later turn needs to
+                # judge how current the note is.
+                "date": _date_of(updated),
             }
         )
 
@@ -238,7 +334,11 @@ def remember(
         existing_text = path.read_text(encoding="utf-8", errors="replace")[:MAX_TOPIC_BYTES] if path.exists() else ""
     except OSError:
         existing_text = ""
-    if existing_text and _is_covered(existing_text, text):
+    # Compare against the APPENDED NOTES only, never against a study block: a
+    # study's vocabulary is broad by design, so containment against it would
+    # report almost any new fact as "already stored".
+    _study_text, notes_text = _split_study(existing_text)
+    if notes_text and _is_covered(notes_text, text):
         return {
             "ok": True,
             "written": False,
@@ -265,6 +365,7 @@ def remember(
     entries.append(
         {
             "id": f"{slug}-{digest[:8]}",
+            "kind": KIND_NOTE,
             "topic": topic.strip() or slug,
             "slug": slug,
             "file": file_name,
@@ -285,6 +386,107 @@ def remember(
         "topic": slug,
         "file": str(path),
         "bytes": size,
+    }
+
+
+# ─── Studies ────────────────────────────────────────────────────────────
+def write_study(
+    workspace: str | None,
+    topic: str,
+    body: str,
+    *,
+    sources: Any = (),
+    updated: str = "",
+) -> dict[str, Any]:
+    """Replace a topic's study block. The appended notes below it are untouched.
+
+    Unlike :func:`remember` this is a REPLACEMENT, not an append: a study is the
+    current best understanding, and keeping every draft would just add noise for
+    the next turn to sort through. Returns ``written: False`` when the block is
+    unchanged, so a cycle that learns nothing new costs no write.
+
+    The study is registered in the index like a note, with its own kind, so
+    search, ``topics()`` and ``stats()`` see it without special cases.
+    """
+    directory = knowledge_dir(workspace)
+    if directory is None:
+        return {"ok": False, "written": False, "reason": "no project directory in this mode"}
+
+    text = str(body or "").strip()
+    if not text:
+        return {"ok": False, "written": False, "reason": "nothing to remember"}
+    if len(text) > MAX_STUDY_CHARS:
+        text = text[: MAX_STUDY_CHARS - 1].rstrip() + "…"
+
+    slug = slugify(topic)
+    file_name = f"{slug}.md"
+    path = directory / file_name
+    try:
+        existing = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    except OSError:
+        existing = ""
+
+    old_study, rest = _split_study(existing)
+    title, notes = _title_and_rest(rest, topic)
+    block = f"{STUDY_START}\n{text}\n{STUDY_END}"
+    tail = "\n\n".join(part for part in (title, block, notes) if part).rstrip() + "\n"
+
+    if old_study and " ".join(old_study.split()) == " ".join(text.split()):
+        return {
+            "ok": True,
+            "written": False,
+            "reason": "the study is unchanged",
+            "topic": slug,
+            "file": str(path),
+        }
+
+    digest = _hash(text)
+    origin_list = [
+        {
+            "source": str(item.get("source") if isinstance(item, dict) else item),
+            "date": str(item.get("date") or "") if isinstance(item, dict) else "",
+        }
+        for item in (sources or [])
+    ][:MAX_INDEXED_SOURCES]
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        path.write_text(tail, encoding="utf-8")
+    except OSError as e:  # noqa: BLE001
+        log_error("[alc] Could not write a project study:", e)
+        return {"ok": False, "written": False, "reason": f"write failed: {type(e).__name__}"}
+
+    entries = [
+        entry
+        for entry in read_index(workspace)
+        if not (str(entry.get("slug") or "") == slug and _kind(entry) == KIND_STUDY)
+    ]
+    entries.append(
+        {
+            "id": f"{slug}-study",
+            "kind": KIND_STUDY,
+            "topic": topic.strip() or slug,
+            "slug": slug,
+            "file": file_name,
+            "hash": digest,
+            "source": origin_list[0]["source"] if origin_list else "alc",
+            "sources": origin_list,
+            "tags": ["alc", "study"],
+            "bytes": len(text),
+            "createdAt": _now(),
+            "updatedAt": _now(),
+            "studyUpdated": str(updated or _today()),
+        }
+    )
+    _write_index(directory, entries)
+    log_info(f"[alc] Wrote a {len(text)}-char study for '{slug}' in {file_name}")
+    return {
+        "ok": True,
+        "written": True,
+        "reason": "",
+        "topic": slug,
+        "file": str(path),
+        "sources": origin_list,
+        "replaced": bool(old_study),
     }
 
 

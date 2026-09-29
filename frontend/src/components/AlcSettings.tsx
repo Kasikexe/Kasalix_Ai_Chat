@@ -15,6 +15,9 @@ const LIMITS = {
   cycles: { min: 1, max: 6 },
   toolCalls: { min: 1, max: 20 },
   tokens: { min: 500, max: 6000 },
+  // Each written-up topic costs one extra model call after the answer, so 0 is a
+  // legitimate (and cheap) choice: excerpts only, no writing-up.
+  studyTopics: { min: 0, max: 5 },
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -49,9 +52,15 @@ export function AlcSettings({ workspacePath }: Props) {
   const [maxCycles, setMaxCycles] = useState(3);
   const [maxToolCalls, setMaxToolCalls] = useState(12);
   const [maxTokens, setMaxTokens] = useState(4000);
+  const [studyTopics, setStudyTopics] = useState(2);
 
   const [index, setIndex] = useState<AlcIndexInfo | null>(null);
   const [notes, setNotes] = useState<AlcKnowledgeInfo | null>(null);
+
+  // Whether the host app has a Tavily (web search) key. Keys are entered in the
+  // server app, not here: this panel only reports the state, so a switched-on web
+  // search does not look silently broken. The key's value is never kept or shown.
+  const [keySaved, setKeySaved] = useState(false);
 
   const loadIndex = useCallback(async () => {
     try {
@@ -73,6 +82,8 @@ export function AlcSettings({ workspacePath }: Props) {
         setMaxCycles(clamp(settings.alcMaxCycles ?? 3, LIMITS.cycles.min, LIMITS.cycles.max));
         setMaxToolCalls(clamp(settings.alcMaxToolCalls ?? 12, LIMITS.toolCalls.min, LIMITS.toolCalls.max));
         setMaxTokens(clamp(settings.alcMaxTokens ?? 4000, LIMITS.tokens.min, LIMITS.tokens.max));
+        setStudyTopics(clamp(settings.alcStudyMaxTopics ?? 2, LIMITS.studyTopics.min, LIMITS.studyTopics.max));
+        setKeySaved(Boolean((settings.tavilyApiKey || '').trim()));
       } catch {
         if (!cancelled) toast('error', 'Could not load the ALC settings');
       } finally {
@@ -100,6 +111,8 @@ export function AlcSettings({ workspacePath }: Props) {
   const save = async () => {
     setSaving(true);
     try {
+      // The Tavily key is deliberately NOT part of this payload: it belongs to the
+      // host app, and a client that could write it could also blank it.
       await api.saveSettings({
         alcDocsPaths: paths,
         alcWebEnabled: webEnabled,
@@ -107,6 +120,7 @@ export function AlcSettings({ workspacePath }: Props) {
         alcMaxCycles: clamp(maxCycles, LIMITS.cycles.min, LIMITS.cycles.max),
         alcMaxToolCalls: clamp(maxToolCalls, LIMITS.toolCalls.min, LIMITS.toolCalls.max),
         alcMaxTokens: clamp(maxTokens, LIMITS.tokens.min, LIMITS.tokens.max),
+        alcStudyMaxTopics: clamp(studyTopics, LIMITS.studyTopics.min, LIMITS.studyTopics.max),
       });
       toast('success', 'ALC settings saved');
       await loadIndex();
@@ -226,7 +240,8 @@ export function AlcSettings({ workspacePath }: Props) {
           Turn ALC on per conversation with the <span className="text-teal-300">Normal | ALC</span> switch
           next to the message box. When it is on, the model looks things up — your documentation,
           the notes it saved for this project, and optionally the web — before it answers, and shows
-          every step it took. Normal mode is untouched.
+          every step it took. Afterwards it writes up what it learned for the next session. Normal
+          mode is untouched.
         </p>
       </div>
 
@@ -345,11 +360,34 @@ export function AlcSettings({ workspacePath }: Props) {
           What ALC may do
         </label>
         {toggle(webEnabled, setWebEnabled, 'Search the web',
-          'Allowed — needs a Tavily key in the server settings',
+          keySaved
+            ? 'Allowed — searches use the key saved in the server app'
+            : 'Allowed, but the server app has no Tavily key yet',
           'Off — documentation and project knowledge only', Globe)}
         {toggle(writeKnowledge, setWriteKnowledge, 'Save what it learns',
           'Useful findings are written to ALC/knowledge for later sessions',
           'Nothing is written back to the project', Save)}
+      </div>
+
+      {/* Web search key — set on the host, only reported here */}
+      <div className="space-y-2">
+        <label className="flex items-center gap-2 text-sm font-medium text-gray-300">
+          <Globe size={16} className="text-[#4a9988]" />
+          Web search key
+        </label>
+        <p className="text-xs text-gray-500">
+          Web search is powered by Tavily, and its key has one home: the server app's API keys.
+          Every client uses the key saved there, so there is nothing to enter in this window and
+          nothing here that could overwrite it. Free key at tavily.com; a basic search costs one of
+          the monthly credits, and without a key ALC falls back to documentation and project notes.
+          A key can be checked from the server app, which costs one search credit.
+        </p>
+        {webEnabled && !keySaved && (
+          <p className="flex items-start gap-1.5 text-[11px] text-amber-400">
+            <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
+            Web search is switched on but the server app has no Tavily key, so cycles stay offline.
+          </p>
+        )}
       </div>
 
       {/* Budget */}
@@ -365,6 +403,7 @@ export function AlcSettings({ workspacePath }: Props) {
         {numberField('Gather cycles', 'How many look-ups-then-judge rounds it may run', maxCycles, setMaxCycles, LIMITS.cycles)}
         {numberField('Look-ups per turn', 'Tool calls before it must answer with what it has', maxToolCalls, setMaxToolCalls, LIMITS.toolCalls)}
         {numberField('Working memory (tokens)', 'Evidence it may keep in front of the model', maxTokens, setMaxTokens, LIMITS.tokens)}
+        {numberField('Topics written up per turn', 'How many topics it may rewrite into a project note after answering — each one is an extra model call, so it runs after the reply, never before it. 0 keeps raw excerpts only.', studyTopics, setStudyTopics, LIMITS.studyTopics)}
       </div>
 
       {/* Project knowledge */}
@@ -379,17 +418,25 @@ export function AlcSettings({ workspacePath }: Props) {
               {notes.topics.map((topic) => (
                 <div key={topic.topic} className="flex items-center gap-3 px-3 py-2 bg-gray-800/50 border border-gray-800 rounded-lg">
                   <span className="flex-1 min-w-0 truncate text-xs text-gray-300" title={topic.title}>{topic.title}</span>
+                  {Number(topic.studies ?? 0) > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/30 text-emerald-300 flex-shrink-0">
+                      written up
+                    </span>
+                  )}
                   <span className="text-[10px] text-gray-500 flex-shrink-0">
                     {topic.notes} note{topic.notes === 1 ? '' : 's'}
                   </span>
                 </div>
               ))}
-              <p className="text-[10px] text-gray-600 font-mono truncate">ALC/knowledge · {notes.stats.notes ?? 0} notes</p>
+              <p className="text-[10px] text-gray-600 font-mono truncate">
+                ALC/knowledge · {notes.stats.notes ?? 0} notes
+                {Number(notes.stats.studies ?? 0) > 0 ? ` · ${notes.stats.studies} written up` : ''}
+              </p>
             </div>
           ) : (
             <p className="text-xs text-gray-500">
-              Nothing saved for this project yet — a cycle writes notes here once it finds something
-              worth keeping (Koding sessions only).
+              Nothing saved for this project yet — once a conversation with this folder open finds
+              something worth keeping, it writes a note here and the next session starts from it.
             </p>
           )}
         </div>

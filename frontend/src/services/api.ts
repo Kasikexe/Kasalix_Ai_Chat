@@ -139,6 +139,15 @@ export interface AppSettings {
   alcWebEnabled?: boolean;
   /** May ALC save what it learned into ALC/knowledge for later cycles */
   alcWriteKnowledge?: boolean;
+  /** How many topics per turn ALC may write up as a project note (0 = excerpts only) */
+  alcStudyMaxTopics?: number;
+  /**
+   * Tavily (web search) API key, as configured in the SERVER app's API keys. The
+   * server reports whether one is set, and this client only ever reads it to say
+   * so — it is never entered, tested or written from here (see `AlcSettings`),
+   * because a client that could set the key could also blank it.
+   */
+  tavilyApiKey?: string;
 }
 
 /** What the documentation index currently holds (GET /api/alc/index) */
@@ -160,6 +169,8 @@ export interface AlcKnowledgeTopic {
   topic: string;
   title: string;
   notes: number;
+  /** 1 once the topic has been written up as a study (one per topic) */
+  studies?: number;
   tags: string[];
 }
 
@@ -167,7 +178,7 @@ export interface AlcKnowledgeInfo {
   workspace: string;
   available: boolean;
   topics: AlcKnowledgeTopic[];
-  stats: { topics?: number; notes?: number; bytes?: number; known?: boolean };
+  stats: { topics?: number; notes?: number; studies?: number; bytes?: number; known?: boolean };
   error?: string;
 }
 
@@ -408,7 +419,7 @@ export const api = {
   async saveSettings(payload: Partial<Pick<AppSettings,
     'hiddenModels' | 'modelAssignments' | 'cloudModelAssignments' |
     'alcDocsPaths' | 'alcMaxCycles' | 'alcMaxToolCalls' | 'alcMaxTokens' |
-    'alcWebEnabled' | 'alcWriteKnowledge'
+    'alcWebEnabled' | 'alcWriteKnowledge' | 'alcStudyMaxTopics'
   >>): Promise<AppSettings> {
     return handleResponse<AppSettings>(
       await fetch(`${API_BASE}/settings`, authedFetch(`${API_BASE}/settings`, {

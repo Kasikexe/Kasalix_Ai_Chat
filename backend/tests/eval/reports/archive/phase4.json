@@ -1,0 +1,4115 @@
+{
+  "label": "phase4",
+  "args": {
+    "model": "qwen3:1.7b",
+    "arms": "alc-heuristic",
+    "cases": "",
+    "limit": 0,
+    "docs": "on",
+    "web": "off",
+    "fake": "",
+    "label": "phase4",
+    "out_dir": "C:\\Users\\filik\\Documents\\GitHub\\Kasalix_Ai_Chat\\backend\\tests\\eval\\reports",
+    "resume": true,
+    "keep": false,
+    "run_dir": "",
+    "timeout": 600.0,
+    "list": false
+  },
+  "corpusRoot": "C:\\Users\\filik\\AppData\\Local\\Temp\\alc-eval-c8pozjx_",
+  "rows": [
+    {
+      "key": "normal|halyard-pace|single",
+      "arm": "normal",
+      "case": "halyard-pace",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace in the Halyard documentation?",
+      "verdict": "partial",
+      "matched": [
+        "halyard_set_pace"
+      ],
+      "missing": [
+        "12"
+      ],
+      "invented": [],
+      "reason": "missing 12",
+      "answer": "I don't know the exact default frame count for `halyard_set_pace` in the Halyard documentation. You might want to check the official Halyard documentation or source code for more precise information.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 6.223,
+      "total": 6.44,
+      "calls": 2,
+      "callSeconds": 6.42,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|halyard-mode|single",
+      "arm": "normal",
+      "case": "halyard-mode",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which HalyardMode member is documented for letting the clock fall behind without raising?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "halyardmode.glide"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "I don't know. The HalyardMode is a term used in some contexts, but I'm not sure about the specific member or scenario you're referring to. Could you provide more details or clarify the context?",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.695,
+      "total": 0.959,
+      "calls": 2,
+      "callSeconds": 0.955,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|halyard-drift|single",
+      "arm": "normal",
+      "case": "halyard-drift",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What value does the Halyard documentation recommend for the halyard-drift command line option?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "loose"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "I don't know the specific value Halyard recommends for the `halyard-drift` command line option. You would need to check the Halyard documentation or run the command with the `-h` or `--help` flag to see the recommended value.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.694,
+      "total": 1.004,
+      "calls": 2,
+      "callSeconds": 1.002,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|halyard-retry|single",
+      "arm": "normal",
+      "case": "halyard-retry",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the retry window in seconds for halyard.retry.window in halyard.toml?",
+      "verdict": "invented",
+      "matched": [],
+      "missing": [
+        "45"
+      ],
+      "invented": [
+        "60",
+        "10"
+      ],
+      "reason": "asserted 60, 10 \u2014 in no source for this case",
+      "answer": "The `retry.window` setting in `halyard.toml` specifies the maximum time (in seconds) that a retry will wait before attempting again. The value should be set to a number between 0 and 60, inclusive. For example:\n\n```toml\n[halyard]\nretry.window = 10\n```\n\nThis means the retry will wait up to 10 seconds before attempting again. The exact value depends on your specific use case and requirements.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.696,
+      "total": 1.208,
+      "calls": 2,
+      "callSeconds": 1.206,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|halyard-max|single",
+      "arm": "normal",
+      "case": "halyard-max",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is HALYARD_MAX_FRAMES set to, and what happens above it?",
+      "verdict": "invented",
+      "matched": [
+        "halyard_max_frames"
+      ],
+      "missing": [
+        "240",
+        "clamp"
+      ],
+      "invented": [
+        "60",
+        "120"
+      ],
+      "reason": "asserted 60, 120 \u2014 in no source for this case",
+      "answer": "HALYARD_MAX_FRAMES is a configuration setting that determines the maximum number of frames that can be processed in a single frame buffer. The value is typically set to a specific number, such as 60 or 120, depending on the system and application. If the number of frames exceeds this limit, the system may experience performance issues, such as lag or stuttering, due to the increased load on the hardware.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.724,
+      "total": 1.232,
+      "calls": 2,
+      "callSeconds": 1.23,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|quorvex-4513|single",
+      "arm": "normal",
+      "case": "quorvex-4513",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What does the Quorvex error code QUORVEX-4513 mean?",
+      "verdict": "partial",
+      "matched": [
+        "quorvex-4513"
+      ],
+      "missing": [
+        "lease"
+      ],
+      "invented": [],
+      "reason": "missing lease",
+      "answer": "The Quorvex error code QUORVEX-4513 is a specific error message related to the Quorvex system, which is a type of artificial intelligence developed by the company Quorvex. This error typically indicates a problem with the system's internal processes or data handling. It is important to note that Quorvex is a fictional technology, as it is not a real product or system. If you are encountering this error, it is likely related to the specific software or platform where Quorvex is being used, and the exact cause would depend on the context in which the error occurs.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.732,
+      "total": 1.392,
+      "calls": 2,
+      "callSeconds": 1.39,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|quorvex-version|single",
+      "arm": "normal",
+      "case": "quorvex-version",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which Quorvex release is the oldest that supports the tide adapter?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "3.14.2"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "I don't know the exact release date of the Quorvex tide adapter, but I can tell you that the tide adapter is a hardware component used in some Quorvex devices. The oldest release that supports the tide adapter would likely be the first version of the Quorvex device that included the adapter. However, I don't have specific information about the exact release dates or compatibility details for the tide adapter. If you have more context or specific details about the Quorvex device you're referring to, I'd be happy to help further.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.703,
+      "total": 1.285,
+      "calls": 2,
+      "callSeconds": 1.284,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|quorvex-path|single",
+      "arm": "normal",
+      "case": "quorvex-path",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which file defines the TideAdapter class in Quorvex?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "pkg/quorvex/adapters/tide.py"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "I don't know. You would need to check the source code of the Quorvex library or framework to find out which file defines the TideAdapter class.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.732,
+      "total": 0.94,
+      "calls": 2,
+      "callSeconds": 0.939,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|peltarn-rate|single",
+      "arm": "normal",
+      "case": "peltarn-rate",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the Peltarn rate limit in requests per minute?",
+      "verdict": "invented",
+      "matched": [],
+      "missing": [
+        "900"
+      ],
+      "invented": [
+        "100"
+      ],
+      "reason": "asserted 100 \u2014 in no source for this case",
+      "answer": "The Peltarn rate limit is typically set to **100 requests per minute**. This is a common default configuration for many services and APIs to ensure they don't overwhelm the system. However, this can vary depending on the specific service or platform you're using. If you're referring to a specific service, I'd need more context to give an exact value.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.69,
+      "total": 1.099,
+      "calls": 2,
+      "callSeconds": 1.098,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|quorvex-lease-floor|single",
+      "arm": "normal",
+      "case": "quorvex-lease-floor",
+      "kind": "multi_hop",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What does quorvex_lease_floor() return, and which file documents the function?",
+      "verdict": "partial",
+      "matched": [
+        "quorvex_lease_floor"
+      ],
+      "missing": [
+        "9"
+      ],
+      "invented": [],
+      "reason": "missing 9",
+      "answer": "I don't know what quorvex_lease_floor() returns or which file documents the function. You would need to check the documentation for the quorvex library or refer to the source code where this function is defined.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.706,
+      "total": 0.981,
+      "calls": 2,
+      "callSeconds": 0.979,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|vintra-pace|single",
+      "arm": "normal",
+      "case": "vintra-pace",
+      "kind": "conflict",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What does vintra_pace_default() return?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "16"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "I don't know what vintra_pace_default() returns. It's possible that this is a function or method from a specific context, such as a programming language, a software application, or a custom script. Without more information about the environment or the purpose of this function, it's difficult to determine its behavior. If you can provide more details, I'd be happy to help further.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.713,
+      "total": 1.139,
+      "calls": 2,
+      "callSeconds": 1.138,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|brimwall-absent|single",
+      "arm": "normal",
+      "case": "brimwall-absent",
+      "kind": "absent",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default value of brimwall_set_ceiling() in the Brimwall documentation?",
+      "verdict": "admitted",
+      "matched": [],
+      "missing": [],
+      "invented": [],
+      "reason": "said plainly it could not find it",
+      "answer": "I don't know the specific default value of `brimwall_set_ceiling()` from the Brimwall documentation. You would need to consult the official Brimwall documentation or source code to find this information. If you have access to the documentation or source code, I'd be happy to help you look it up.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.735,
+      "total": 1.091,
+      "calls": 2,
+      "callSeconds": 1.089,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|peltarn-carry|seed",
+      "arm": "normal",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit?",
+      "verdict": "partial",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [],
+      "reason": "missing 7, 900",
+      "answer": "I don't know the exact return value of `peltarn_write_quota()` or the Peltarn rate limit. This function and its associated rate limit are specific to the Peltarn API or service, which is not widely documented or commonly discussed in public forums. If you have more context about where you're seeing this function (e.g., a specific application, library, or service), I could provide more targeted information.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.725,
+      "total": 1.178,
+      "calls": 2,
+      "callSeconds": 1.177,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|peltarn-carry|warm",
+      "arm": "normal",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "partial",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [],
+      "reason": "missing 7, 900",
+      "answer": "I don't know the exact details about the `peltarn_write_quota()` function or the Peltarn rate limit per key. You would need to refer to the official documentation or source code for Peltarn to get accurate information. If you have access to the code or documentation, feel free to share it, and I can help you understand it better.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.706,
+      "total": 1.106,
+      "calls": 2,
+      "callSeconds": 1.104,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|peltarn-carry|cold",
+      "arm": "normal",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "partial",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [],
+      "reason": "missing 7, 900",
+      "answer": "I don't know the exact details about the `peltarn_write_quota()` function or the Peltarn rate limit per key. You would need to consult the documentation or source code for the specific library or service that uses this function. If you can provide more context, I'd be happy to help further.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.699,
+      "total": 1.05,
+      "calls": 2,
+      "callSeconds": 1.049,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|halyard-carry|seed",
+      "arm": "normal",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "invented",
+      "matched": [],
+      "missing": [
+        "12",
+        "240"
+      ],
+      "invented": [
+        "100",
+        "255"
+      ],
+      "reason": "asserted 100, 255 \u2014 in no source for this case",
+      "answer": "The default frame count for `halyard_set_pace` is typically set to 100 frames, and the hard ceiling constant is usually 255. These values are specific to the context in which the command is used, such as in a game or a specific application. If you are referring to a specific system or game, the values might vary.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.735,
+      "total": 1.138,
+      "calls": 2,
+      "callSeconds": 1.136,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|halyard-carry|warm",
+      "arm": "normal",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "12",
+        "240"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "I don't know the specific values for the default frame count and hard ceiling constant for `halyard_set_pace` directly. This command is likely related to a specific software or system, and the parameters may vary depending on the context in which it's used. If you can provide more details about the system or application where this command is used, I can offer more accurate information.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.695,
+      "total": 1.114,
+      "calls": 2,
+      "callSeconds": 1.113,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "normal|halyard-carry|cold",
+      "arm": "normal",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "12",
+        "240"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "I don't know the specific values for the default frame count and hard ceiling constant for `halyard_set_pace` directly. This command is likely related to a specific application or framework, and the parameters may vary depending on the context in which it's used. If you can provide more details about the environment or system where this command is being used, I might be able to give a more accurate answer.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.696,
+      "total": 1.141,
+      "calls": 2,
+      "callSeconds": 1.14,
+      "alcEvents": {},
+      "alcCycles": 0,
+      "alcFindings": 0,
+      "alcToolCalls": 0,
+      "stages": [
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|halyard-pace|single",
+      "arm": "alc-none",
+      "case": "halyard-pace",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace in the Halyard documentation?",
+      "verdict": "correct",
+      "matched": [
+        "halyard_set_pace",
+        "12"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The default frame count for `halyard_set_pace` is **12** according to the Halyard documentation.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.685,
+      "total": 4.813,
+      "calls": 7,
+      "callSeconds": 4.75,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:index": 4,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 1,
+        "alc:reject": 6,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 1,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|halyard-mode|single",
+      "arm": "alc-none",
+      "case": "halyard-mode",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which HalyardMode member is documented for letting the clock fall behind without raising?",
+      "verdict": "correct",
+      "matched": [
+        "halyardmode.glide"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The member is `HalyardMode.GLIDE`.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.38,
+      "total": 4.446,
+      "calls": 7,
+      "callSeconds": 4.434,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 2,
+        "alc:reject": 5,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 2,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|halyard-drift|single",
+      "arm": "alc-none",
+      "case": "halyard-drift",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What value does the Halyard documentation recommend for the halyard-drift command line option?",
+      "verdict": "correct",
+      "matched": [
+        "loose"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The Halyard documentation recommends using `--halyard-drift=loose` for long-running jobs.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.48,
+      "total": 4.609,
+      "calls": 7,
+      "callSeconds": 4.599,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 2,
+        "alc:reject": 5,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 2,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|halyard-retry|single",
+      "arm": "alc-none",
+      "case": "halyard-retry",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the retry window in seconds for halyard.retry.window in halyard.toml?",
+      "verdict": "correct",
+      "matched": [
+        "45"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The retry window in seconds for `halyard.retry.window` in `halyard.toml` is 45.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.526,
+      "total": 4.664,
+      "calls": 7,
+      "callSeconds": 4.653,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 5,
+        "alc:reject": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 5,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|halyard-max|single",
+      "arm": "alc-none",
+      "case": "halyard-max",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is HALYARD_MAX_FRAMES set to, and what happens above it?",
+      "verdict": "correct",
+      "matched": [
+        "halyard_max_frames",
+        "240",
+        "clamp"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "HALYARD_MAX_FRAMES is set to 240 by default. Values above it are clamped, not rejected, so a bad config degrades instead of refusing to start.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.524,
+      "total": 3.705,
+      "calls": 6,
+      "callSeconds": 3.697,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 1,
+        "alc:budget": 2,
+        "alc:finding": 2,
+        "alc:reject": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 2,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|quorvex-4513|single",
+      "arm": "alc-none",
+      "case": "quorvex-4513",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What does the Quorvex error code QUORVEX-4513 mean?",
+      "verdict": "correct",
+      "matched": [
+        "quorvex-4513",
+        "lease"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "QUORVEX-4513 indicates that the tide adapter lost its lease. This is a transient error, and retrying the call is recommended.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.486,
+      "total": 4.66,
+      "calls": 7,
+      "callSeconds": 4.65,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 3,
+        "alc:reject": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 3,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|quorvex-version|single",
+      "arm": "alc-none",
+      "case": "quorvex-version",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which Quorvex release is the oldest that supports the tide adapter?",
+      "verdict": "correct",
+      "matched": [
+        "3.14.2"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "Quorvex 3.14.2 is the oldest release that supports the tide adapter.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.227,
+      "total": 4.354,
+      "calls": 7,
+      "callSeconds": 4.344,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 2,
+        "alc:reject": 5,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 2,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|quorvex-path|single",
+      "arm": "alc-none",
+      "case": "quorvex-path",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which file defines the TideAdapter class in Quorvex?",
+      "verdict": "correct",
+      "matched": [
+        "pkg/quorvex/adapters/tide.py"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The TideAdapter class is defined in `pkg/quorvex/adapters/tide.py`.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.884,
+      "total": 3.978,
+      "calls": 7,
+      "callSeconds": 3.968,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 1,
+        "alc:reject": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 1,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|peltarn-rate|single",
+      "arm": "alc-none",
+      "case": "peltarn-rate",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the Peltarn rate limit in requests per minute?",
+      "verdict": "correct",
+      "matched": [
+        "900"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The Peltarn rate limit allows 900 requests per minute per project key.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.216,
+      "total": 4.321,
+      "calls": 7,
+      "callSeconds": 4.311,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 1,
+        "alc:reject": 6,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 1,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|quorvex-lease-floor|single",
+      "arm": "alc-none",
+      "case": "quorvex-lease-floor",
+      "kind": "multi_hop",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What does quorvex_lease_floor() return, and which file documents the function?",
+      "verdict": "correct",
+      "matched": [
+        "quorvex_lease_floor",
+        "9"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "`quorvex_lease_floor()` returns 9, and the function is documented in `pkg/quorvex/adapters/tide.py`.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.191,
+      "total": 4.346,
+      "calls": 7,
+      "callSeconds": 4.335,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 4,
+        "alc:reject": 4,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 4,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|vintra-pace|single",
+      "arm": "alc-none",
+      "case": "vintra-pace",
+      "kind": "conflict",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What does vintra_pace_default() return?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "16"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "`vintra_pace_default()` returns 12 according to the changelog.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.534,
+      "total": 3.638,
+      "calls": 6,
+      "callSeconds": 3.63,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 1,
+        "alc:budget": 2,
+        "alc:finding": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 2,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|brimwall-absent|single",
+      "arm": "alc-none",
+      "case": "brimwall-absent",
+      "kind": "absent",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default value of brimwall_set_ceiling() in the Brimwall documentation?",
+      "verdict": "admitted",
+      "matched": [],
+      "missing": [],
+      "invented": [],
+      "reason": "said plainly it could not find it",
+      "answer": "The default value of `brimwall_set_ceiling()` is not specified in the provided documentation.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.515,
+      "total": 3.628,
+      "calls": 6,
+      "callSeconds": 3.619,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 3,
+        "alc:reject": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 3,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|peltarn-carry|seed",
+      "arm": "alc-none",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit?",
+      "verdict": "correct",
+      "matched": [
+        "peltarn_write_quota",
+        "7",
+        "900"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "`peltarn_write_quota()` returns 7, and the Peltarn rate limit is 900 requests per minute per project key.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.153,
+      "total": 4.32,
+      "calls": 7,
+      "callSeconds": 4.308,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 3,
+        "alc:reject": 5,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 3,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|peltarn-carry|warm",
+      "arm": "alc-none",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "invented",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [
+        "1000"
+      ],
+      "reason": "asserted 1000 \u2014 in no source for this case",
+      "answer": "peltarn_write_quota() returns the current write quota for a key, and the Peltarn rate limit per key is typically set to 1000 operations.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.435,
+      "total": 2.602,
+      "calls": 4,
+      "callSeconds": 2.599,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 1,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|peltarn-carry|cold",
+      "arm": "alc-none",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "invented",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [
+        "1000"
+      ],
+      "reason": "asserted 1000 \u2014 in no source for this case",
+      "answer": "peltarn_write_quota() returns the current write quota for a key, and the Peltarn rate limit per key is typically set to 1000 operations.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.365,
+      "total": 2.583,
+      "calls": 4,
+      "callSeconds": 2.578,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 1,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|halyard-carry|seed",
+      "arm": "alc-none",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "partial",
+      "matched": [
+        "12"
+      ],
+      "missing": [
+        "240"
+      ],
+      "invented": [],
+      "reason": "missing 240",
+      "answer": "The default frame count for `halyard_set_pace` is **12 frames**, as specified in the documentation. There is no hard ceiling constant mentioned for this setting.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.326,
+      "total": 4.502,
+      "calls": 7,
+      "callSeconds": 4.47,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:index": 4,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 1,
+        "alc:reject": 6,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 1,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|halyard-carry|warm",
+      "arm": "alc-none",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "invented",
+      "matched": [],
+      "missing": [
+        "12",
+        "240"
+      ],
+      "invented": [
+        "16",
+        "255"
+      ],
+      "reason": "asserted 16, 255 \u2014 in no source for this case",
+      "answer": "The default frame count for `halyard_set_pace` is typically 16 frames, and the hard ceiling constant is generally set to 255.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.543,
+      "total": 2.751,
+      "calls": 4,
+      "callSeconds": 2.747,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 2,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-none|halyard-carry|cold",
+      "arm": "alc-none",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "invented",
+      "matched": [],
+      "missing": [
+        "12",
+        "240"
+      ],
+      "invented": [
+        "100",
+        "255"
+      ],
+      "reason": "asserted 100, 255 \u2014 in no source for this case",
+      "answer": "The default frame count for halyard_set_pace is typically 100, and the hard ceiling constant is 255.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.301,
+      "total": 2.483,
+      "calls": 4,
+      "callSeconds": 2.48,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 1,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-raw|halyard-pace|single",
+      "arm": "alc-raw",
+      "case": "halyard-pace",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace in the Halyard documentation?",
+      "verdict": "correct",
+      "matched": [
+        "halyard_set_pace",
+        "12"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The default frame count for `halyard_set_pace` is **12** according to the Halyard documentation.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.552,
+      "total": 4.696,
+      "calls": 7,
+      "callSeconds": 4.642,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:index": 4,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 1,
+        "alc:reject": 6,
+        "alc:knowledge-written": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 1,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-raw|halyard-mode|single",
+      "arm": "alc-raw",
+      "case": "halyard-mode",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which HalyardMode member is documented for letting the clock fall behind without raising?",
+      "verdict": "correct",
+      "matched": [
+        "halyardmode.glide"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The HalyardMode member that is documented for letting the clock fall behind without raising is `HalyardMode.GLIDE`.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.39,
+      "total": 4.54,
+      "calls": 7,
+      "callSeconds": 4.521,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 2,
+        "alc:reject": 5,
+        "alc:knowledge-written": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 2,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "modes.md",
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-raw|halyard-drift|single",
+      "arm": "alc-raw",
+      "case": "halyard-drift",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What value does the Halyard documentation recommend for the halyard-drift command line option?",
+      "verdict": "correct",
+      "matched": [
+        "loose"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The Halyard documentation recommends the value `--halyard-drift=loose` for the halyard-drift command line option.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.479,
+      "total": 4.662,
+      "calls": 7,
+      "callSeconds": 4.634,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 2,
+        "alc:reject": 5,
+        "alc:knowledge-written": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 2,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "command-line.md",
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-raw|halyard-retry|single",
+      "arm": "alc-raw",
+      "case": "halyard-retry",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the retry window in seconds for halyard.retry.window in halyard.toml?",
+      "verdict": "correct",
+      "matched": [
+        "45"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The retry window in seconds for `halyard.retry.window` in `halyard.toml` is 45.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.42,
+      "total": 4.579,
+      "calls": 7,
+      "callSeconds": 4.545,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 5,
+        "alc:reject": 2,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 5,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "command-line.md",
+        "config-file.md",
+        "error-codes.md"
+      ]
+    },
+    {
+      "key": "alc-raw|halyard-max|single",
+      "arm": "alc-raw",
+      "case": "halyard-max",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is HALYARD_MAX_FRAMES set to, and what happens above it?",
+      "verdict": "correct",
+      "matched": [
+        "halyard_max_frames",
+        "240",
+        "clamp"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "HALYARD_MAX_FRAMES is set to 240 by default. Values above it are clamped, not rejected, so a bad config degrades instead of refusing to start.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.985,
+      "total": 4.196,
+      "calls": 7,
+      "callSeconds": 4.178,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 2,
+        "alc:reject": 2,
+        "alc:knowledge-written": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 2,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "limits.md",
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-raw|quorvex-4513|single",
+      "arm": "alc-raw",
+      "case": "quorvex-4513",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What does the Quorvex error code QUORVEX-4513 mean?",
+      "verdict": "correct",
+      "matched": [
+        "quorvex-4513",
+        "lease"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "QUORVEX-4513 indicates that the tide adapter lost its lease. This is a transient error, and retrying the call is recommended.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.335,
+      "total": 4.532,
+      "calls": 7,
+      "callSeconds": 4.498,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 4,
+        "alc:reject": 2,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 4,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "error-codes.md",
+        "module-layout.md",
+        "versions.md"
+      ]
+    },
+    {
+      "key": "alc-raw|quorvex-version|single",
+      "arm": "alc-raw",
+      "case": "quorvex-version",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which Quorvex release is the oldest that supports the tide adapter?",
+      "verdict": "correct",
+      "matched": [
+        "3.14.2"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The oldest Quorvex release that supports the tide adapter is 3.14.2.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.673,
+      "total": 3.783,
+      "calls": 6,
+      "callSeconds": 3.767,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 1,
+        "alc:budget": 2,
+        "alc:finding": 2,
+        "alc:reject": 2,
+        "alc:knowledge-written": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 2,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "module-layout.md",
+        "versions.md"
+      ]
+    },
+    {
+      "key": "alc-raw|quorvex-path|single",
+      "arm": "alc-raw",
+      "case": "quorvex-path",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which file defines the TideAdapter class in Quorvex?",
+      "verdict": "correct",
+      "matched": [
+        "pkg/quorvex/adapters/tide.py"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The TideAdapter class is defined in `pkg/quorvex/adapters/tide.py`.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.381,
+      "total": 3.503,
+      "calls": 6,
+      "callSeconds": 3.493,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 1,
+        "alc:budget": 2,
+        "alc:finding": 1,
+        "alc:reject": 1,
+        "alc:knowledge-written": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 1,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "module-layout.md"
+      ]
+    },
+    {
+      "key": "alc-raw|peltarn-rate|single",
+      "arm": "alc-raw",
+      "case": "peltarn-rate",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the Peltarn rate limit in requests per minute?",
+      "verdict": "correct",
+      "matched": [
+        "900"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The Peltarn rate limit is 900 requests per minute per project key.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.409,
+      "total": 3.525,
+      "calls": 6,
+      "callSeconds": 3.515,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 1,
+        "alc:budget": 2,
+        "alc:finding": 1,
+        "alc:reject": 3,
+        "alc:knowledge-written": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 1,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "rate-limit.md"
+      ]
+    },
+    {
+      "key": "alc-raw|quorvex-lease-floor|single",
+      "arm": "alc-raw",
+      "case": "quorvex-lease-floor",
+      "kind": "multi_hop",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What does quorvex_lease_floor() return, and which file documents the function?",
+      "verdict": "correct",
+      "matched": [
+        "quorvex_lease_floor",
+        "9"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "`quorvex_lease_floor()` returns 9, and the function is documented in `pkg/quorvex/adapters/tide.py`.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.238,
+      "total": 4.406,
+      "calls": 7,
+      "callSeconds": 4.38,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 4,
+        "alc:reject": 4,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 4,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "config-file.md",
+        "cross-references.md",
+        "module-layout.md"
+      ]
+    },
+    {
+      "key": "alc-raw|vintra-pace|single",
+      "arm": "alc-raw",
+      "case": "vintra-pace",
+      "kind": "conflict",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What does vintra_pace_default() return?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "16"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "`vintra_pace_default()` returns 12 according to the changelog.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.548,
+      "total": 3.663,
+      "calls": 6,
+      "callSeconds": 3.647,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 1,
+        "alc:budget": 2,
+        "alc:finding": 2,
+        "alc:knowledge-written": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 2,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "1-4-0.md",
+        "pace.md"
+      ]
+    },
+    {
+      "key": "alc-raw|brimwall-absent|single",
+      "arm": "alc-raw",
+      "case": "brimwall-absent",
+      "kind": "absent",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default value of brimwall_set_ceiling() in the Brimwall documentation?",
+      "verdict": "admitted",
+      "matched": [],
+      "missing": [],
+      "invented": [],
+      "reason": "said plainly it could not find it",
+      "answer": "The default value of `brimwall_set_ceiling()` is not specified in the provided documentation.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.513,
+      "total": 3.65,
+      "calls": 6,
+      "callSeconds": 3.618,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 3,
+        "alc:reject": 1,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 3,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "1-4-0.md",
+        "pace.md",
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-raw|peltarn-carry|seed",
+      "arm": "alc-raw",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit?",
+      "verdict": "correct",
+      "matched": [
+        "peltarn_write_quota",
+        "7",
+        "900"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "`peltarn_write_quota()` returns 7, and the Peltarn rate limit is 900 requests per minute per project key.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.116,
+      "total": 4.296,
+      "calls": 7,
+      "callSeconds": 4.268,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 3,
+        "alc:reject": 5,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 3,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "1-4-0.md",
+        "quota.md",
+        "rate-limit.md"
+      ]
+    },
+    {
+      "key": "alc-raw|peltarn-carry|warm",
+      "arm": "alc-raw",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "partial",
+      "matched": [
+        "peltarn_write_quota",
+        "900"
+      ],
+      "missing": [
+        "7"
+      ],
+      "invented": [],
+      "reason": "missing 7",
+      "answer": "`peltarn_write_quota()` returns the number of concurrent writes a key may make, and the Peltarn rate limit per key is 900 requests per minute.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.005,
+      "total": 3.176,
+      "calls": 5,
+      "callSeconds": 3.156,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 2,
+        "alc:reject": 2,
+        "alc:budget": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 2,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "1-4-0.md",
+        "quota.md",
+        "rate-limit.md"
+      ]
+    },
+    {
+      "key": "alc-raw|peltarn-carry|cold",
+      "arm": "alc-raw",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "invented",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [
+        "1000"
+      ],
+      "reason": "asserted 1000 \u2014 in no source for this case",
+      "answer": "peltarn_write_quota() returns the current write quota for a key, and the Peltarn rate limit per key is typically set to 1000 operations.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.385,
+      "total": 2.597,
+      "calls": 4,
+      "callSeconds": 2.594,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 1,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-raw|halyard-carry|seed",
+      "arm": "alc-raw",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "partial",
+      "matched": [
+        "12"
+      ],
+      "missing": [
+        "240"
+      ],
+      "invented": [],
+      "reason": "missing 240",
+      "answer": "The default frame count for `halyard_set_pace` is **12 frames**, as specified in the documentation. There is no hard ceiling constant mentioned for this setting.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.286,
+      "total": 4.46,
+      "calls": 7,
+      "callSeconds": 4.447,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 1,
+        "alc:reject": 6,
+        "alc:knowledge-written": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 1,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-raw|halyard-carry|warm",
+      "arm": "alc-raw",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "partial",
+      "matched": [
+        "12"
+      ],
+      "missing": [
+        "240"
+      ],
+      "invented": [],
+      "reason": "missing 240",
+      "answer": "The default frame count for `halyard_set_pace` is **12**, and the hard ceiling constant is not explicitly mentioned in the provided information.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.18,
+      "total": 3.358,
+      "calls": 5,
+      "callSeconds": 3.347,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 1,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 1,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-raw|halyard-carry|cold",
+      "arm": "alc-raw",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "invented",
+      "matched": [],
+      "missing": [
+        "12",
+        "240"
+      ],
+      "invented": [
+        "16",
+        "255"
+      ],
+      "reason": "asserted 16, 255 \u2014 in no source for this case",
+      "answer": "The default frame count for `halyard_set_pace` is typically 16 frames, and the hard ceiling constant is generally set to 255.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.45,
+      "total": 2.619,
+      "calls": 4,
+      "callSeconds": 2.615,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 1,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-study|halyard-pace|single",
+      "arm": "alc-study",
+      "case": "halyard-pace",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace in the Halyard documentation?",
+      "verdict": "correct",
+      "matched": [
+        "halyard_set_pace",
+        "12"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The default frame count for `halyard_set_pace` is **12**, as specified in the Halyard documentation.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.624,
+      "total": 5.166,
+      "calls": 7,
+      "callSeconds": 5.105,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:index": 4,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 1,
+        "alc:reject": 3,
+        "alc:study": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 1,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-study|halyard-mode|single",
+      "arm": "alc-study",
+      "case": "halyard-mode",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which HalyardMode member is documented for letting the clock fall behind without raising?",
+      "verdict": "correct",
+      "matched": [
+        "halyardmode.glide"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The HalyardMode member that allows the clock to fall behind without raising is `HalyardMode.GLIDE`.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.177,
+      "total": 5.655,
+      "calls": 8,
+      "callSeconds": 5.641,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 1,
+        "alc:reject": 6,
+        "alc:study": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 1,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "modes.md"
+      ]
+    },
+    {
+      "key": "alc-study|halyard-drift|single",
+      "arm": "alc-study",
+      "case": "halyard-drift",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What value does the Halyard documentation recommend for the halyard-drift command line option?",
+      "verdict": "correct",
+      "matched": [
+        "loose"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The Halyard documentation recommends using `--halyard-drift=loose` for long-running jobs.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.623,
+      "total": 7.208,
+      "calls": 9,
+      "callSeconds": 7.185,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 7,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 2,
+        "alc:reject": 5,
+        "alc:study": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 2,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "command-line.md",
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-study|halyard-retry|single",
+      "arm": "alc-study",
+      "case": "halyard-retry",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the retry window in seconds for halyard.retry.window in halyard.toml?",
+      "verdict": "correct",
+      "matched": [
+        "45"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The retry window in seconds for `halyard.retry.window` in `halyard.toml` is 45.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.62,
+      "total": 5.962,
+      "calls": 8,
+      "callSeconds": 5.949,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 1,
+        "alc:reject": 6,
+        "alc:study": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 1,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "config-file.md"
+      ]
+    },
+    {
+      "key": "alc-study|halyard-max|single",
+      "arm": "alc-study",
+      "case": "halyard-max",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is HALYARD_MAX_FRAMES set to, and what happens above it?",
+      "verdict": "correct",
+      "matched": [
+        "halyard_max_frames",
+        "240",
+        "clamp"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "HALYARD_MAX_FRAMES is set to 240 by default. Values above 240 are clamped, not rejected, so a bad config will degrade instead of refusing to start.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.07,
+      "total": 6.477,
+      "calls": 9,
+      "callSeconds": 6.456,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 7,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 2,
+        "alc:reject": 2,
+        "alc:study": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 2,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "limits.md",
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-study|quorvex-4513|single",
+      "arm": "alc-study",
+      "case": "quorvex-4513",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What does the Quorvex error code QUORVEX-4513 mean?",
+      "verdict": "correct",
+      "matched": [
+        "quorvex-4513",
+        "lease"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "QUORVEX-4513 indicates that the tide adapter lost its lease. This is a transient error, and retrying the call is recommended.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.29,
+      "total": 7.467,
+      "calls": 9,
+      "callSeconds": 6.914,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 7,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 4,
+        "alc:reject": 2,
+        "alc:study": 2,
+        "alc:knowledge-written": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 4,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "error-codes.md",
+        "module-layout.md",
+        "versions.md"
+      ]
+    },
+    {
+      "key": "alc-study|quorvex-version|single",
+      "arm": "alc-study",
+      "case": "quorvex-version",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which Quorvex release is the oldest that supports the tide adapter?",
+      "verdict": "correct",
+      "matched": [
+        "3.14.2"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The oldest Quorvex release that supports the tide adapter is 3.14.2.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.691,
+      "total": 6.207,
+      "calls": 8,
+      "callSeconds": 6.19,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 1,
+        "alc:budget": 2,
+        "alc:finding": 2,
+        "alc:reject": 2,
+        "alc:study": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 2,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "module-layout.md",
+        "versions.md"
+      ]
+    },
+    {
+      "key": "alc-study|quorvex-path|single",
+      "arm": "alc-study",
+      "case": "quorvex-path",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which file defines the TideAdapter class in Quorvex?",
+      "verdict": "correct",
+      "matched": [
+        "pkg/quorvex/adapters/tide.py"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The TideAdapter class is defined in `pkg/quorvex/adapters/tide.py`.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.926,
+      "total": 5.07,
+      "calls": 8,
+      "callSeconds": 5.056,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 1,
+        "alc:reject": 2,
+        "alc:study": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 1,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "module-layout.md"
+      ]
+    },
+    {
+      "key": "alc-study|peltarn-rate|single",
+      "arm": "alc-study",
+      "case": "peltarn-rate",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the Peltarn rate limit in requests per minute?",
+      "verdict": "correct",
+      "matched": [
+        "900"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The Peltarn rate limit is 900 requests per minute per project key.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.267,
+      "total": 5.594,
+      "calls": 8,
+      "callSeconds": 5.581,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 1,
+        "alc:reject": 6,
+        "alc:study": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 1,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "rate-limit.md"
+      ]
+    },
+    {
+      "key": "alc-study|quorvex-lease-floor|single",
+      "arm": "alc-study",
+      "case": "quorvex-lease-floor",
+      "kind": "multi_hop",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What does quorvex_lease_floor() return, and which file documents the function?",
+      "verdict": "correct",
+      "matched": [
+        "quorvex_lease_floor",
+        "9"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "`quorvex_lease_floor()` returns 9, and the function is documented in `pkg/quorvex/adapters/tide.py`.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.242,
+      "total": 6.216,
+      "calls": 9,
+      "callSeconds": 6.182,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 7,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 4,
+        "alc:reject": 4,
+        "alc:study": 2,
+        "alc:knowledge-written": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 4,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "config-file.md",
+        "cross-references.md",
+        "module-layout.md"
+      ]
+    },
+    {
+      "key": "alc-study|vintra-pace|single",
+      "arm": "alc-study",
+      "case": "vintra-pace",
+      "kind": "conflict",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What does vintra_pace_default() return?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "16"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "`vintra_pace_default()` returns 12.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.471,
+      "total": 4.334,
+      "calls": 7,
+      "callSeconds": 4.303,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:index": 4,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 1,
+        "alc:budget": 2,
+        "alc:finding": 1,
+        "alc:reject": 1,
+        "alc:study": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 1,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "1-4-0.md"
+      ]
+    },
+    {
+      "key": "alc-study|brimwall-absent|single",
+      "arm": "alc-study",
+      "case": "brimwall-absent",
+      "kind": "absent",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default value of brimwall_set_ceiling() in the Brimwall documentation?",
+      "verdict": "invented",
+      "matched": [],
+      "missing": [],
+      "invented": [
+        "vintra_pace_default"
+      ],
+      "reason": "asserted vintra_pace_default \u2014 in no source for this case",
+      "answer": "The default value of `brimwall_set_ceiling()` is not explicitly stated in the provided documentation. The information available focuses on `vintra_pace_default()` and its changes, which are unrelated to `brimwall_set_ceiling()`.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.601,
+      "total": 6.139,
+      "calls": 8,
+      "callSeconds": 6.122,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 2,
+        "alc:reject": 2,
+        "alc:study": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 2,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "1-4-0.md",
+        "pace.md"
+      ]
+    },
+    {
+      "key": "alc-study|peltarn-carry|seed",
+      "arm": "alc-study",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit?",
+      "verdict": "correct",
+      "matched": [
+        "peltarn_write_quota",
+        "7",
+        "900"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "`peltarn_write_quota()` returns 7, and the Peltarn rate limit is 900 requests per minute per project key.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.128,
+      "total": 6.36,
+      "calls": 9,
+      "callSeconds": 6.331,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 7,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 1,
+        "alc:budget": 3,
+        "alc:finding": 2,
+        "alc:reject": 6,
+        "alc:study": 2,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 2,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "quota.md",
+        "rate-limit.md"
+      ]
+    },
+    {
+      "key": "alc-study|peltarn-carry|warm",
+      "arm": "alc-study",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "correct",
+      "matched": [
+        "peltarn_write_quota",
+        "7",
+        "900"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "`peltarn_write_quota()` returns 7, and the Peltarn rate limit per key is 900 requests per minute.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.161,
+      "total": 3.312,
+      "calls": 5,
+      "callSeconds": 3.297,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 2,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 2,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "quota.md",
+        "rate-limit.md"
+      ]
+    },
+    {
+      "key": "alc-study|peltarn-carry|cold",
+      "arm": "alc-study",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "invented",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [
+        "1000"
+      ],
+      "reason": "asserted 1000 \u2014 in no source for this case",
+      "answer": "peltarn_write_quota() returns the current write quota for a key, and the Peltarn rate limit per key is typically set to 1000 operations.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.45,
+      "total": 2.62,
+      "calls": 4,
+      "callSeconds": 2.617,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 1,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-study|halyard-carry|seed",
+      "arm": "alc-study",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "partial",
+      "matched": [
+        "12"
+      ],
+      "missing": [
+        "240"
+      ],
+      "invented": [],
+      "reason": "missing 240",
+      "answer": "The default frame count for `halyard_set_pace` is **12 frames**, as specified in the documentation. There is no hard ceiling constant mentioned for this setting.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 4.41,
+      "total": 5.752,
+      "calls": 8,
+      "callSeconds": 5.74,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 6,
+        "alc:goal": 1,
+        "alc:decision": 4,
+        "alc:search": 4,
+        "alc:result": 4,
+        "alc:gap": 2,
+        "alc:budget": 3,
+        "alc:finding": 1,
+        "alc:reject": 6,
+        "alc:study": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 4,
+      "alcFindings": 1,
+      "alcToolCalls": 4,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-study|halyard-carry|warm",
+      "arm": "alc-study",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "partial",
+      "matched": [
+        "12"
+      ],
+      "missing": [
+        "240"
+      ],
+      "invented": [],
+      "reason": "missing 240",
+      "answer": "The default frame count for `halyard_set_pace` is 12. The hard ceiling constant is not specified in the provided information.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.052,
+      "total": 3.216,
+      "calls": 5,
+      "callSeconds": 3.204,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 1,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 1,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-study|halyard-carry|cold",
+      "arm": "alc-study",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "12",
+        "240"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "The default frame count for `halyard_set_pace` is typically set to 1, and the hard ceiling constant is generally 1.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 2.384,
+      "total": 2.566,
+      "calls": 4,
+      "callSeconds": 2.562,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 2,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-heuristic|halyard-pace|single",
+      "arm": "alc-heuristic",
+      "case": "halyard-pace",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace in the Halyard documentation?",
+      "verdict": "correct",
+      "matched": [
+        "halyard_set_pace",
+        "12"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The default frame count for `halyard_set_pace` is **12** according to the documentation.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 3.833,
+      "total": 3.967,
+      "calls": 1,
+      "callSeconds": 3.873,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 5,
+        "alc:goal": 1,
+        "alc:index": 4,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 4,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 4,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "config-file.md",
+        "limits.md",
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|halyard-mode|single",
+      "arm": "alc-heuristic",
+      "case": "halyard-mode",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which HalyardMode member is documented for letting the clock fall behind without raising?",
+      "verdict": "correct",
+      "matched": [
+        "halyardmode.glide"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "`HalyardMode.GLIDE` is documented for letting the clock fall behind without raising.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.361,
+      "total": 0.491,
+      "calls": 1,
+      "callSeconds": 0.459,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 3,
+        "alc:reject": 1,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 3,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "modes.md",
+        "quota.md",
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|halyard-drift|single",
+      "arm": "alc-heuristic",
+      "case": "halyard-drift",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What value does the Halyard documentation recommend for the halyard-drift command line option?",
+      "verdict": "correct",
+      "matched": [
+        "loose"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The Halyard documentation recommends using `--halyard-drift=loose` for long-running jobs.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.348,
+      "total": 0.484,
+      "calls": 1,
+      "callSeconds": 0.455,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 4,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 4,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "command-line.md",
+        "limits.md",
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|halyard-retry|single",
+      "arm": "alc-heuristic",
+      "case": "halyard-retry",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the retry window in seconds for halyard.retry.window in halyard.toml?",
+      "verdict": "correct",
+      "matched": [
+        "45"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The retry window in seconds for `halyard.retry.window` in `halyard.toml` is 45.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.386,
+      "total": 0.539,
+      "calls": 1,
+      "callSeconds": 0.519,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 4,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 4,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "command-line.md",
+        "config-file.md",
+        "error-codes.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|halyard-max|single",
+      "arm": "alc-heuristic",
+      "case": "halyard-max",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is HALYARD_MAX_FRAMES set to, and what happens above it?",
+      "verdict": "correct",
+      "matched": [
+        "halyard_max_frames",
+        "240",
+        "clamp"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "HALYARD_MAX_FRAMES is set to 240. Values above it are clamped, not rejected, so a bad config degrades instead of refusing to start.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.342,
+      "total": 0.527,
+      "calls": 1,
+      "callSeconds": 0.508,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 3,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 3,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "command-line.md",
+        "limits.md",
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|quorvex-4513|single",
+      "arm": "alc-heuristic",
+      "case": "quorvex-4513",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What does the Quorvex error code QUORVEX-4513 mean?",
+      "verdict": "correct",
+      "matched": [
+        "quorvex-4513",
+        "lease"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The Quorvex error code QUORVEX-4513 means \"the tide adapter lost its lease,\" and it is transient. Retrying the call is recommended.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.384,
+      "total": 0.592,
+      "calls": 1,
+      "callSeconds": 0.574,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 4,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 4,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "documentation-index.md",
+        "error-codes.md",
+        "versions.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|quorvex-version|single",
+      "arm": "alc-heuristic",
+      "case": "quorvex-version",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which Quorvex release is the oldest that supports the tide adapter?",
+      "verdict": "correct",
+      "matched": [
+        "3.14.2"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "Quorvex 3.14.2 is the oldest release that supports the tide adapter.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.357,
+      "total": 0.482,
+      "calls": 1,
+      "callSeconds": 0.453,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 4,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 4,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "cross-references.md",
+        "module-layout.md",
+        "versions.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|quorvex-path|single",
+      "arm": "alc-heuristic",
+      "case": "quorvex-path",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "Which file defines the TideAdapter class in Quorvex?",
+      "verdict": "correct",
+      "matched": [
+        "pkg/quorvex/adapters/tide.py"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The TideAdapter class is defined in `pkg/quorvex/adapters/tide.py`.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.367,
+      "total": 0.495,
+      "calls": 1,
+      "callSeconds": 0.467,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 3,
+        "alc:reject": 1,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 3,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "error-codes.md",
+        "module-layout.md",
+        "versions.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|peltarn-rate|single",
+      "arm": "alc-heuristic",
+      "case": "peltarn-rate",
+      "kind": "single",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the Peltarn rate limit in requests per minute?",
+      "verdict": "correct",
+      "matched": [
+        "900"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The Peltarn rate limit is 900 requests per minute per project key.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.351,
+      "total": 0.451,
+      "calls": 1,
+      "callSeconds": 0.43,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 3,
+        "alc:reject": 1,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 3,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "documentation-index.md",
+        "quota.md",
+        "rate-limit.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|quorvex-lease-floor|single",
+      "arm": "alc-heuristic",
+      "case": "quorvex-lease-floor",
+      "kind": "multi_hop",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What does quorvex_lease_floor() return, and which file documents the function?",
+      "verdict": "correct",
+      "matched": [
+        "quorvex_lease_floor",
+        "9"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "`quorvex_lease_floor()` returns 9, and the function is documented in `pkg/quorvex/adapters/tide.py`.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.373,
+      "total": 0.564,
+      "calls": 1,
+      "callSeconds": 0.536,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 3,
+        "alc:reject": 1,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 3,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "1-4-0.md",
+        "cross-references.md",
+        "module-layout.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|vintra-pace|single",
+      "arm": "alc-heuristic",
+      "case": "vintra-pace",
+      "kind": "conflict",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What does vintra_pace_default() return?",
+      "verdict": "wrong",
+      "matched": [],
+      "missing": [
+        "16"
+      ],
+      "invented": [],
+      "reason": "did not answer",
+      "answer": "`vintra_pace_default()` returns 12 according to the documentation.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.335,
+      "total": 0.436,
+      "calls": 1,
+      "callSeconds": 0.407,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 4,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 4,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "1-4-0.md",
+        "cross-references.md",
+        "pace.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|brimwall-absent|single",
+      "arm": "alc-heuristic",
+      "case": "brimwall-absent",
+      "kind": "absent",
+      "variant": "single",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default value of brimwall_set_ceiling() in the Brimwall documentation?",
+      "verdict": "admitted",
+      "matched": [],
+      "missing": [],
+      "invented": [],
+      "reason": "said plainly it could not find it",
+      "answer": "The default value of `brimwall_set_ceiling()` is not explicitly documented in the provided sources.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.384,
+      "total": 0.512,
+      "calls": 1,
+      "callSeconds": 0.493,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 4,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 4,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "1-4-0.md",
+        "pace.md",
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|peltarn-carry|seed",
+      "arm": "alc-heuristic",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit?",
+      "verdict": "correct",
+      "matched": [
+        "peltarn_write_quota",
+        "7",
+        "900"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "`peltarn_write_quota()` returns 7, and the Peltarn rate limit is 900 requests per minute per project key.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.34,
+      "total": 0.509,
+      "calls": 1,
+      "callSeconds": 0.479,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 4,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 4,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "cross-references.md",
+        "quota.md",
+        "rate-limit.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|peltarn-carry|warm",
+      "arm": "alc-heuristic",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "correct",
+      "matched": [
+        "peltarn_write_quota",
+        "7",
+        "900"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "`peltarn_write_quota()` returns the number of concurrent writes a key may make, which is documented as 7. The Peltarn rate limit is 900 requests per minute per project key.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.382,
+      "total": 0.609,
+      "calls": 1,
+      "callSeconds": 0.592,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 3,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 3,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "cross-references.md",
+        "quota.md",
+        "rate-limit.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|peltarn-carry|cold",
+      "arm": "alc-heuristic",
+      "case": "peltarn-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What does peltarn_write_quota() return, and what is the Peltarn rate limit per key?",
+      "verdict": "invented",
+      "matched": [
+        "peltarn_write_quota"
+      ],
+      "missing": [
+        "7",
+        "900"
+      ],
+      "invented": [
+        "1000"
+      ],
+      "reason": "asserted 1000 \u2014 in no source for this case",
+      "answer": "peltarn_write_quota() returns the current write quota for a key, and the Peltarn rate limit per key is typically set to 1000 operations.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.306,
+      "total": 0.469,
+      "calls": 1,
+      "callSeconds": 0.466,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 2,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    },
+    {
+      "key": "alc-heuristic|halyard-carry|seed",
+      "arm": "alc-heuristic",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "seed",
+      "turn": 1,
+      "docs": true,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "correct",
+      "matched": [
+        "12",
+        "240"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The default frame count for `halyard_set_pace` is **12**, and the hard ceiling constant is **240**.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.388,
+      "total": 0.565,
+      "calls": 1,
+      "callSeconds": 0.536,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 4,
+        "alc:goal": 1,
+        "alc:decision": 3,
+        "alc:search": 3,
+        "alc:result": 3,
+        "alc:gap": 2,
+        "alc:budget": 2,
+        "alc:finding": 4,
+        "alc:knowledge-written": 3,
+        "alc:done": 1
+      },
+      "alcCycles": 3,
+      "alcFindings": 4,
+      "alcToolCalls": 3,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "config-file.md",
+        "limits.md",
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|halyard-carry|warm",
+      "arm": "alc-heuristic",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "warm",
+      "turn": 2,
+      "docs": false,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "correct",
+      "matched": [
+        "12",
+        "240"
+      ],
+      "missing": [],
+      "invented": [],
+      "reason": "all expected details present",
+      "answer": "The default frame count for `halyard_set_pace` is **12**, and the hard ceiling constant is **240**.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.367,
+      "total": 0.509,
+      "calls": 1,
+      "callSeconds": 0.492,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 1,
+        "alc:result": 1,
+        "alc:finding": 3,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 3,
+      "alcToolCalls": 1,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": [
+        "config-file.md",
+        "limits.md",
+        "the-frame-clock.md"
+      ]
+    },
+    {
+      "key": "alc-heuristic|halyard-carry|cold",
+      "arm": "alc-heuristic",
+      "case": "halyard-carry",
+      "kind": "carry",
+      "variant": "cold",
+      "turn": 2,
+      "docs": false,
+      "question": "What is the default frame count for halyard_set_pace, and what is the hard ceiling constant?",
+      "verdict": "invented",
+      "matched": [],
+      "missing": [
+        "12",
+        "240"
+      ],
+      "invented": [
+        "16",
+        "255"
+      ],
+      "reason": "asserted 16, 255 \u2014 in no source for this case",
+      "answer": "The default frame count for `halyard_set_pace` is typically 16 frames, and the hard ceiling constant is generally set to 255.",
+      "error": "",
+      "errorDetail": "",
+      "ttft": 0.299,
+      "total": 0.498,
+      "calls": 1,
+      "callSeconds": 0.494,
+      "alcEvents": {
+        "alc:start": 1,
+        "alc:stage": 3,
+        "alc:goal": 1,
+        "alc:decision": 2,
+        "alc:search": 2,
+        "alc:result": 2,
+        "alc:gap": 2,
+        "alc:budget": 1,
+        "alc:done": 1
+      },
+      "alcCycles": 2,
+      "alcFindings": 0,
+      "alcToolCalls": 2,
+      "stages": [
+        "chat:thinking",
+        "chat:thinking"
+      ],
+      "knowledgeFiles": []
+    }
+  ],
+  "rescored": true,
+  "startedAt": "2026-09-29T13:48+00:00"
+}

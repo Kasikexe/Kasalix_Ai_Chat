@@ -14,11 +14,17 @@ export type AlcEventKind =
   | 'search'
   | 'result'
   | 'finding'
+  /** Two sources state different values; software decided which is current. */
+  | 'conflict'
   | 'reject'
   | 'gap'
+  /** The answer was checked against the evidence before it was released. */
+  | 'verify'
   | 'budget'
   | 'index'
   | 'knowledge-written'
+  /** What the cycle learned, written as one grounded note (Phase 4). */
+  | 'study'
   | 'done'
   | 'notice';
 

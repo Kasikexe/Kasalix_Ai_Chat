@@ -24,6 +24,43 @@ MAX_FINDING_CHARS = 800
 DEFAULT_BUDGET_TOKENS = 4000
 MAX_FINDINGS = 24
 
+#: How many of an open question's distinctive terms a passage must carry before
+#: it can count as an answer. Two, because a question is phrased with verbs the
+#: answer does not repeat ("how do I HANDLE pygame key events" vs "read pygame
+#: key events") — a ratio would fail on that while a word-count floor accepts it.
+#: A question with fewer distinctive terms than this needs all of them.
+COVERAGE_MIN_TERMS = 2
+
+#: Questions that ask for a VALUE cannot be "covered" by prose that merely uses
+#: the same words: the multi-hop shape this guards against is a passage naming the
+#: subject ("Vintra has a configurable pace") while the value lives in the next
+#: file. A procedure question ("how do I handle key events") IS answered by the
+#: passage that describes it, so it needs no number to count as covered.
+_VALUE_SEEKING_RE = re.compile(
+    r"\b(?:defaults?|values?|numbers?|counts?|quota|limits?|max(?:imum)?|min(?:imum)?|"
+    r"version|size|length|price|cost|caps?|rates?|paces?|frames?|tokens?|seconds?|"
+    r"milliseconds?|ms|date|how (?:many|much|long|often|fast|old)|which (?:number|version))\b",
+    re.IGNORECASE,
+)
+
+_QUESTION_STOPWORDS = {
+    "the", "and", "for", "with", "that", "this", "from", "what", "which", "when",
+    "where", "does", "did", "are", "was", "were", "you", "your", "can", "could",
+    "should", "would", "have", "has", "had", "not", "but", "use", "using", "about",
+    "there", "their", "them", "then", "than", "also", "into", "how", "why", "many",
+    "much", "there", "its", "name", "value", "tell", "give", "please",
+}
+
+
+def question_terms(question: str) -> list[str]:
+    """The distinctive words of an open question (what a passage must mention)."""
+    terms: list[str] = []
+    for token in re.findall(r"[A-Za-z0-9_]{4,}", str(question or "").lower()):
+        if token in _QUESTION_STOPWORDS or token in terms:
+            continue
+        terms.append(token)
+    return terms
+
 
 def estimate_tokens(text: str) -> int:
     """Same heuristic as the pipeline/agent (≈4 chars per token)."""
@@ -75,6 +112,10 @@ class Scratchpad:
     failed_sources: list[str] = field(default_factory=list)
     cycles: int = 0
     tool_calls: int = 0
+    #: Whether contradictions in this turn's evidence are resolved in software
+    #: before the model answers (D13). On by default; the eval harness turns it
+    #: off to measure what it is worth, and nothing in the UI exposes it.
+    conflict_guard: bool = True
 
     # ── mutation ────────────────────────────────────────────────────────
     def add_question(self, question: str) -> None:
@@ -115,9 +156,16 @@ class Scratchpad:
         query: str = "",
         score: float = 0.0,
         data: dict[str, Any] | None = None,
+        limit: int | None = None,
     ) -> Finding | None:
-        """Keep one piece of information. Returns None when it is a duplicate."""
-        clipped = _clip(text)
+        """Keep one piece of information. Returns None when it is a duplicate.
+
+        ``limit`` exists for findings that were widened to include a neighbouring
+        section of the same document: the whole point of that widening is that
+        both halves of a multi-hop answer survive in one finding, and clipping it
+        back to the default length would cut off the half that was just fetched.
+        """
+        clipped = _clip(text, limit or MAX_FINDING_CHARS)
         if not clipped:
             return None
         finding = Finding(
@@ -182,13 +230,16 @@ class Scratchpad:
                 "(search it with knowledge_search before using the web):"
             )
             for topic in self.knowledge_topics:
-                notes = int(topic.get("notes") or 0)
-                lines.append(f"- {topic.get('topic') or topic.get('title')} ({notes} note{'s' if notes != 1 else ''})")
+                lines.append(f"- {topic.get('topic') or topic.get('title')} ({topic_shape(topic)})")
+
         if self.findings:
             lines.append("")
-            lines.append("GATHERED INFORMATION (already available — do not fetch it again):")
+            lines.append(
+                "GATHERED INFORMATION (already available — do not fetch it again, and "
+                "where two passages disagree the newer date wins):"
+            )
             for i, f in enumerate(self.findings, start=1):
-                lines.append(f"[{i}] ({f.source}) {f.text}")
+                lines.append(f"[{i}] ({_source_label(f)}) {f.text}")
         if self.failed_sources:
             lines.append("")
             lines.append(
@@ -209,6 +260,52 @@ class Scratchpad:
             lines.append("QUERIES ALREADY TRIED: " + " | ".join(self.queries[-12:]))
         return "\n".join(lines)
 
+    def passages(self) -> list[dict[str, Any]]:
+        """The findings as conflict-detection input, each tagged with its family.
+
+        The family is what keeps "the newer source wins" honest: a note written
+        today is not a newer version of the documentation it summarised, and a
+        web page fetched today is not newer than the file it disagrees with.
+        """
+        return [
+            {
+                "source": f.source,
+                "text": f.text,
+                "date": str(f.data.get("date") or ""),
+                "family": family_of(f.source),
+            }
+            for f in self.findings
+        ]
+
+    def conflicts(self) -> list[dict[str, Any]]:
+        """Contradictions inside this turn's own evidence, with a winner."""
+        from . import study as alc_study  # lazy: study imports decide imports this
+
+        return alc_study.detect_conflicts(self.passages())
+
+    def covered(self) -> bool:
+        """Whether every open question is answered well enough to stop gathering.
+
+        A question counts as covered only when a finding mentions most of its
+        distinctive words AND asserts a value — prose that merely repeats the
+        question is not an answer. Anything unresolved (a gap, an empty source)
+        keeps the cycle going, and the caller never stops before the second
+        cycle, so one lucky first search cannot end the turn.
+        """
+        if not self.findings or self.gaps:
+            return False
+        questions = self.questions or ([self.goal] if self.goal else [])
+        if not questions:
+            return False
+        for question in questions:
+            terms = question_terms(question)
+            if not terms:
+                return False
+            needs_value = bool(_VALUE_SEEKING_RE.search(question))
+            if not any(_covers(f.text, terms, needs_value=needs_value) for f in self.findings):
+                return False
+        return True
+
     def to_briefing(self) -> str:
         """What the acting phase receives: the findings, not the bookkeeping."""
         if not self.findings:
@@ -220,8 +317,17 @@ class Scratchpad:
             "",
         ]
         for i, f in enumerate(self.findings, start=1):
-            lines.append(f"[{i}] ({f.source})")
+            lines.append(f"[{i}] ({_source_label(f)})")
             lines.append(f.text)
+            lines.append("")
+        # Decided by software BEFORE the model sees it: the answering model was
+        # previously handed two contradicting values and their dates and expected
+        # to work out which to use, which is the judgement a 1.7B model loses.
+        from . import study as alc_study  # lazy: study imports decide imports this
+
+        block = alc_study.conflict_block(self.conflicts()) if self.conflict_guard else ""
+        if block:
+            lines.append(block)
             lines.append("")
         lines.append("INSTRUCTIONS:")
         lines.append("- Answer the user's question using this information as your primary source of truth.")
@@ -244,6 +350,56 @@ class Scratchpad:
             "knowledgeTopics": len(self.knowledge_topics),
             "tokens": self.tokens(),
         }
+
+
+def family_of(source: str) -> str:
+    """Which kind of source a finding came from: docs, web or a project note."""
+    text = str(source or "")
+    if text.startswith("knowledge:"):
+        return "note"
+    if text.startswith("web:"):
+        return "web"
+    return "docs"
+
+
+def _covers(text: str, terms: list[str], *, needs_value: bool) -> bool:
+    """A passage mentions the question's subject — and states a value if one is asked for."""
+    from .verify import claim_tokens  # lazy: verify imports study imports decide
+
+    lowered = " ".join(str(text or "").lower().split())
+    hits = sum(1 for term in terms if term in lowered)
+    if hits < min(COVERAGE_MIN_TERMS, len(terms)):
+        return False
+    return bool(claim_tokens(text)) if needs_value else True
+
+
+def _source_label(finding: Finding) -> str:
+    """``source``, plus when it was written/fetched when that is known.
+
+    The web label says "fetched" rather than "updated" on purpose: a page fetched
+    now has not changed now, and calling that an update would make any web page
+    look newer than every local document.
+    """
+    date = str(finding.data.get("date") or "")
+    if date:
+        word = "fetched" if family_of(finding.source) == "web" else "updated"
+        return f"{finding.source}, {word} {date}"
+    fetched = str(finding.data.get("fetchedOn") or "")
+    if fetched and family_of(finding.source) == "web":
+        return f"{finding.source}, fetched {fetched} (publication date unknown)"
+    return finding.source
+
+
+def topic_shape(topic: dict[str, Any]) -> str:
+    """How a stored topic is described to the model: notes, a study, or both."""
+    notes = int(topic.get("notes") or 0)
+    studies = int(topic.get("studies") or 0)
+    parts: list[str] = []
+    if notes:
+        parts.append(f"{notes} note{'s' if notes != 1 else ''}")
+    if studies:
+        parts.append("a study")
+    return ", ".join(parts) or "empty"
 
 
 def looks_like_greeting(text: str) -> bool:

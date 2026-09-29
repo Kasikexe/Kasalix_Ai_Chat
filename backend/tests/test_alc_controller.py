@@ -168,6 +168,248 @@ async def test_cycle_gathers_judges_then_answers(tmp_path, monkeypatch):
     assert done["toolCalls"] == 1
 
 
+# ─── The answer gate (D13) ─────────────────────────────────────────────
+async def test_a_fabricated_value_never_reaches_the_client(tmp_path, monkeypatch):
+    """The whole point of the guard: the wrong number is not merely apologised for.
+
+    The chat route forwards chunks to the client verbatim and nothing reconciles
+    them with the final message, so a value that streams once is in the transcript
+    for good — and in the scored answer. It must never stream at all.
+    """
+    configure_settings(tmp_path, monkeypatch)
+    script_model(monkeypatch)
+    stub_acting(monkeypatch, answer="The default is 12345 frames per second.\n")
+    events: list[dict] = []
+    chunks: list[str] = []
+
+    answer = await run_turn(events, onChunk=chunks.append)
+
+    streamed = "".join(chunks)
+    assert "12345" not in streamed
+    assert "12345" not in answer
+    assert "could not verify" in streamed
+    assert streamed == answer, "what was streamed and what is stored must agree"
+
+    verify = next(event for event in events if event["type"] == "alc:verify")
+    assert verify["enabled"] is True
+    assert verify["blocked"] == 1
+    assert "12345" in verify["claims"], "the trajectory still records what was withheld"
+
+
+async def test_a_grounded_answer_is_left_completely_alone(tmp_path, monkeypatch):
+    configure_settings(tmp_path, monkeypatch)
+    script_model(monkeypatch)
+    stub_acting(monkeypatch, answer="Read pygame key events with pygame.event.get().\n")
+    events: list[dict] = []
+    chunks: list[str] = []
+
+    answer = await run_turn(events, onChunk=chunks.append)
+
+    assert answer == "Read pygame key events with pygame.event.get().\n"
+    assert "".join(chunks) == answer
+    verify = next(event for event in events if event["type"] == "alc:verify")
+    assert verify["blocked"] == 0
+
+
+async def test_the_answer_check_can_be_switched_off_for_measurement(tmp_path, monkeypatch):
+    configure_settings(tmp_path, monkeypatch)
+    script_model(monkeypatch)
+    stub_acting(monkeypatch, answer="The default is 12345 frames.\n")
+    events: list[dict] = []
+    chunks: list[str] = []
+
+    answer = await run_turn(events, onChunk=chunks.append, alcAnswerGuard=False)
+
+    assert "12345" in "".join(chunks)
+    assert answer == "".join(chunks)
+    verify = next(event for event in events if event["type"] == "alc:verify")
+    assert verify["enabled"] is False
+    assert verify["blocked"] == 0
+
+
+async def test_the_prompt_lists_the_values_the_answer_may_use(tmp_path, monkeypatch):
+    """Prevention beats correction: most fabrications never happen when the model
+    can see which specifics its evidence actually contains."""
+    configure_settings(tmp_path, monkeypatch)
+    script_model(monkeypatch)
+    captured = stub_acting(monkeypatch)
+
+    await run_turn([])
+
+    system = "\n".join(
+        str(message["content"]) for message in captured["messages"] if message.get("role") == "system"
+    )
+    assert "VALUES YOU MAY USE" in system
+    assert "pygame.event.get" in system
+
+
+async def test_the_prompt_hint_never_promotes_the_question_to_evidence(tmp_path, monkeypatch):
+    """A question naming an undocumented function must not look like a found fact.
+
+    The gate may repeat a value the USER supplied; the prompt may not present it
+    as retrieved evidence, or a model that echoes the question would score as one
+    that retrieved the answer.
+    """
+    configure_settings(tmp_path, monkeypatch, docs=False)
+    script_model(monkeypatch)
+    captured = stub_acting(monkeypatch)
+
+    await run_turn(
+        [],
+        messages=[
+            {
+                "role": "user",
+                "content": "What is the default of brimwall_set_ceiling_quota()?",
+            }
+        ],
+    )
+
+    system = "\n".join(
+        str(message["content"]) for message in captured["messages"] if message.get("role") == "system"
+    )
+    assert "NOTHING TO CITE" in system
+    assert "brimwall_set_ceiling_quota" not in system
+
+
+async def test_nothing_retrieved_still_gets_a_honesty_instruction(tmp_path, monkeypatch):
+    """No findings at all is exactly the turn where a small model invents a value."""
+    configure_settings(tmp_path, monkeypatch, docs=False)
+    script_model(monkeypatch)
+    captured = stub_acting(monkeypatch, answer="The pace limiter defaults to 1000.\n")
+    events: list[dict] = []
+    chunks: list[str] = []
+
+    answer = await run_turn(events, onChunk=chunks.append)
+
+    system = "\n".join(
+        str(message["content"]) for message in captured["messages"] if message.get("role") == "system"
+    )
+    assert "NOTHING TO CITE" in system
+    assert "1000" not in answer
+    assert "not going to guess" in answer
+    assert "".join(chunks) == answer
+
+
+# ─── Conflicts resolved in software (D12) ───────────────────────────────
+async def test_two_documents_that_disagree_are_settled_before_answering(tmp_path, monkeypatch):
+    import os
+    import time
+    from pathlib import Path
+
+    docs_root = configure_settings(tmp_path, monkeypatch)
+    older = Path(docs_root) / "pace-old.md"
+    newer = Path(docs_root) / "pace-new.md"
+    older.write_text(
+        "## Pace\n\nVINTRA_PACE defaults to 12 in the older reference.\n", encoding="utf-8"
+    )
+    newer.write_text(
+        "## Pace\n\nVINTRA_PACE defaults to 16 in the current reference.\n", encoding="utf-8"
+    )
+    # The conflict is settled by which file is newer, so make that explicit.
+    a_year_ago = time.time() - 365 * 24 * 3600
+    os.utime(older, (a_year_ago, a_year_ago))
+
+    script_model(
+        monkeypatch,
+        action_for=lambda index: (
+            '{"action": "tool", "tool": "docs_search", '
+            '"args": {"query": "vintra pace"}, "reason": "both files mention it"}'
+            if index == 0
+            else '{"action": "act", "reason": "enough"}'
+        ),
+        judge='{"keep": [{"i": 1, "why": "the old value"}, {"i": 2, "why": "the current value"}], "drop": []}',
+    )
+    captured = stub_acting(monkeypatch, answer="VINTRA_PACE defaults to 16 frames.\n")
+    events: list[dict] = []
+
+    await run_turn(events)
+
+    conflict = next(event for event in events if event["type"] == "alc:conflict")
+    assert conflict["count"] == 1
+    assert "vintrapace" in [name.lower() for name in conflict["names"]]
+
+    system = "\n".join(
+        str(message["content"]) for message in captured["messages"] if message.get("role") == "system"
+    )
+    assert "SOURCES DISAGREE" in system
+    block = system.split("SOURCES DISAGREE", 1)[1]
+    assert "16" in block.split("INSTRUCTIONS", 1)[0], "the newer value is named as current"
+
+
+# ─── Coverage-based stopping (D14) ─────────────────────────────────────
+async def test_gathering_stops_once_every_question_is_covered(tmp_path, monkeypatch):
+    configure_settings(tmp_path, monkeypatch)
+    queries = ["pygame key events", "install requests"]
+    script_model(
+        monkeypatch,
+        action_for=lambda index: (
+            '{"action": "tool", "tool": "docs_search", "args": {"query": "%s"}, "reason": "more"}'
+            % queries[index]
+            if index < len(queries)
+            else '{"action": "act", "reason": "enough"}'
+        ),
+    )
+    stub_acting(monkeypatch)
+    events: list[dict] = []
+
+    await run_turn(events)
+
+    decisions = [event for event in events if event["type"] == "alc:decision"]
+    assert decisions[-1]["forced"] is True
+    assert "covered" in decisions[-1]["reason"]
+    assert next(event for event in events if event["type"] == "alc:done")["toolCalls"] == 2
+
+
+# ─── Widening a hit to its neighbour (D12) ─────────────────────────────
+def test_a_kept_hit_is_widened_to_the_neighbouring_section(tmp_path, monkeypatch):
+    """The multi-hop win: name in one section, value in the next."""
+    from pathlib import Path
+
+    from app.alc import docs as alc_docs
+    from app.alc import tools as alc_tools
+
+    root = tmp_path / "wide"
+    root.mkdir()
+    target = root / "pace.md"
+    target.write_text(
+        "# Vintra\n\n"
+        "## Pace limiter\n\n"
+        "Vintra paces the clock with the VINTRA_PACE limiter, configured in vintra.toml.\n\n"
+        "## Limiter defaults\n\n"
+        "The VINTRA_PACE limiter defaults to 16, and the ceiling is 4000.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    alc_docs.build_index([str(root)])
+    hits = alc_docs.search("vintra pace limiter", roots=[str(root)], k=2)
+    first = next(hit for hit in hits if "defaults to 16" not in hit["text"])
+    candidate = {
+        "path": first["path"],
+        "chunk": first["chunk"],
+        "text": first["text"],
+        "heading": first["heading"],
+    }
+
+    widened = alc_tools.expand_doc_text(candidate, query="vintra pace limiter")
+
+    assert widened, "the neighbouring section should have been fetched"
+    assert "adjacent section" in widened
+    assert "defaults to 16" in widened, "the value was one chunk away"
+
+
+def test_an_unrelated_neighbour_is_not_glued_on(tmp_path, monkeypatch):
+    from app.alc import docs as alc_docs
+    from app.alc import tools as alc_tools
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(
+        alc_docs, "neighbours", lambda *_a, **_k: [{"path": "x.md", "chunk": 1, "heading": "", "text": "unrelated cooking notes"}]
+    )
+    candidate = {"path": "x.md", "chunk": 0, "text": "VINTRA_PACE limiter", "heading": "Vintra"}
+    assert alc_tools.expand_doc_text(candidate, query="vintra pace limiter") == ""
+    assert alc_tools.expand_doc_text({"chunk": None}, query="x") == ""
+
+
 async def test_rejected_candidates_are_reported_not_kept(tmp_path, monkeypatch):
     configure_settings(tmp_path, monkeypatch)
     script_model(
@@ -470,11 +712,21 @@ def test_docs_tools_are_not_offered_without_configured_folders():
     assert {tool["name"] for tool in available_tools(ctx)} == {"web_search", "read_url"}
 
 
-def test_project_knowledge_tools_need_koding_and_a_workspace():
+def test_project_knowledge_tools_need_a_workspace_not_a_mode():
+    """Project knowledge is gated on having a project directory, not on Koding.
+
+    It used to be Koding-only ("chat has no project directory"). A chat
+    conversation with a workspace attached DOES have one, and excluding it meant
+    chat could gather and then keep nothing — so a later turn re-searched the same
+    facts forever (docs/ALC_DESIGN.md D8, amended in Phase 4).
+    """
     names = lambda ctx: {tool["name"] for tool in available_tools(ctx)}  # noqa: E731
     chat = ALCToolContext(roots=[], web_enabled=False, mode="chat", workspace="C:/proj")
-    assert "knowledge_search" not in names(chat), "chat has no project directory"
+    assert names(chat) == {"knowledge_search", "knowledge_write"}
 
+    # No directory: nothing to remember into, in either engine.
+    no_workspace_chat = ALCToolContext(roots=[], web_enabled=False, mode="chat")
+    assert "knowledge_search" not in names(no_workspace_chat)
     no_workspace = ALCToolContext(roots=[], web_enabled=False, mode="agent")
     assert "knowledge_search" not in names(no_workspace)
 

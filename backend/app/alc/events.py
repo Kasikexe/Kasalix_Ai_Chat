@@ -14,11 +14,14 @@ Event vocabulary (see docs/ALC_DESIGN.md §4.8):
     alc:search             a source is being queried       {tool, query, args}
     alc:result             what the tool returned          {tool, ok, chars, count}
     alc:finding            kept information                {source, text, query}
+    alc:conflict           two sources disagree            {count, names}
     alc:reject             dropped information             {source, reason}
     alc:gap                an unresolved gap               {gap}
+    alc:verify             the answer was checked          {blocked, claims, released}
     alc:budget             budget accounting               {cycle, cycles, toolCalls, tokens}
     alc:index              documentation index progress    {phase, files, chunks}
-    alc:knowledge-written  reserved (Phase 2)              {topic, file}
+    alc:knowledge-written  an excerpt note was appended      {topic, file, source}
+    alc:study              what was learned, in one note    {topic, mode, bullets, dropped, conflicts}
     alc:done               the cycle finished              {cycles, toolCalls, findings, gaps}
     alc:notice             ALC could not run / had nothing {kind, message}
 """
@@ -37,11 +40,14 @@ ALC_EVENT_TYPES = (
     "alc:search",
     "alc:result",
     "alc:finding",
+    "alc:conflict",
     "alc:reject",
     "alc:gap",
+    "alc:verify",
     "alc:budget",
     "alc:index",
     "alc:knowledge-written",
+    "alc:study",
     "alc:done",
     "alc:notice",
 )

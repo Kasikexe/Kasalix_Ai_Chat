@@ -47,6 +47,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "alcMaxTokens": 4000,
     "alcWebEnabled": True,
     "alcWriteKnowledge": True,
+    "alcStudyMaxTopics": 2,
     "updatedAt": 0,
 }
 
@@ -147,6 +148,8 @@ ALC_MAX_CYCLES_LIMIT = 6
 ALC_MAX_TOOL_CALLS_LIMIT = 20
 ALC_MAX_TOKENS_LIMIT = 6000
 ALC_MAX_DOC_PATHS = 20
+# One study per topic is one internal model call, so this is a spend limit.
+ALC_MAX_STUDY_TOPICS = 5
 
 
 def coerce_limit(value: Any, default: int, low: int, high: int) -> int:
@@ -184,4 +187,5 @@ async def get_alc_settings() -> dict[str, Any]:
         "alcMaxTokens": coerce_limit(parsed.get("alcMaxTokens"), 4000, 500, ALC_MAX_TOKENS_LIMIT),
         "alcWebEnabled": parsed.get("alcWebEnabled") is not False,
         "alcWriteKnowledge": parsed.get("alcWriteKnowledge") is not False,
+        "alcStudyMaxTopics": coerce_limit(parsed.get("alcStudyMaxTopics"), 2, 0, ALC_MAX_STUDY_TOPICS),
     }
