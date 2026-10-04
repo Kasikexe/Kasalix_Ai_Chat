@@ -66,12 +66,6 @@ async def update_settings(request: Request) -> dict:
             "ollamaNumParallel",
             "ollamaMaxLoadedModels",
             "ollamaKeepAlive",
-            "alcDocsPaths",
-            "alcMaxCycles",
-            "alcMaxToolCalls",
-            "alcMaxTokens",
-            "alcWebEnabled",
-            "alcWriteKnowledge",
         ):
             if key in body:
                 next_settings[key] = body[key]

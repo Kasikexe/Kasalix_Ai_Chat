@@ -454,7 +454,6 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  conversationId={activeConv?.id}
  model={model}
  thinkingEnabled={thinkingEnabled}
- initialAlc={activeConv?.alc === true}
  onMessageSent={() => { refresh(); refreshMemory(); }}
  onConversationCreated={handleConversationCreated}
  onConversationStarted={handleConversationStarted}
@@ -518,7 +517,6 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  onRemoveMemoryCategory={removeMemoryCategory}
  onResetMemory={resetMemory}
  onRefreshMemory={refreshMemory}
- alcWorkspacePath={activeConv?.workspacePath}
  />
 
  {/* Update notification banner — shows in Electron when new version is available */}
