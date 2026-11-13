@@ -944,7 +944,45 @@ async def describe_image(target: str) -> str:
 
 
 # ─── Git helpers ────────────────────────────────────────────────────────
-MUTATING_TOOLS = {"edit_file", "edit_lines", "edit_section", "write_file", "delete_file", "gen_image"}
+MUTATING_TOOLS = {tool["name"] for tool in AGENT_TOOL_DEFS if tool["mutating"]}
+# These tools run workspace or page code and therefore cannot be treated as
+# read-only merely because the tool itself does not explicitly write a file.
+EXECUTION_TOOLS = {"run_command", "run_python", "play_game", "preview_eval"}
+
+
+async def authorize_tool_calls(
+    calls: list[dict[str, Any]], opts: dict[str, Any], signal: asyncio.Event | None,
+    session_log: SessionLog,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return only calls that may actually execute and feedback for the model."""
+    import random
+
+    mode = opts.get("toolPermission") or "auto"
+    approved_calls: list[dict[str, Any]] = []
+    feedback: list[str] = []
+    for call in calls:
+        name = call["tool"]
+        unsafe = name in MUTATING_TOOLS or name in EXECUTION_TOOLS
+        # A delegated agent executes its own calls directly. Do not let one
+        # approval grant it unrestricted access in a restricted mode.
+        blocked = (mode == "read-only" and unsafe) or (mode != "auto" and name == "delegate_to_subagent")
+        if blocked:
+            reason = "Blocked by the selected permission mode"
+        else:
+            needs_approval = mode in ("ask-each", "suggest") or (mode == "auto-edit" and name in EXECUTION_TOOLS)
+            if needs_approval:
+                key = f"approval-{int(time.time() * 1000)}-{''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=6))}"
+                _cb(opts, "onApprovalRequest", key, name, call["args"])
+                _cb(opts, "onStage", "agent:waiting")
+                reason = "Denied by user" if not await wait_for_approval(key, signal) else ""
+            else:
+                reason = ""
+        if reason:
+            feedback.append(f"[TOOL BLOCKED — {name}] {reason}. Do not assume this call ran.")
+            await session_log.log_tool_result(name, reason, False)
+        else:
+            approved_calls.append(call)
+    return approved_calls, feedback
 
 # Tools that REUSE an existing no-op call. The identical-call guard counts
 # ALL repeats of the same call — but "already has exactly this content" is a
@@ -3523,18 +3561,6 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
         )
         return "".join(out)
 
-    # ── Auto-create rules & memory files if missing ────────────────────
-    rules_path = os.path.join(root, ".agent-rules.md")
-    memory_path = os.path.join(root, ".agent-memory.md")
-    if not os.path.exists(rules_path):
-        with open(rules_path, "w", encoding="utf-8") as f:
-            f.write("# Project Rules\n\nAdd project-specific instructions below. Global AI rules are in AI_RULES.md.\n")
-        log_info(f"[agent] Auto-created .agent-rules.md in {root}")
-    if not os.path.exists(memory_path):
-        with open(memory_path, "w", encoding="utf-8") as f:
-            f.write("# Agent Memory\n\n_Durable notes from previous sessions. The AI appends lessons here (build commands, framework conventions, gotchas).\n")
-        log_info(f"[agent] Auto-created .agent-memory.md in {root}")
-
     # ── Session log ────────────────────────────────────────────────────
     session_log = SessionLog()
     await session_log.init()
@@ -3548,10 +3574,13 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
         referenced_files = await collect_referenced_files(last_user_msg, root)
     except Exception:  # noqa: BLE001
         referenced_files = ""
-    verify = await detect_verify_command(root)
+    # Automatic checks execute project code; restricted modes require an
+    # explicit, approved tool call instead of running them behind the gate.
+    unrestricted = (opts.get("toolPermission") or "auto") == "auto"
+    verify = await detect_verify_command(root) if unrestricted else None
     # A playable pygame game in the workspace — replayed automatically after
     # every Python edit so behaviour claims are backed by an actual play test.
-    game_target = await detect_game_target(root) if auto_apply else None
+    game_target = await detect_game_target(root) if auto_apply and unrestricted else None
     # Automatic game replay state: how many times the game has been played this
     # run, the most recent verdict, and the bounded completion guard.
     game_verify_count = 0
@@ -3934,7 +3963,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 continue
 
             applied_note = ""
-            if not tool_calls and auto_apply:
+            if not tool_calls and auto_apply and unrestricted:
                 applied_note = await apply_code_block_files(root, raw, callbacks.get("onFileWritten"))
                 if not applied_note and "```" in raw:
                     block_count = len(re.findall(r"```", raw)) // 2
@@ -4328,35 +4357,12 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 history.append({"role": "user", "content": f"[USER ANSWER to your question]\n{answer}"})
                 continue
 
-            def is_shell_tool(t: str) -> bool:
-                # Tools that execute arbitrary code/commands need the same
-                # approval gate in auto-edit mode.
-                return t in ("run_command", "run_python", "play_game")
-
-            for tc in calls_to_run:
-                if tc["tool"] not in MUTATING_TOOLS:
-                    continue
-                if opts.get("toolPermission") == "read-only":
-                    history.append({"role": "assistant", "content": raw})
-                    history.append({"role": "user", "content": f"[TOOL BLOCKED — {tc['tool']}] The workspace is in read-only mode. You cannot write/delete/edit files. Describe the changes in your response instead."})
-                    await session_log.log_tool_result(tc["tool"], "Blocked (read-only mode)", False)
-                    continue
-                needs_approval = (
-                    opts.get("toolPermission") in ("ask-each", "suggest")
-                    or (opts.get("toolPermission") == "auto-edit" and is_shell_tool(tc["tool"]))
-                )
-                if needs_approval:
-                    import random
-
-                    approval_key = f"approval-{int(time.time() * 1000)}-{''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=6))}"
-                    _cb(opts, "onApprovalRequest", approval_key, tc["tool"], tc["args"])
-                    _cb(opts, "onStage", "agent:waiting")
-                    approved = await wait_for_approval(approval_key, signal)
-                    if not approved:
-                        history.append({"role": "assistant", "content": raw})
-                        history.append({"role": "user", "content": f"[TOOL DENIED — {tc['tool']}] The user denied this tool call. Explain what you were trying to do and suggest an alternative approach."})
-                        await session_log.log_tool_result(tc["tool"], "Denied by user", False)
-                        continue
+            calls_to_run, permission_feedback = await authorize_tool_calls(calls_to_run, opts, signal, session_log)
+            if permission_feedback:
+                history.append({"role": "assistant", "content": raw})
+                history.append({"role": "user", "content": "\n".join(permission_feedback)})
+            if not calls_to_run:
+                continue
 
             _cb(opts, "onStage", "agent:tool")
             history.append({"role": "assistant", "content": raw})
