@@ -366,7 +366,7 @@ async def stream_chat_with_retry(
                     opts["roundMeta"]["structuredFinal"] = True
             if mode == "structured":
                 stream_options.output_format = structured_action_schema({tool["function"]["name"] for tool in schemas})
-                structured_messages = [*messages, {"role": "system", "content": build_structured_system_prompt(opts.get("workspacePath") or "workspace", opts.get("userName") or "a user", schemas)}]
+                structured_messages = [{"role": "system", "content": build_structured_system_prompt(opts.get("workspacePath") or "workspace", opts.get("userName") or "a user", schemas)}, *messages]
                 try:
                     await stream_chat(opts["model"], structured_messages, content_tap, stream_options)
                 except OllamaError as exc:
@@ -3931,7 +3931,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     if protocol_state["mode"] == "native":
         base_prompt = build_native_system_prompt(root, user_name or "a user")
     elif protocol_state["mode"] == "structured":
-        base_prompt = build_structured_system_prompt(root, user_name or "a user", schemas)
+        base_prompt = build_native_system_prompt(root, user_name or "a user")
     else:
         base_prompt = build_system_prompt(root, user_name or "a user", auto_apply)
     system = await with_ai_rules(base_prompt, "agent")

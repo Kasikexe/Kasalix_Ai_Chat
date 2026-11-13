@@ -117,8 +117,17 @@ def normalize_native_calls(calls: list[dict[str, Any]], permitted: set[str]) -> 
 
 def structured_action_schema(permitted: set[str]) -> dict[str, Any]:
     """A constrained envelope; tool-specific arguments are checked separately."""
+    properties: dict[str, Any] = {}
+    for name in permitted:
+        if name not in TOOL_ARGUMENTS:
+            continue
+        required, optional = TOOL_ARGUMENTS[name]
+        for key, schema in {**required, **optional}.items():
+            if key in properties and properties[key] != schema:
+                raise ValueError(f"Conflicting schemas for argument: {key}")
+            properties[key] = schema
     return {"oneOf": [
-        {"type": "object", "properties": {"action": {"const": "tool"}, "tool": {"type": "string", "enum": sorted(permitted)}, "args": {"type": "object"}}, "required": ["action", "tool", "args"], "additionalProperties": False},
+        {"type": "object", "properties": {"action": {"const": "tool"}, "tool": {"type": "string", "enum": sorted(permitted)}, "args": {"type": "object", "properties": properties, "additionalProperties": False}}, "required": ["action", "tool", "args"], "additionalProperties": False},
         {"type": "object", "properties": {"action": {"const": "final"}, "message": {"type": "string"}}, "required": ["action", "message"], "additionalProperties": False},
         {"type": "object", "properties": {"action": {"const": "question"}, "question": {"type": "string"}}, "required": ["action", "question"], "additionalProperties": False},
     ]}

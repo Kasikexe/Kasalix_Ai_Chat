@@ -13,6 +13,7 @@ def test_structured_actions_are_validated():
     assert normalize_structured_action('{"action":"question","question":"Which file?"}', permitted)["call"]["tool"] == "ask_user"
     assert normalize_structured_action('{"action":"final","message":"Hello"}', permitted)["message"] == "Hello"
     assert len(structured_action_schema(permitted)["oneOf"]) == 3
+    assert "path" in structured_action_schema(permitted)["oneOf"][0]["properties"]["args"]["properties"]
     for invalid in ('{"action":"tool","tool":"read_file","args":{}}', '{"action":"tool","tool":"write_file","args":{}}', '{"action":"final","message":""}', 'not json'):
         with pytest.raises(ValueError):
             normalize_structured_action(invalid, permitted)
