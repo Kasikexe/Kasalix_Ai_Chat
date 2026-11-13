@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
-from ..utils import apply_search_replace, changed_line_count, is_path_inside, is_protected_dir_name, is_protected_path
+from ..utils import apply_search_replace, changed_line_count, is_path_inside, is_protected_path
 
 router = APIRouter()
 
@@ -88,7 +88,7 @@ async def list_dir(request: Request) -> dict:
         entries = os.listdir(resolved)
         result = []
         for name in entries:
-            if name.startswith(".") or name in IGNORE_DIRS or is_protected_dir_name(name):
+            if name.startswith(".") or name in IGNORE_DIRS or is_protected_path(resolved, os.path.join(resolved, name)):
                 continue
             full = os.path.join(resolved, name)
             size = None

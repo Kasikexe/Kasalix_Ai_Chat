@@ -633,6 +633,8 @@ async def list_workspace_tree(root: str) -> str:
             if name.startswith(".") or name in IGNORE_DIRS:
                 continue
             full = os.path.join(dir, name)
+            if is_protected_path(root, full):
+                continue
             rel = os.path.relpath(full, root).replace(os.sep, "/")
             if os.path.isdir(full):
                 lines.append("  " * depth + rel + "/")
@@ -756,7 +758,7 @@ async def build_workspace_profile(
     lines.append(
         f"- Agent memory: {agent_memory if agent_memory else 'none yet — use update_memory to save durable project knowledge'}"
     )
-    lines.append(f"- PROTECTED directories (NEVER read, list, search, edit, commit, or run commands referencing them — they are server internals): {protected_dirs_label()}")
+    lines.append(f"- PROTECTED directories (never access): {protected_dirs_label(root)}")
     lines.append("- RULE: Match the project language above for ALL new or edited files. Do NOT create files in a different language than the project unless the user explicitly asks for that language.")
     if project_config:
         lines.append("\n" + project_config)
@@ -993,9 +995,10 @@ async def authorize_tool_calls(
 NOOP_OK_TOOLS = {"write_file", "edit_lines", "edit_section"}
 
 
-def git_exclude_args() -> list[str]:
+def git_exclude_args(root: str) -> list[str]:
     args = ["--", "."]
-    for d in PROTECTED_DIRS:
+    protected = set(PROTECTED_DIRS) | set(protected_dirs_label(root).split(", "))
+    for d in protected:
         args.append(f":(exclude){d}")
     return args
 
@@ -1291,14 +1294,14 @@ async def execute_tool(
 
     if tool == "git_status":
         try:
-            out = await run_git(root, ["status", "--short", "--branch", *git_exclude_args()])
+            out = await run_git(root, ["status", "--short", "--branch", *git_exclude_args(root)])
             return {"ok": True, "output": out or "(clean working tree — nothing changed)"}
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"git status failed (is this a git repository?): {e}")
 
     if tool == "git_diff":
         try:
-            exclude = git_exclude_args()
+            exclude = git_exclude_args(root)
             staged = await run_git(root, ["diff", "--cached", "--stat", *exclude])
             unstaged = await run_git(root, ["diff", "--stat", *exclude])
             hunks = ""
@@ -1419,7 +1422,10 @@ async def execute_tool(
         )
         tokens = cmd.split()
         touches_protected = any(
-            _token_touches_protected(tok)
+            _token_touches_protected(tok) or (
+                os.path.exists(os.path.join(root, tok.strip('"\'')))
+                and is_protected_path(root, os.path.join(root, tok.strip('"\'')))
+            )
             for tok in tokens
         )
         touches_rules = any(
@@ -1427,7 +1433,7 @@ async def execute_tool(
             for tok in tokens
         )
         if dangerous.search(cmd) or escapes_workspace or touches_protected or touches_rules:
-            return await deny_out(f"Command blocked for security (must stay inside the workspace and must not touch protected directories or the USER RULES file: {protected_dirs_label()}).")
+            return await deny_out(f"Command blocked for security (must stay inside the workspace and must not touch protected directories or the USER RULES file: {protected_dirs_label(root)}).")
 
         is_background = args.get("background") is True
         if is_background:

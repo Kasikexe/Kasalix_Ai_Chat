@@ -20,10 +20,15 @@ from typing import Any
 PROTECTED_DIRS = [
     s.strip()
     for s in (
-        os.environ.get("AGENT_PROTECTED_DIRS") or "backend,.freebuff,certs,server-gui,release,node_modules"
+        os.environ.get("AGENT_PROTECTED_DIRS") or ".git,node_modules"
     ).split(",")
     if s.strip()
 ]
+
+# Protect this installation by absolute location, without hiding unrelated
+# projects merely because they also have a directory named "backend".
+_INSTALL_ROOT = Path(__file__).resolve().parent.parent.parent
+_INSTALL_PATHS = tuple(_INSTALL_ROOT / name for name in ("backend", ".freebuff", "certs", "server-gui", "release"))
 
 
 def _norm_path(p: str) -> str:
@@ -35,6 +40,11 @@ def is_protected_path(ws_root: str, candidate: str) -> bool:
     target = _norm_path(candidate)
     if target == root:
         return False
+    real_target = _norm_path(os.path.realpath(candidate))
+    for install_path in _INSTALL_PATHS:
+        protected = _norm_path(os.path.realpath(install_path))
+        if real_target == protected or real_target.startswith(protected + "/"):
+            return True
     for d in PROTECTED_DIRS:
         protected = f"{root}/{d.lower()}"
         if target == protected or target.startswith(protected + "/"):
@@ -42,8 +52,17 @@ def is_protected_path(ws_root: str, candidate: str) -> bool:
     return False
 
 
-def protected_dirs_label() -> str:
-    return ", ".join(d for d in PROTECTED_DIRS if d != "node_modules")
+def protected_dirs_label(ws_root: str | None = None) -> str:
+    names = [d for d in PROTECTED_DIRS if d != "node_modules"]
+    if ws_root:
+        for p in _INSTALL_PATHS:
+            try:
+                rel = os.path.relpath(p, ws_root)
+                if rel != "." and rel != ".." and not rel.startswith(".." + os.sep):
+                    names.append(rel)
+            except ValueError:  # different Windows drives
+                continue
+    return ", ".join(names) or "none"
 
 
 def is_protected_dir_name(name: str) -> bool:
