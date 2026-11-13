@@ -150,6 +150,8 @@ def convert_messages_for_ollama(messages: list[Message | ToolLoopMessage]) -> li
         tool_calls = msg.get("tool_calls") if "tool_calls" in msg else None
         if tool_calls:
             entry["tool_calls"] = tool_calls
+        if role == "tool" and msg.get("tool_name"):
+            entry["tool_name"] = msg["tool_name"]
         out.append(entry)
     return out
 
@@ -529,7 +531,7 @@ async def stream_chat_with_tools(
         log_info(f"[ollama] Tool round done. content: {len(content)} chars, tool_calls: {len(tool_calls)}, {metrics['eval_count']} tok @ {tps:.1f} tok/s")
     else:
         log_info(f"[ollama] Tool round done. content: {len(content)} chars, tool_calls: {len(tool_calls)}")
-    return {"content": content, "toolCalls": tool_calls, "metrics": metrics, "tokensPerSecond": round(tps, 1)}
+    return {"content": content, "toolCalls": tool_calls, "toolsEnabled": bool(body.get("tools")), "metrics": metrics, "tokensPerSecond": round(tps, 1)}
 
 
 async def chat(

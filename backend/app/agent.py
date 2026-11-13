@@ -24,11 +24,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .ai_rules import with_ai_rules
+from .agent_protocol import native_tool_schemas, normalize_native_calls
 from .game_harness import HARNESS_SOURCE
 from .imagegen import get_generated_images_dir, sanitize_svg, save_artwork
 from .logger import error as log_error, info as log_info, warn as log_warn
 from .model_assignments import get_resolved_model
-from .ollama_client import StreamOptions, stream_chat
+from .ollama_client import StreamOptions, stream_chat, stream_chat_with_tools
 from .search import search_web
 from .services.project_rules import (
     append_agent_memory,
@@ -277,11 +278,7 @@ async def stream_chat_with_retry(
                     pass
 
         try:
-            await stream_chat(
-                opts["model"],
-                messages,
-                buffered.append,
-                StreamOptions(
+            stream_options = StreamOptions(
                     signal=signal,
                     temperature=opts.get("temperature"),
                     top_p=opts.get("top_p"),
@@ -294,8 +291,22 @@ async def stream_chat_with_retry(
                     # its tok/s badge, so the FINAL iteration's stats are the
                     # ones left visible on the message.
                     on_metrics=(opts.get("callbacks") or {}).get("onMetrics"),
-                ),
-            )
+                )
+            schemas = opts.get("toolSchemas")
+            if schemas:
+                result = await stream_chat_with_tools(opts["model"], to_native_tool_history(messages), schemas, buffered.append, stream_options)
+                calls = result.get("toolCalls") or []
+                if calls:
+                    try:
+                        normalized = normalize_native_calls(calls, {tool["function"]["name"] for tool in schemas})
+                    except ValueError as exc:
+                        buffered = [f"[INVALID NATIVE TOOL CALL] {exc}"]
+                    else:
+                        # Only execute the validated native calls. Model prose
+                        # can itself contain JSON-looking examples.
+                        buffered = ["\n".join(json.dumps(c, ensure_ascii=False) for c in normalized)]
+            else:
+                await stream_chat(opts["model"], messages, buffered.append, stream_options)
             out = "".join(buffered)
             for c in buffered:
                 on_chunk(c)
@@ -3541,6 +3552,58 @@ def extract_tool_calls(raw: str) -> list[dict[str, Any]]:
     return parse_xml_tool_calls(raw)
 
 
+def to_native_tool_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert complete recorded call/result pairs to Ollama's tool roles.
+
+    Incomplete, denied, or compacted history remains text so a result is never
+    invented and an unmatched native call is never sent to the model.
+    """
+    out: list[dict[str, Any]] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        if message.get("role") != "assistant":
+            out.append(message)
+            index += 1
+            continue
+        calls = extract_tool_calls(str(message.get("content") or ""))
+        if not calls or index + 1 >= len(messages):
+            out.append(message)
+            index += 1
+            continue
+        results: list[tuple[str, str]] = []
+        cursor = index + 1
+        while cursor < len(messages) and messages[cursor].get("role") == "user" and len(results) < len(calls):
+            content = str(messages[cursor].get("content") or "")
+            matches = list(re.finditer(r"\[TOOL RESULT — (\w+)\]", content))
+            if not matches or matches[0].start() != 0:
+                break
+            for i, match in enumerate(matches):
+                end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+                results.append((match.group(1), content[match.end():end].strip()))
+            cursor += 1
+        if len(results) != len(calls) or [name for name, _ in results] != [call["tool"] for call in calls]:
+            out.append(message)
+            index += 1
+            continue
+        native = [{"type": "function", "function": {"name": call["tool"], "arguments": call["args"]}} for call in calls]
+        out.append({"role": "assistant", "content": "", "tool_calls": native})
+        out.extend({"role": "tool", "tool_name": name, "content": content} for name, content in results)
+        index = cursor
+    return out
+
+
+def build_native_system_prompt(workspace_path: str, user_name: str) -> str:
+    return (
+        f"You are Koding, a coding agent helping {user_name} in {workspace_path}. "
+        "Use the supplied tools to inspect files and make requested changes. "
+        "A statement that you will act is not a tool call. Call tools when needed, "
+        "inspect their results, and verify changes before reporting success. "
+        "Use targeted edits, respect the user's rules and permissions, and never invent tool results. "
+        "When no tool is needed, answer normally or ask a necessary question."
+    )
+
+
 # ─── The agent loop ─────────────────────────────────────────────────────
 def available_tools(auto_apply: bool) -> list[dict[str, Any]]:
     return [t for t in AGENT_TOOL_DEFS if auto_apply or not t["mutating"]]
@@ -3743,17 +3806,23 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     # images instead of being described by the separate vision model. Computed
     # early so the baseline game check can use it too.
     use_vision_model = False
+    native_tools = False
     try:
         from .capabilities import get_model_capabilities
 
-        use_vision_model = bool((await get_model_capabilities(model)).get("vision"))
+        capabilities = await get_model_capabilities(model)
+        use_vision_model = bool(capabilities.get("vision"))
+        native_tools = bool(capabilities.get("tools"))
     except Exception:  # noqa: BLE001
         use_vision_model = False
     project_rules = await read_project_rules(root)
     agent_memory = await read_agent_memory(root)
     project_config = await read_project_config(root)
     workspace_profile = await build_workspace_profile(root, (verify or {}).get("command"), project_rules, agent_memory, project_config)
-    system = await with_ai_rules(build_system_prompt(root, user_name or "a user", auto_apply), "agent")
+    native_tools = native_tools or bool(opts.get("cloudEndpoint"))
+    schemas = native_tool_schemas(available_tools(auto_apply)) if native_tools else []
+    base_prompt = build_native_system_prompt(root, user_name or "a user") if schemas else build_system_prompt(root, user_name or "a user", auto_apply)
+    system = await with_ai_rules(base_prompt, "agent")
 
     # ── Resume state (from opts or latest session log) ────────────────
     resume_state = opts.get("resumeState") or {}
@@ -3975,8 +4044,14 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
 
             chunks: list[str] = []
             thinking_chunks: list[str] = []
-            await stream_chat_with_retry(opts, bounded, chunks.append, thinking_chunks.append)
+            await stream_chat_with_retry({**opts, "toolSchemas": schemas}, bounded, chunks.append, thinking_chunks.append)
             raw = "".join(chunks)
+
+            if raw.startswith("[INVALID NATIVE TOOL CALL]") and malformed_tool_calls < 4:
+                malformed_tool_calls += 1
+                history.append({"role": "assistant", "content": raw})
+                history.append({"role": "user", "content": "The tool call was invalid and did not run. Use an available tool with the required arguments, or answer the user."})
+                continue
 
             tool_calls = extract_tool_calls(raw)
             tool_call = tool_calls[0] if len(tool_calls) == 1 else None
