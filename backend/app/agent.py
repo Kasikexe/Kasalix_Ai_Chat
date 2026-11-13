@@ -1479,7 +1479,10 @@ async def execute_tool(
             out = (stdout or b"").decode("utf-8", "replace") + (f"\n[stderr]\n{(stderr or b'').decode('utf-8', 'replace')}" if stderr else "")
             out = out.strip()
             capped = out[-MAX_OUTPUT_CHARS:] + "\n...[output truncated]" if len(out) > MAX_OUTPUT_CHARS else out
-            return {"ok": True, "output": capped or "(command finished with no output)"}
+            exit_code = proc.returncode
+            if exit_code != 0:
+                return {"ok": False, "exitCode": exit_code, "output": f"Command exited with code {exit_code}:\n{capped or '(no output)'}"}
+            return {"ok": True, "exitCode": exit_code, "output": capped or "(command finished with no output)"}
         except Exception as e:  # noqa: BLE001
             msg = str(e)
             capped = msg[-MAX_OUTPUT_CHARS:] + "\n...[output truncated]" if len(msg) > MAX_OUTPUT_CHARS else msg
@@ -4874,8 +4877,12 @@ async def _run_verify(command: str, root: str, cap: int) -> str:
             proc.kill()
             return "FAILED (exit code ?):\nCommand timed out after 60 seconds"
         out = (stdout or b"").decode("utf-8", "replace") + (f"\n[stderr]\n{(stderr or b'').decode('utf-8', 'replace')}" if stderr else "")
-        out = out.strip() or "(verify passed with no output)"
-        return out[-cap:] + "\n...[output truncated]" if len(out) > cap else out
+        out = out.strip()
+        if len(out) > cap:
+            out = out[-cap:] + "\n...[output truncated]"
+        if proc.returncode != 0:
+            return f"FAILED (exit code {proc.returncode}):\n{out or '(no output)'}"
+        return out or "(verify passed with no output)"
     except Exception as e:  # noqa: BLE001
         msg = str(e)
         return f"FAILED (exit code ?):\n{msg[:cap]}"
