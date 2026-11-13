@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ..agent import get_background_processes, resolve_pending_approval, resolve_pending_question
+from ..agent import get_background_processes, resolve_pending_approval, resolve_pending_question, resolve_browser_action
 from ..attachments import persist_data_urls, strip_image_markers
 from ..deps import user_id_from_request
 from ..extractor import extract_memory_from_turn
@@ -326,6 +326,7 @@ async def chat_route(request: Request) -> Any:
                             "onAgentCommand": lambda cmd: emit({"type": "agent_command", "command": cmd.get("command"), "output": cmd.get("output"), "failed": cmd.get("failed")}),
                             "onQuestion": lambda key, q: emit({"type": "agent_question", "key": key, "question": q}),
                             "onApprovalRequest": lambda key, tool, args: emit({"type": "agent_approval_request", "key": key, "tool": tool, "args": args}),
+                            "onBrowserAction": lambda action: emit({"type": "agent_browser_action", **action}),
                             "onPlan": lambda plan: emit({"type": "plan", "plan": plan}),
                             "planMode": plan_mode,
                             "onResumeState": on_resume_state,
@@ -451,6 +452,20 @@ async def stop(request: Request) -> dict:
     except Exception as e:  # noqa: BLE001
         log_error("[chat] Stop route error:", e)
         return JSONResponse({"error": str(e) or "Failed to stop"}, status_code=500)
+
+
+@router.post("/browser-result")
+async def browser_result(request: Request) -> JSONResponse:
+    owner_id = user_id_from_request(request)
+    body = await read_json_object(request)
+    if not body or not isinstance(body.get("key"), str) or not isinstance(body.get("result"), dict):
+        return JSONResponse({"error": "key and result are required"}, status_code=400)
+    result = body["result"]
+    if len(json.dumps(result)) > 4_100_000:
+        return JSONResponse({"error": "Browser result is too large"}, status_code=413)
+    if not resolve_browser_action(body["key"], owner_id, result):
+        return JSONResponse({"error": "No pending browser action for this user"}, status_code=404)
+    return JSONResponse({"ok": True})
 
 
 @router.post("/answer")

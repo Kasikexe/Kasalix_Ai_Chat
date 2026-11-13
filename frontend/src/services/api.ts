@@ -250,6 +250,32 @@ function authedFetch(url: string, options: RequestInit = {}): RequestInit {
   return { ...options, headers };
 }
 
+async function handleBrowserAction(action: { key: string; sessionId: string; conversationId?: string; args: Record<string, unknown> }, signal?: AbortSignal): Promise<void> {
+  let result: Record<string, unknown>;
+  const desktop = (window as any).electronAPI;
+  const cancel = () => { void desktop?.kodingBrowserCancel?.(action.key); };
+  try {
+    if (signal?.aborted) return;
+    signal?.addEventListener('abort', cancel, { once: true });
+    result = desktop?.kodingBrowserAction
+      ? await desktop.kodingBrowserAction(action)
+      : { ok: false, error: 'The visible Koding browser requires the desktop app.' };
+  } catch (error) {
+    result = { ok: false, error: error instanceof Error ? error.message : 'Browser action failed.' };
+  } finally {
+    signal?.removeEventListener('abort', cancel);
+  }
+  if (signal?.aborted) return;
+  try {
+    await fetch(`${API_BASE}/chat/browser-result`, authedFetch(`${API_BASE}/chat/browser-result`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: action.key, result }),
+    }));
+  } catch (error) {
+    console.error('Could not return the browser action result', error);
+  }
+}
+
 
 // ─── Authenticated image loading ────────────────────────────
 // An <img src> cannot carry the session token, and on Android a relative
@@ -797,6 +823,7 @@ streamChat(
             case 'stage': callbacks.onStage(parsed.stage); break;
             case 'agent_tool': callbacks.onAgentTool?.({ tool: parsed.tool, args: parsed.args || {} }); break;
             case 'agent_tool_result': callbacks.onToolResult?.({ tool: parsed.tool, ok: !!parsed.ok, output: parsed.output || '' }); break;
+            case 'agent_browser_action': void handleBrowserAction(parsed, signal); break;
             case 'file_written': callbacks.onFileWritten?.({ path: parsed.path, changeType: parsed.changeType, originalContent: parsed.originalContent, expectedContent: parsed.expectedContent, snapshotAvailable: parsed.snapshotAvailable }); break;
             case 'agent_command': callbacks.onAgentCommand?.({ command: parsed.command, output: parsed.output, failed: !!parsed.failed }); break;
             case 'agent_question': callbacks.onQuestion?.({ key: parsed.key, question: parsed.question }); break;

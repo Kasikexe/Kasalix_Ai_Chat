@@ -16,7 +16,7 @@ def call(name):
 
 def test_read_only_blocks_every_mutation():
     calls = [call(name) for name in sorted(agent.MUTATING_TOOLS)]
-    calls.extend([call("run_command"), call("read_file")])
+    calls.extend([call("run_command"), call("browser"), call("read_file")])
     allowed, feedback = asyncio.run(agent.authorize_tool_calls(calls, {"toolPermission": "read-only"}, None, Log()))
     assert allowed == [call("read_file")]
     assert len(feedback) == len(calls) - 1

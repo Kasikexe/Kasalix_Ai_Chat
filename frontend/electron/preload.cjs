@@ -4,6 +4,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** Whether this is running inside the Electron desktop app */
   isElectron: true,
 
+  kodingBrowserAction: (request) => ipcRenderer.invoke('koding-browser-action', request),
+  kodingBrowserBounds: (sessionId, bounds) => ipcRenderer.invoke('koding-browser-bounds', sessionId, bounds),
+  kodingBrowserClose: (sessionId) => ipcRenderer.invoke('koding-browser-close', sessionId),
+  kodingBrowserCancel: (key) => ipcRenderer.invoke('koding-browser-cancel', key),
+  kodingBrowserState: () => ipcRenderer.invoke('koding-browser-state'),
+  onKodingBrowserEvent: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('koding-browser-event', handler);
+    return () => ipcRenderer.removeListener('koding-browser-event', handler);
+  },
+
   // ─── Auto-Update ────────────────────────────
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

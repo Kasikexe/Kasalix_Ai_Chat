@@ -9,7 +9,7 @@ from app.agent_protocol import TOOL_ARGUMENTS, native_tool_schemas, normalize_na
 
 KEPT = {
     "list_files", "glob", "read_file", "search_files", "edit_file", "edit_lines", "write_file",
-    "rename_file", "delete_file", "run_command",
+    "rename_file", "delete_file", "run_command", "browser",
 }
 REMOVED = {
     "find_references", "refactor_rename", "create_directory", "file_exists", "diff_files",

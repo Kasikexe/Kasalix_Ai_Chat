@@ -12,6 +12,7 @@ import base64
 import json
 import os
 import re
+import secrets
 import signal as signal_module
 import shlex
 import shutil
@@ -21,9 +22,10 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from .ai_rules import with_ai_rules
-from .agent_protocol import native_tool_schemas, normalize_native_calls, normalize_structured_action, structured_action_schema
+from .agent_protocol import native_tool_schemas, normalize_native_calls, normalize_structured_action, structured_action_schema, validate_browser_args, validate_command_args
 from .game_harness import HARNESS_SOURCE
 from .logger import error as log_error, info as log_info, warn as log_warn
 from .model_assignments import get_resolved_model
@@ -568,6 +570,56 @@ def _cb(opts: dict[str, Any], name: str, *args: Any) -> None:
             log_warn(f"[agent] callback {name} failed: {e}")
 
 
+_pending_browser_actions: dict[str, dict[str, Any]] = {}
+
+
+def resolve_browser_action(key: str, owner_id: str, result: dict[str, Any]) -> bool:
+    pending = _pending_browser_actions.get(key)
+    if not pending or pending["owner"] != owner_id or pending["future"].done():
+        return False
+    pending["future"].set_result(result)
+    return True
+
+
+async def request_browser_action(args: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    callback = (context.get("callbacks") or {}).get("onBrowserAction")
+    if not callable(callback):
+        return {"ok": False, "output": "The visible Koding browser is unavailable in this client."}
+    key = secrets.token_urlsafe(24)
+    future = asyncio.get_running_loop().create_future()
+    _pending_browser_actions[key] = {"owner": context.get("userId"), "future": future}
+    stop = context.get("signal")
+    stopped = asyncio.create_task(stop.wait()) if stop is not None else None
+    try:
+        callback({"key": key, "sessionId": context["browserSession"],
+                  "conversationId": context.get("conversationId"), "args": args})
+        done, _ = await asyncio.wait({future, *([stopped] if stopped else [])}, timeout=30,
+                                     return_when=asyncio.FIRST_COMPLETED)
+        if stopped and stopped in done:
+            raise asyncio.CancelledError()
+        if future not in done:
+            return {"ok": False, "output": "The desktop browser did not respond within 30 seconds."}
+        result = future.result()
+        output = str(result.get("output") or result.get("error") or "Browser action completed.")[:12000]
+        response: dict[str, Any] = {"ok": result.get("ok") is True, "output": output}
+        image = result.get("imageData")
+        if args.get("operation") == "screenshot" and response["ok"]:
+            if (context.get("use_vision_model") and isinstance(image, str)
+                    and image.startswith(("data:image/png;base64,", "data:image/jpeg;base64,"))
+                    and len(image) <= 4_000_000):
+                response["imageData"] = image
+                response["output"] += " The screenshot is attached."
+            else:
+                response["output"] += " The coding model cannot inspect this screenshot; use inspect for page text."
+        return response
+    finally:
+        _pending_browser_actions.pop(key, None)
+        if stopped:
+            stopped.cancel()
+        if not future.done():
+            future.cancel()
+
+
 # ─── Python interpreter discovery (for run_python) ──────────────────────
 VIRTUALENV_PYTHON_RELPATHS = (
     r"venv\Scripts\python.exe",
@@ -612,7 +664,8 @@ AGENT_TOOL_DEFS: list[dict[str, Any]] = [
     {"name": "list_files", "description": "List files and directories in the workspace (recursive, ignores node_modules/.git/dist etc). Use this to see what exists before editing.", "args": "{}", "mutating": False},
     {"name": "read_file", "description": "Read the contents of a file inside the workspace. Always read a file BEFORE editing it so you know exactly what is in it. Do NOT pass offset/length for normal files — read the whole file in one call; offset/length is ONLY for files larger than 200KB. Pass \"numbers\": true to get line numbers in front of each line (12| code) — needed for edit_lines; never copy those numbers into an edit's text.", "args": '{"path": "src/index.ts"} or {"path": "src/index.ts", "numbers": true} or {"path": "src/index.ts", "offset": 200000, "length": 100000}', "mutating": False},
     {"name": "search_files", "description": "Search workspace file contents for literal text, returning paths and line numbers. Matching is case-insensitive by default; set case_sensitive to true for an exact-case search. Results may include comments and strings, not just code references.", "args": '{"query": "function render"} or {"query": "render", "case_sensitive": true}', "mutating": False},
-    {"name": "run_command", "description": "Run a foreground shell command to reproduce a failure or verify changes. cwd is relative to the workspace; timeout is in seconds (1-600, default 120). Commands run with the server user's permissions and are not sandboxed; they can change files or access the network. Check the exit status and output before reporting success.", "args": '{"command": "python -m pytest -q", "cwd": ".", "timeout": 120}', "mutating": False},
+    {"name": "run_command", "description": "Run a shell command for testing or start a background server. Start: pass command, optional workspace-relative cwd, and background=true for a process that stays running during this agent run. Status: operation=status and process_id, optionally wait=0-10 seconds for new output. Stop: operation=stop and process_id. timeout=1-600 seconds is optional; foreground defaults to 120 seconds, background lasts until stopped or the run ends unless timeout is supplied. Do not daemonize or detach children. Check status and exit code: starting is not proof of success. Commands run with the server user's permissions, not in a sandbox.", "args": '{"command": "python -m pytest -q"} or {"command": "npm run dev", "background": true} or {"operation": "status", "process_id": "<id>", "wait": 3} or {"operation": "stop", "process_id": "<id>"}', "mutating": False},
+    {"name": "browser", "description": "Control the visible Koding browser pane for local web apps. Use open with a localhost URL, inspect to read visible text and element selectors, click or type with a selector, console to see browser errors, screenshot to see the page if your model supports vision, and close when finished. Start a local server with run_command background=true first. Browser actions are visible to the user and can change the app's data.", "args": '{"operation": "open", "url": "http://127.0.0.1:3000/"} or {"operation": "inspect"} or {"operation": "click", "selector": "button"} or {"operation": "type", "selector": "input", "text": "hello"} or {"operation": "screenshot"} or {"operation": "console"}', "mutating": False},
     {"name": "edit_file", "description": "SURGICAL edit of an existing file: replace an exact snippet (old_string) with new content (new_string). Use this for SMALL changes to existing files instead of rewriting the whole file. old_string must appear exactly once in the file (or differ only in whitespace). ONLY available in auto-apply mode. After a successful edit the result includes a diff summary.", "args": '{"path": "src/app.ts", "old_string": "const x = 1;", "new_string": "const x = 2;"}', "mutating": True},
     {"name": "edit_lines", "description": "Edit an existing file BY LINE NUMBER — replaces lines start..end with content, so you NEVER copy the old text. This is the easiest way to change a few lines, a loop, or one statement inside a file you have read. start/end are 1-based line numbers (from read_file with \"numbers\": true); omit end to change one line; make end smaller than start to INSERT before start; negative counts from the end (-1 = last line); content \"\" deletes those lines. Pass expect (the first line being replaced, copied from the file) and the edit is refused if the numbers are stale. ONLY available in auto-apply mode.", "args": '{"path": "snake.py", "start": 42, "end": 48, "content": "    new_line_1\\n    new_line_2", "expect": "    def update(self):"}', "mutating": True},
     {"name": "write_file", "description": "Create a NEW file. If the file already exists, only YOUR CHANGED LINES are applied and everything else in the file is preserved exactly (safe to pass the full new file content — a version that rewrites most of the file is refused). ONLY available in auto-apply mode — the file is written immediately and can be reverted by the user.", "args": '{"path": "src/app.ts", "content": "..."}', "mutating": True},
@@ -628,6 +681,11 @@ TOOL_JSON_EXAMPLES = f"""Available tools — to use one, respond with ONLY a sin
 {{"tool": "read_file", "args": {{"path": "src/index.ts", "numbers": true}}}} — line numbers in front of each line (12| code) for use with edit_lines
 {{"tool": "search_files", "args": {{"query": "function render"}}}}
 {{"tool": "run_command", "args": {{"command": "python -m pytest -q", "cwd": ".", "timeout": 120}}}}
+{{"tool": "run_command", "args": {{"command": "npm run dev", "background": true}}}} — start a background server; use the returned process_id
+{{"tool": "run_command", "args": {{"operation": "status", "process_id": "<id>", "wait": 3}}}} — inspect status and output
+{{"tool": "run_command", "args": {{"operation": "stop", "process_id": "<id>"}}}} — stop the process
+{{"tool": "browser", "args": {{"operation": "open", "url": "http://127.0.0.1:3000/"}}}} — open a local app in the visible browser pane
+{{"tool": "browser", "args": {{"operation": "inspect"}}}} — read page text and selectors before interacting
 {{"tool": "edit_file", "args": {{"path": "src/app.ts", "old_string": "const x = 1;", "new_string": "const x = 2;"}}}}
 {{"tool": "edit_lines", "args": {{"path": "snake.py", "start": 42, "end": 48, "content": "    new_line_1\\n    new_line_2"}}}} — change lines BY NUMBER (read_file with "numbers": true); no old text needed
 {{"tool": "write_file", "args": {{"path": "src/app.ts", "content": "..."}}}} — for an EXISTING file only your changed lines are applied; the rest is preserved
@@ -977,7 +1035,7 @@ async def find_main_script(root: str, extensions: list[str]) -> str | None:
 
 # ─── Git helpers ────────────────────────────────────────────────────────
 MUTATING_TOOLS = {tool["name"] for tool in AGENT_TOOL_DEFS if tool["mutating"]}
-EXECUTION_TOOLS = {"run_command"}
+EXECUTION_TOOLS = {"run_command", "browser"}
 
 
 async def authorize_tool_calls(
@@ -1130,6 +1188,134 @@ async def collect_command_output(
     return {"ok": not timed_out and proc.returncode == 0, "output": "\n".join(parts)}
 
 
+class BackgroundCommandManager:
+    """Own background commands for a single agent run; never share handles between runs."""
+
+    def __init__(self) -> None:
+        self.processes: dict[str, dict[str, Any]] = {}
+        self.closed = False
+
+    async def start(self, command: str, cwd: str, timeout: int | None) -> dict[str, Any]:
+        if self.closed:
+            return {"ok": False, "output": "This agent run has ended."}
+        # Bound both process count and retained records; evict completed records first.
+        for process_id in list(self.processes):
+            if len(self.processes) < 8:
+                break
+            if self.processes[process_id]["done"]:
+                del self.processes[process_id]
+        if len(self.processes) >= 8:
+            return {"ok": False, "output": "Background process limit reached (8). Stop a process before starting another."}
+        proc = await asyncio.create_subprocess_shell(
+            command, cwd=cwd, stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            **process_group_options(),
+        )
+        process_id = "bg-" + secrets.token_hex(8)
+        entry: dict[str, Any] = {
+            "proc": proc, "done": False, "stopped": False, "timed_out": False,
+            "buffers": {"stdout": bytearray(), "stderr": bytearray()},
+            "sizes": {"stdout": 0, "stderr": 0}, "changed": asyncio.Event(), "lock": asyncio.Lock(),
+        }
+        self.processes[process_id] = entry
+
+        async def drain(name: str, stream: asyncio.StreamReader | None, limit: int) -> None:
+            if stream is None:
+                return
+            while chunk := await stream.read(8192):
+                entry["sizes"][name] += len(chunk)
+                buffer = entry["buffers"][name]
+                buffer.extend(chunk)
+                if len(buffer) > limit:
+                    del buffer[:-limit]
+                entry["changed"].set()
+
+        async def pump() -> None:
+            try:
+                await asyncio.gather(proc.wait(), drain("stdout", proc.stdout, 6000), drain("stderr", proc.stderr, 2000))
+            except Exception as exc:
+                entry["error"] = str(exc)
+                raise
+            finally:
+                entry["done"] = True
+                entry["changed"].set()
+
+        entry["task"] = asyncio.create_task(pump())
+        if timeout is not None:
+            async def watch_timeout() -> None:
+                try:
+                    await asyncio.wait_for(asyncio.shield(entry["task"]), timeout)
+                except asyncio.TimeoutError:
+                    entry["timed_out"] = True
+                    await self._stop(entry)
+            entry["watchdog"] = asyncio.create_task(watch_timeout())
+        return {"ok": True, "process_id": process_id,
+                "output": f"Started background process {process_id}. Use operation=status to inspect its output and exit code; starting does not mean it is ready."}
+
+    async def _stop(self, entry: dict[str, Any]) -> bool:
+        async with entry["lock"]:
+            if entry["proc"].returncode is None:
+                await kill_process_tree(entry["proc"])
+            try:
+                await asyncio.wait_for(asyncio.shield(entry["task"]), 3)
+            except Exception:
+                entry["task"].cancel()
+                await asyncio.gather(entry["task"], return_exceptions=True)
+                return False
+            return entry["proc"].returncode is not None
+
+    async def status(self, process_id: str, wait: int = 0) -> dict[str, Any]:
+        entry = self.processes.get(process_id)
+        if entry is None:
+            return {"ok": False, "output": f"No background process {process_id} in this agent run."}
+        if wait and not entry["done"]:
+            entry["changed"].clear()
+            try:
+                await asyncio.wait_for(entry["changed"].wait(), wait)
+            except asyncio.TimeoutError:
+                pass
+        proc = entry["proc"]
+        if entry["timed_out"]:
+            state = "timed out"
+        elif entry.get("error"):
+            state = f"output collection failed: {entry['error']}"
+        elif entry["stopped"]:
+            state = f"stopped (exit code {proc.returncode})"
+        elif entry["done"]:
+            state = f"exited with code {proc.returncode}"
+        else:
+            state = "running"
+        parts = [f"Background process {process_id}: {state}."]
+        for name in ("stdout", "stderr"):
+            buffer = entry["buffers"][name]
+            size = entry["sizes"][name]
+            if size:
+                note = f" (truncated; showing last {len(buffer)} of {size} bytes)" if size > len(buffer) else ""
+                parts.append(f"{name}{note}:\n{bytes(buffer).decode('utf-8', 'replace')}")
+        return {"ok": not entry["timed_out"] and not entry.get("error") and (not entry["done"] or entry["stopped"] or proc.returncode == 0),
+                "process_id": process_id, "output": "\n".join(parts)}
+
+    async def stop(self, process_id: str) -> dict[str, Any]:
+        entry = self.processes.get(process_id)
+        if entry is None:
+            return {"ok": False, "output": f"No background process {process_id} in this agent run."}
+        if not entry["done"] or entry["proc"].returncode is None:
+            if not await self._stop(entry):
+                return {"ok": False, "output": f"Could not confirm that background process {process_id} and its output streams stopped."}
+            entry["stopped"] = True
+        return await self.status(process_id)
+
+    async def close(self) -> None:
+        self.closed = True
+        outcomes = await asyncio.gather(*(self._stop(entry) for entry in self.processes.values()), return_exceptions=True)
+        if any(outcome is not True for outcome in outcomes):
+            log_warn("[agent] Could not confirm cleanup of every background command process.")
+        watchdogs = [entry["watchdog"] for entry in self.processes.values() if "watchdog" in entry]
+        for task in watchdogs:
+            task.cancel()
+        await asyncio.gather(*watchdogs, return_exceptions=True)
+
+
 
 
 
@@ -1154,16 +1340,37 @@ async def execute_tool(
     if tool not in {item["name"] for item in AGENT_TOOL_DEFS} and not (tool == "play_game" and (extra or {}).get("game_auto") is True):
         return await deny_out(f'Unknown or unavailable tool: "{tool}".')
 
+    if tool == "browser":
+        error = validate_browser_args(args)
+        if error:
+            return await deny_out(error)
+        if args["operation"] == "open":
+            try:
+                url = urlsplit(args["url"])
+                if url.scheme.lower() not in ("http", "https") or url.hostname not in ("localhost", "127.0.0.1", "::1") or url.username is not None or url.password is not None:
+                    return await deny_out("The Koding browser only opens local HTTP(S) URLs without credentials.")
+                _ = url.port  # reject invalid ports
+            except ValueError:
+                return await deny_out("Invalid browser URL.")
+        return await request_browser_action(args, extra or {})
+
     if tool == "run_command":
+        error = validate_command_args(args)
+        if error:
+            return await deny_out(error)
+        operation = args.get("operation", "start")
+        manager = (extra or {}).get("command_manager")
+        if operation in ("status", "stop"):
+            if manager is None:
+                return await deny_out("Background processes are only available during their agent run.")
+            if operation == "status":
+                return await manager.status(args["process_id"], args.get("wait", 0))
+            return await manager.stop(args["process_id"])
         command = args.get("command")
         cwd = args.get("cwd", ".")
         timeout = args.get("timeout", 120)
-        if not isinstance(command, str) or not command.strip():
-            return await deny_out('run_command requires a non-empty "command" string.')
         if not isinstance(cwd, str) or not cwd.strip() or os.path.isabs(cwd):
             return await deny_out('run_command requires a workspace-relative "cwd".')
-        if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 600:
-            return await deny_out('run_command "timeout" must be an integer from 1 to 600 seconds.')
         directory = await resolve_in_workspace(root, cwd)
         if not directory or not os.path.isdir(directory):
             return await deny_out(f'run_command: working directory "{cwd}" is unavailable or outside the workspace.')
@@ -1171,6 +1378,10 @@ async def execute_tool(
         if stop is not None and stop.is_set():
             raise asyncio.CancelledError()
         try:
+            if args.get("background") is True:
+                if manager is None:
+                    return await deny_out("Background processes are only available during an agent run.")
+                return await manager.start(command, directory, args.get("timeout"))
             proc = await asyncio.create_subprocess_shell(
                 command, cwd=directory, stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -2631,7 +2842,8 @@ def build_system_prompt(workspace_path: str, user_name: str, auto_apply: bool) -
         "Respect workspace rules. "
         "If no tool is needed, answer normally or ask the user a question in your final response. "
         "Use run_command to verify relevant changes when appropriate; report the actual exit status and any failures. "
-        "Git, web search, image generation, subagent, and live preview tools are unavailable. "
+        "Use browser to inspect and interact with local web apps in the visible pane. "
+        "Git-specific, web search, image generation, and subagent tools are unavailable. "
         "Automatic verification may report results separately; never claim a check ran without such a result.")
 
 
@@ -2942,6 +3154,11 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     except Exception:  # noqa: BLE001
         pass
 
+    command_manager = BackgroundCommandManager()
+    browser_session = secrets.token_urlsafe(18)
+    browser_context = {"callbacks": opts.get("callbacks"), "userId": opts.get("userId"),
+                       "conversationId": opts.get("conversationId"), "browserSession": browser_session,
+                       "use_vision_model": use_vision_model, "signal": signal, "command_manager": command_manager}
     try:
         iter = 0
         while iter < max_iterations:
@@ -3506,7 +3723,8 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 if k in noop_ok_calls:
                     continue  # successful no-op — repeating it is not a failure
                 seen_calls[k] = seen_calls.get(k, 0) + 1
-                if seen_calls[k] >= 3:
+                repeat_limit = 10 if tc["tool"] == "run_command" and tc["args"].get("operation") == "status" else 3
+                if seen_calls[k] >= repeat_limit:
                     # Give up with an ACTIONABLE, HONEST message — never dump
                     # raw JSON at the user, and never claim "kept failing"
                     # about calls that actually succeeded (a successful read
@@ -3567,7 +3785,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     _cb(opts, "onToolStart", tc)
                     log_info(f"[agent] Tool call (parallel): {tc['tool']} {json.dumps(tc['args'])[:100]}")
                     await session_log.log_tool_call(tc["tool"], tc["args"])
-                    r = await execute_tool(root, tc, auto_apply, extra={"use_vision_model": use_vision_model, "signal": signal})
+                    r = await execute_tool(root, tc, auto_apply, extra=browser_context)
                     seen_outcomes[f"{tc['tool']}:{json.dumps(tc['args'], sort_keys=True)}"] = bool(r["ok"])
                     await session_log.log_tool_result(tc["tool"], r["output"], r["ok"])
                     _cb(opts, "onToolResult", {"tool": tc["tool"], "ok": r["ok"], "output": str(r["output"])[:2000]})
@@ -3589,7 +3807,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     _cb(opts, "onToolStart", tc)
                     log_info(f"[agent] Tool call: {tc['tool']} {json.dumps(tc['args'])[:120]}")
                     await session_log.log_tool_call(tc["tool"], tc["args"])
-                    result = await execute_tool(root, tc, auto_apply, extra={"use_vision_model": use_vision_model, "signal": signal})
+                    result = await execute_tool(root, tc, auto_apply, extra=browser_context)
                     seen_outcomes[f"{tc['tool']}:{json.dumps(tc['args'], sort_keys=True)}"] = bool(result["ok"])
                     # Raw screenshot for a vision-capable code model: the image
                     # rides on this variable into the ONE history append below
@@ -3771,6 +3989,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
         fire_resume_state()
         raise
     finally:
+        await command_manager.close()
         # Live preview is per-run: always closed when the agent loop ends
         # (done, stalled, errored, or cancelled) so no window or server
         # outlives the session.

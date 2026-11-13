@@ -296,7 +296,7 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
                     title={
                       m === 'auto' ? 'Auto: run tools and shell commands without asking'
                       : m === 'ask-each' ? 'Ask: confirm each tool before executing'
-                      : 'Read-only: blocks workspace file changes and shell commands'
+                      : 'Read-only: blocks workspace file changes, shell commands, and browser interactions'
                     }
                   >
                     {m === 'auto' ? <><Zap size={11}/> Auto</> : m === 'ask-each' ? <><HelpCircle size={11}/> Ask</> : <><Lock size={11}/> Read-only</>}

@@ -5,6 +5,7 @@ import { InputBar } from './InputBar';
 import { FileTree } from './FileTree';
 import { FileViewer } from './FileViewer';
 import { TerminalPanel } from './TerminalPanel';
+import { KodingBrowserPane } from './KodingBrowserPane';
 
 import { DiffView } from './DiffView';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -15,7 +16,7 @@ import {
   Undo2, Pencil, PenLine, Scissors, Sparkles, Terminal,
   Trash2, Play, Lightbulb, ClipboardList,
   MessageSquare, GripVertical,
-  Bot, Eye, AlertTriangle,
+  Bot, Eye, AlertTriangle, Globe,
 } from 'lucide-react';
 import { ServerDownInline } from './ServerDownInline';
 import { useServerStatus } from '../hooks/useServerStatus';
@@ -163,6 +164,45 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
   const [showSetup, setShowSetup] = useState(!offlineWorkspace && !conversation?.workspacePath);
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [planPanelOpen, setPlanPanelOpen] = useState(false);
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const [browserSession, setBrowserSession] = useState<string | null>(null);
+  const [browserUrl, setBrowserUrl] = useState('');
+
+  useEffect(() => {
+    const desktop = (window as any).electronAPI;
+    if (!desktop?.onKodingBrowserEvent) return;
+    let mounted = true;
+    let receivedEvent = false;
+    const matchesConversation = (id?: string) => id ? conversation?.id === id : !conversation?.id;
+    void desktop.kodingBrowserState?.().then((state: { sessionId: string; conversationId?: string; url?: string } | null) => {
+      if (!mounted || receivedEvent || !state || !matchesConversation(state.conversationId)) return;
+      setBrowserSession(state.sessionId);
+      setBrowserUrl(state.url || '');
+      setBrowserOpen(true);
+    });
+    const unsubscribe = desktop.onKodingBrowserEvent((event: { type: string; sessionId: string; conversationId?: string; url?: string }) => {
+      if (!matchesConversation(event.conversationId)) return;
+      receivedEvent = true;
+      if (event.type === 'open') {
+        setBrowserSession(event.sessionId);
+        setBrowserOpen(true);
+      } else if (event.type === 'navigated') {
+        setBrowserUrl(event.url || '');
+      } else if (event.type === 'closed') {
+        setBrowserSession(null);
+        setBrowserUrl('');
+        setBrowserOpen(false);
+      }
+    });
+    return () => { mounted = false; unsubscribe(); };
+  }, [conversation?.id]);
+
+  const closeBrowser = useCallback(() => {
+    if (browserSession) void (window as any).electronAPI?.kodingBrowserClose(browserSession);
+    setBrowserSession(null);
+    setBrowserUrl('');
+    setBrowserOpen(false);
+  }, [browserSession]);
   const [leftWidth, setLeftWidth] = useState(224);
   const dragRef = useRef<{ type: 'left'; startX: number; startSize: number } | null>(null);
   // Activity bar: explorer | terminal — VS Code style left rail (SVG icons)
@@ -860,6 +900,11 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
               )}
             </div>
             <div className="flex items-center gap-1">
+              <button onClick={() => browserOpen ? closeBrowser() : setBrowserOpen(true)}
+                className={`p-1 rounded transition-colors ${browserOpen ? 'bg-gray-700 text-gray-200' : 'text-gray-500 hover:text-gray-300'}`}
+                title={browserOpen ? 'Close browser' : 'Show browser'} aria-label={browserOpen ? 'Close browser' : 'Show browser'}>
+                <Globe size={12} />
+              </button>
               {currentPlan && (
                 <button onClick={() => setPlanPanelOpen(!planPanelOpen)}
                   className={`p-1 rounded transition-colors ${planPanelOpen ? 'bg-violet-700 text-violet-200' : 'text-gray-500 hover:text-gray-300'}`}
@@ -963,6 +1008,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
             draftKey={convKey}
           />
         </div>
+        {browserOpen && <KodingBrowserPane sessionId={browserSession} url={browserUrl} onClose={closeBrowser} />}
       </div>
 
       {/* ═══ MODALS ═══ */}

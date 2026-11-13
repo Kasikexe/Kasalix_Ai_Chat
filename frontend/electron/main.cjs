@@ -77,6 +77,7 @@ const CONFIG_FILE = 'server-config.json';
 
 let mainWindow = null;
 let server = null;
+const kodingBrowser = require('./koding-browser.cjs').installKodingBrowser(() => mainWindow);
 
 // ─── Koding Preview (agent-driven live preview window + bridge) ───────
 let previewWindow = null;
@@ -275,6 +276,7 @@ async function handlePreviewBridge(payload) {
 }
 
 app.on('before-quit', () => {
+  kodingBrowser.destroy();
   closePreviewWindow();
   if (previewBridgeServer) { try { previewBridgeServer.close(); } catch { /* quitting */ } }
 });

@@ -16,7 +16,9 @@ TOOL_ARGUMENTS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     "list_files": ({}, {}),
     "read_file": ({"path": STRING}, {"numbers": BOOLEAN, "offset": NUMBER, "length": NUMBER}),
     "search_files": ({"query": STRING}, {"case_sensitive": BOOLEAN}),
-    "run_command": ({"command": STRING}, {"cwd": STRING, "timeout": NUMBER}),
+    "run_command": ({}, {"command": STRING, "cwd": STRING, "timeout": NUMBER, "background": BOOLEAN,
+                         "operation": STRING, "process_id": STRING, "wait": NUMBER}),
+    "browser": ({"operation": STRING}, {"url": STRING, "selector": STRING, "text": STRING}),
     "edit_file": ({"path": STRING, "old_string": STRING, "new_string": STRING}, {}),
     "edit_lines": ({"path": STRING, "start": NUMBER, "content": STRING}, {"end": NUMBER, "expect": STRING}),
     "write_file": ({"path": STRING, "content": STRING}, {"force": BOOLEAN}),
@@ -24,6 +26,54 @@ TOOL_ARGUMENTS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     "rename_file": ({"from": STRING, "to": STRING}, {}),
     "glob": ({"pattern": STRING}, {}),
 }
+
+
+def validate_command_args(args: dict[str, Any]) -> str | None:
+    allowed = {"command", "cwd", "timeout", "background", "operation", "process_id", "wait"}
+    if set(args) - allowed:
+        return "run_command received unknown arguments."
+    if "background" in args and not isinstance(args["background"], bool):
+        return 'run_command "background" must be a boolean.'
+    operation = args.get("operation", "start")
+    if operation == "start":
+        if not isinstance(args.get("command"), str) or not args["command"].strip():
+            return 'run_command start requires a non-empty "command".'
+        if "process_id" in args or "wait" in args:
+            return 'run_command start does not accept "process_id" or "wait".'
+        timeout = args.get("timeout")
+        if "timeout" in args and (isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 600):
+            return 'run_command "timeout" must be an integer from 1 to 600 seconds.'
+    elif operation in ("status", "stop"):
+        if not isinstance(args.get("process_id"), str) or not args["process_id"].strip():
+            return f'run_command {operation} requires "process_id".'
+        if any(key in args for key in ("command", "cwd", "timeout", "background")):
+            return f'run_command {operation} only accepts "process_id"' + (' and "wait".' if operation == "status" else '.')
+        if operation == "stop" and "wait" in args:
+            return 'run_command stop does not accept "wait".'
+        wait = args.get("wait", 0)
+        if isinstance(wait, bool) or not isinstance(wait, int) or not 0 <= wait <= 10:
+            return 'run_command "wait" must be an integer from 0 to 10 seconds.'
+    else:
+        return 'run_command "operation" must be "start", "status", or "stop".'
+    return None
+
+
+def validate_browser_args(args: dict[str, Any]) -> str | None:
+    operation = args.get("operation")
+    allowed = {
+        "open": {"operation", "url"}, "inspect": {"operation"}, "click": {"operation", "selector"},
+        "type": {"operation", "selector", "text"}, "screenshot": {"operation"},
+        "console": {"operation"}, "close": {"operation"},
+    }
+    if not isinstance(operation, str) or operation not in allowed:
+        return "browser operation must be open, inspect, click, type, screenshot, console, or close."
+    if set(args) - allowed[operation]:
+        return "Unexpected browser arguments for this operation."
+    required = {"open": ("url",), "click": ("selector",), "type": ("selector", "text")}.get(operation, ())
+    for key in required:
+        if not isinstance(args.get(key), str) or (key != "text" and not args[key].strip()) or len(args[key]) > 4096:
+            return f"browser {operation} requires a valid {key} string."
+    return None
 
 
 def native_tool_schemas(definitions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -75,6 +125,10 @@ def normalize_native_calls(calls: list[dict[str, Any]], permitted: set[str]) -> 
         schema = {"type": "object", "properties": {**required, **optional}, "required": list(required)}
         if not _valid(args, schema):
             raise ValueError(f"Invalid arguments for {name}")
+        if name == "run_command" and validate_command_args(args):
+            raise ValueError(validate_command_args(args))
+        if name == "browser" and validate_browser_args(args):
+            raise ValueError(validate_browser_args(args))
         result.append({"tool": name, "args": args})
     return result
 

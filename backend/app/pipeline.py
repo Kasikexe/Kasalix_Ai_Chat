@@ -1140,6 +1140,7 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
                     "onQuestion": opts.get("onQuestion"),
                     "onResumeState": opts.get("onResumeState"),
                     "onApprovalRequest": opts.get("onApprovalRequest"),
+                    "onBrowserAction": opts.get("onBrowserAction"),
                     "onPlan": opts.get("onPlan"),
                 },
                 "temperature": temperature,
