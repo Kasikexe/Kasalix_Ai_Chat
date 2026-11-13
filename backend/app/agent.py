@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import re
@@ -3321,6 +3322,38 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                         + ("; ".join(running) if running else "none") + ". Check their status before assuming they are ready."})
     browser_evidence = {"needs_observation": False, "inspected": False, "used": False, "closed_unverified": False, "failed_interaction": False, "failed_open": False}
     browser_inspection_nudges = 0
+    browser_revision = 0
+    last_browser_observation: str | None = None
+    browser_interaction_keys: set[str] = set()
+
+    def tracking_key(call: dict[str, Any]) -> str:
+        key = f"{call['tool']}:{json.dumps(call['args'], sort_keys=True)}"
+        if call["tool"] == "browser" and call["args"].get("operation") in ("inspect", "screenshot", "console"):
+            return f"{key}:browser-state-{browser_revision}"
+        return key
+
+    def record_tool_outcome(call: dict[str, Any], result: dict[str, Any], key: str) -> None:
+        nonlocal browser_revision, last_browser_observation
+        previous = seen_outcomes.get(key)
+        ok = bool(result["ok"])
+        if call["tool"] == "browser" and previous is not None and previous != ok:
+            seen_calls[key] = 1  # A recovered failure or new failure is not the old loop.
+        seen_outcomes[key] = ok
+        if call["tool"] != "browser" or not ok:
+            return
+        operation = call["args"].get("operation")
+        if operation in ("open", "click", "type"):
+            browser_revision += 1
+        if operation in ("click", "type"):
+            browser_interaction_keys.add(key)
+        if operation == "inspect":
+            observation = hashlib.sha256(str(result.get("output") or "").encode("utf-8")).hexdigest()
+            if last_browser_observation is not None and observation != last_browser_observation:
+                for interaction_key in browser_interaction_keys:
+                    seen_calls.pop(interaction_key, None)
+                browser_interaction_keys.clear()
+                seen_calls[key] = 1
+            last_browser_observation = observation
     browser_context = {"callbacks": opts.get("callbacks"), "userId": opts.get("userId"),
                        "conversationId": opts.get("conversationId"), "browserSession": browser_session,
                        "use_vision_model": use_vision_model, "signal": signal, "command_manager": command_manager,
@@ -3920,11 +3953,13 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                         continue
 
             for tc in calls_to_run:
-                k = f"{tc['tool']}:{json.dumps(tc['args'], sort_keys=True)}"
+                k = tracking_key(tc)
                 if k in noop_ok_calls:
                     continue  # successful no-op — repeating it is not a failure
                 seen_calls[k] = seen_calls.get(k, 0) + 1
-                repeat_limit = 10 if tc["tool"] == "run_command" and tc["args"].get("operation") == "status" else 3
+                repeat_limit = (10 if tc["tool"] == "run_command" and tc["args"].get("operation") == "status"
+                                else 6 if tc["tool"] == "browser" and tc["args"].get("operation") in ("click", "type")
+                                else 3)
                 if seen_calls[k] >= repeat_limit:
                     # Give up with an ACTIONABLE, HONEST message — never dump
                     # raw JSON at the user, and never claim "kept failing"
@@ -3994,7 +4029,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     log_info(f"[agent] Tool call (parallel): {tc['tool']} {json.dumps(tc['args'])[:100]}")
                     await session_log.log_tool_call(tc["tool"], tc["args"])
                     r = await execute_tool(root, tc, auto_apply, extra=browser_context)
-                    seen_outcomes[f"{tc['tool']}:{json.dumps(tc['args'], sort_keys=True)}"] = bool(r["ok"])
+                    record_tool_outcome(tc, r, tracking_key(tc))
                     await session_log.log_tool_result(tc["tool"], r["output"], r["ok"])
                     _cb(opts, "onToolResult", {"tool": tc["tool"], "ok": r["ok"], "output": str(r["output"])[:2000]})
                     results.append((tc, r))
@@ -4015,10 +4050,11 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     _cb(opts, "onToolStart", tc)
                     log_info(f"[agent] Tool call: {tc['tool']} {json.dumps(tc['args'])[:120]}")
                     await session_log.log_tool_call(tc["tool"], tc["args"])
+                    outcome_key = tracking_key(tc)
                     result = await execute_tool(root, tc, auto_apply, extra=browser_context)
                     if tc["tool"] == "browser" and tc["args"].get("operation") == "open":
                         browser_evidence["failed_open"] = not result["ok"]
-                    seen_outcomes[f"{tc['tool']}:{json.dumps(tc['args'], sort_keys=True)}"] = bool(result["ok"])
+                    record_tool_outcome(tc, result, outcome_key)
                     # Raw screenshot for a vision-capable code model: the image
                     # rides on this variable into the ONE history append below
                     # (via the message marker the Ollama client converts — not

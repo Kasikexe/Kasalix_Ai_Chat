@@ -173,6 +173,63 @@ def test_agent_does_not_claim_failed_page_open_succeeded(tmp_path, monkeypatch):
     assert "could not open" in answer.lower() and "opened and works" not in answer
 
 
+def test_browser_reinspection_after_open_click_and_empty_reply_is_not_a_loop(tmp_path, monkeypatch):
+    def action(operation, **args):
+        return json.dumps({"tool": "browser", "args": {"operation": operation, **args}})
+    replies = iter([
+        action("inspect"), action("open", url="http://localhost:3000"), action("inspect"),
+        action("click", selector="#services"), "", action("inspect"),
+        "I clicked the services link and inspected the resulting page.",
+    ])
+    calls = []
+
+    async def stream(_opts, _messages, on_chunk, _thinking, **_kwargs):
+        reply = next(replies, "I clicked the services link and inspected the resulting page.")
+        on_chunk(reply)
+        return reply
+
+    def browser(request):
+        operation = request["args"]["operation"]
+        calls.append(operation)
+        result = {"ok": False, "error": "No browser is open"} if calls == ["inspect"] else {"ok": True, "output": "Page inspected"}
+        agent.resolve_browser_action(request["key"], "owner", result)
+
+    monkeypatch.setattr(agent, "stream_chat_with_retry", stream)
+    answer = asyncio.run(agent.run_agent_loop({"model": "fake", "workspacePath": str(tmp_path), "autoApply": True,
+        "userId": "owner", "messages": [{"role": "user", "content": "Click the services link"}], "callbacks": {"onBrowserAction": browser}}))
+    assert calls == ["inspect", "open", "inspect", "click", "inspect"]
+    assert "clicked the services link" in answer.lower() and "looping" not in answer.lower()
+
+
+@pytest.mark.parametrize("changing", [True, False])
+def test_repeated_clicks_continue_when_page_changes_but_stop_when_stalled(tmp_path, monkeypatch, changing):
+    def action(operation, **args):
+        return json.dumps({"tool": "browser", "args": {"operation": operation, **args}})
+    replies = iter([action("inspect")] + [item for _ in range(6) for item in (action("click", selector="#next"), action("inspect"))]
+                   + ["I clicked through the pages and inspected the result."])
+    clicks = []
+
+    async def stream(_opts, _messages, on_chunk, _thinking, **_kwargs):
+        reply = next(replies, "I clicked through the pages and inspected the result.")
+        on_chunk(reply)
+        return reply
+
+    def browser(request):
+        operation = request["args"]["operation"]
+        if operation == "click":
+            clicks.append(True)
+        output = f"Page {len(clicks) if changing else 0}" if operation == "inspect" else "Clicked"
+        agent.resolve_browser_action(request["key"], "owner", {"ok": True, "output": output})
+
+    monkeypatch.setattr(agent, "stream_chat_with_retry", stream)
+    answer = asyncio.run(agent.run_agent_loop({"model": "fake", "workspacePath": str(tmp_path), "autoApply": True,
+        "userId": "owner", "messages": [{"role": "user", "content": "Click through the pages"}], "callbacks": {"onBrowserAction": browser}}))
+    if changing:
+        assert len(clicks) == 6 and "looping" not in answer.lower()
+    else:
+        assert len(clicks) == 5 and "looping" in answer.lower()
+
+
 def test_static_html_preview_is_started_and_survives_follow_up(tmp_path):
     (tmp_path / "index.html").write_text("<h1>Test1</h1>", encoding="utf-8")
     (tmp_path / "styles.css").write_text("body { color: red; }", encoding="utf-8")
