@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import type { UserProfile, MemoryData } from '../types';
 import { useToast } from '../hooks/useToast';
-import { api, getSavedServerUrl } from '../services/api';
+import { api, getSavedServerUrl, type ToolCallingTest } from '../services/api';
 
 const AUTO_UPDATE_KEY = 'ai-chat:autoUpdate';
 
@@ -122,6 +122,9 @@ export function UserSettingsModal({
  const [agentLogs, setAgentLogs] = useState<{ runId: string; mtime: string }[]>([]);
  const [logsLoading, setLogsLoading] = useState(false);
  const [pendingLogDelete, setPendingLogDelete] = useState<string | null>(null);
+ const [toolTests, setToolTests] = useState<ToolCallingTest[]>([]);
+ const [toolTestModel, setToolTestModel] = useState('');
+ const [toolTesting, setToolTesting] = useState(false);
  useEffect(() => {
  if (!open || section !== 'koding') return;
  let cancelled = false;
@@ -131,6 +134,24 @@ export function UserSettingsModal({
  .finally(() => { if (!cancelled) setLogsLoading(false); });
  return () => { cancelled = true; };
  }, [open, section, profile.id]);
+
+ useEffect(() => {
+ if (!open || section !== 'koding') return;
+ let cancelled = false;
+ api.getToolCallingTests().then(result => { if (!cancelled) setToolTests(result.tests); })
+ .catch(() => { if (!cancelled) toast('error', 'Could not load tool-calling test results'); });
+ return () => { cancelled = true; };
+ }, [open, section, profile.id]);
+
+ const runToolTest = async () => {
+ setToolTesting(true);
+ try {
+ const { test } = await api.testToolCalling(toolTestModel.trim() || undefined);
+ setToolTests(prev => [test, ...prev.filter(item => item.model !== test.model || item.source !== test.source)]);
+ } catch (error) {
+ toast('error', error instanceof Error ? error.message : 'Could not test the coding model');
+ } finally { setToolTesting(false); }
+ };
 
  const removeAgentLog = async (runId: string) => {
  try {
@@ -1261,6 +1282,22 @@ export function UserSettingsModal({
  <code className="text-gray-400 font-mono">.agent-memory.md</code>, which is lower priority than
  your rules.
  </p>
+ </div>
+
+ <div className="px-4 py-3 bg-gray-800/30 border border-gray-800 rounded-xl">
+ <p className="text-sm font-medium text-gray-200">Test model tool calling</p>
+ <p className="text-xs text-gray-500 mt-1">Tests one harmless tool call without running it. Leave the name blank to test the assigned coding model. A single test cannot guarantee reliability.</p>
+ <div className="flex gap-2 mt-3">
+ <input value={toolTestModel} onChange={event => setToolTestModel(event.target.value)} placeholder="Assigned coding model" aria-label="Model name" className="min-w-0 flex-1 px-2 py-1.5 bg-gray-900 border border-gray-700 rounded-lg text-xs text-gray-200" />
+ <button onClick={runToolTest} disabled={toolTesting} className="px-3 py-1.5 rounded-lg bg-emerald-700 text-xs text-white disabled:opacity-50">{toolTesting ? 'Testing…' : 'Run test'}</button>
+ </div>
+ {toolTests.length > 0 && <div className="mt-3 max-h-32 overflow-y-auto space-y-2">
+ {toolTests.slice(0, 10).map(test => <div key={`${test.source}:${test.model}`} className="text-xs text-gray-400">
+ <span className={test.status === 'passed' ? 'text-green-400' : test.status === 'failed' ? 'text-amber-400' : 'text-gray-400'}>{test.status}</span>
+ {' · '}{test.model} ({test.source}) · {new Date(test.testedAt).toLocaleString()}
+ <p className="text-gray-500 mt-0.5">{test.detail}</p>
+ </div>)}
+ </div>}
  </div>
 
  <div className="px-4 py-3 bg-gray-800/30 border border-gray-800 rounded-xl">

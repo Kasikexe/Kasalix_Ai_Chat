@@ -1,5 +1,13 @@
 import type { Conversation, ConversationMode, Message, OllamaModel, FileEntry, MemoryData, SearchSource } from '../types';
 
+export interface ToolCallingTest {
+  model: string;
+  source: 'local' | 'cloud';
+  status: 'passed' | 'failed' | 'unknown';
+  detail: string;
+  testedAt: string;
+}
+
 // ─── Server URL Configuration ────────────────────────────
 // On desktop (Electron / browser dev), the Vite proxy handles '/api' -> 'localhost:3001'.
 // On Android (Capacitor), there's no proxy — the app needs the PC's local IP.
@@ -567,6 +575,16 @@ export const api = {
 
   async deleteAgentLog(runId: string): Promise<void> {
     await handleResponse(await fetch(`${API_BASE}/session-logs/${encodeURIComponent(runId)}`, authedFetch(`${API_BASE}/session-logs`, { method: 'DELETE' })));
+  },
+
+  async getToolCallingTests(): Promise<{ tests: ToolCallingTest[] }> {
+    return handleResponse(await fetch(`${API_BASE}/models/tool-tests`, authedFetch(`${API_BASE}/models/tool-tests`)));
+  },
+
+  async testToolCalling(model?: string): Promise<{ test: ToolCallingTest }> {
+    return handleResponse(await fetch(`${API_BASE}/models/tool-test`, authedFetch(`${API_BASE}/models/tool-test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(model ? { model } : {}),
+    })));
   },
 
   /** Delete a file — uses local IPC in Electron, backend API on web */

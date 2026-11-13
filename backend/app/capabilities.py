@@ -9,6 +9,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import hashlib
+from datetime import datetime, timezone
+from typing import Any
 
 import httpx
 
@@ -30,6 +33,7 @@ CACHE_VERSION = 6
 PROBE_TIMEOUT_S = 15.0
 
 _caps_cache: dict[str, dict[str, bool]] = {}
+_tool_use_cache: dict[str, dict[str, Any]] = {}
 _cache_loaded = False
 # Single-flight probes: concurrent callers share one in-flight probe task
 # instead of each hammering Ollama (3 client polls used to fire 3 identical
@@ -66,6 +70,9 @@ async def load_cache() -> None:
                     "thinking": bool(caps["thinking"]),
                     "vision": bool(caps["vision"]) if "vision" in caps else _fallback_vision(model),
                 }
+        checks = data.get("toolUseChecks") or {}
+        if isinstance(checks, dict):
+            _tool_use_cache.update({key: value for key, value in checks.items() if isinstance(value, dict)})
         log_info(f"[capabilities] Loaded {len(_caps_cache)} cached model capabilities")
     except FileNotFoundError:
         pass
@@ -77,7 +84,7 @@ async def save_cache() -> None:
     try:
         os.makedirs(get_data_dir(), exist_ok=True)
         with open(_cache_file(), "w", encoding="utf-8") as f:
-            json.dump({"version": CACHE_VERSION, "models": _caps_cache}, f, indent=2)
+            json.dump({"version": CACHE_VERSION, "models": _caps_cache, "toolUseChecks": _tool_use_cache}, f, indent=2)
     except Exception as e:  # noqa: BLE001
         log_error("[capabilities] Failed to save cache:", e)
 
@@ -94,6 +101,76 @@ _PROBE_TOOL: dict[str, Any] = {
         "parameters": {"type": "object", "properties": {}},
     },
 }
+
+_BEHAVIOR_TOOL = {"type": "function", "function": {"name": "inspect_file", "description": "Inspect a project file.",
+    "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}}
+
+
+def _tool_use_key(model: str, endpoint: str) -> str:
+    fingerprint = hashlib.sha256(endpoint.rstrip("/").encode("utf-8")).hexdigest()[:16]
+    return f"{fingerprint}:{model}"
+
+
+async def get_tool_use_test(model: str, endpoint: str | None = None) -> dict[str, Any] | None:
+    await load_cache()
+    return _tool_use_cache.get(_tool_use_key(model, endpoint or ollama_base_url()))
+
+
+async def list_tool_use_tests() -> list[dict[str, Any]]:
+    await load_cache()
+    return sorted(_tool_use_cache.values(), key=lambda item: item.get("testedAt", ""), reverse=True)
+
+
+async def recently_failed_tool_use(model: str, endpoint: str | None = None) -> bool:
+    result = await get_tool_use_test(model, endpoint)
+    if not result or result.get("status") != "failed":
+        return False
+    try:
+        tested = datetime.fromisoformat(result["testedAt"])
+        return 0 <= (datetime.now(timezone.utc) - tested).total_seconds() <= 7 * 86400
+    except (ValueError, TypeError, KeyError):
+        return False
+
+
+async def test_model_tool_use(model: str, endpoint: str | None = None, api_key: str | None = None, source: str = "local") -> dict[str, Any]:
+    """Test a single harmless synthetic call without executing any tool."""
+    await load_cache()
+    target = (endpoint or ollama_base_url()).rstrip("/")
+    status, detail = "unknown", "The model could not be tested."
+    try:
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(f"{target}/api/chat", headers=headers, json={
+                "model": model,
+                "messages": [{"role": "user", "content": "Use inspect_file to inspect the file src/example.py. Do not answer until you call it."}],
+                "tools": [_BEHAVIOR_TOOL], "stream": False,
+                "options": {"temperature": 0, "num_predict": 256},
+            })
+        if response.status_code >= 400:
+            detail = f"The model endpoint returned HTTP {response.status_code}."
+        else:
+            calls = response.json().get("message", {}).get("tool_calls") or []
+            valid = False
+            for call in calls:
+                function = call.get("function") if isinstance(call, dict) else None
+                if not isinstance(function, dict):
+                    continue
+                args = function.get("arguments")
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except ValueError:
+                        continue
+                if function.get("name") == "inspect_file" and isinstance(args, dict) and args.get("path") == "src/example.py":
+                    valid = True
+            status = "passed" if valid else "failed"
+            detail = "The model produced the requested call with valid arguments." if valid else "The model did not produce the requested call with valid arguments."
+    except (httpx.HTTPError, OSError, ValueError, TypeError, AttributeError):
+        detail = "The model endpoint was unavailable, timed out, or returned an invalid response."
+    result = {"model": model, "source": source, "status": status, "detail": detail, "testedAt": datetime.now(timezone.utc).isoformat()}
+    _tool_use_cache[_tool_use_key(model, target)] = result
+    await save_cache()
+    return result
 
 
 def _response_text(res: Any) -> str:

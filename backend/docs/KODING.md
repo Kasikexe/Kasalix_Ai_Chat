@@ -19,3 +19,10 @@ For a slower model or a different retry budget, add or edit
 
 Timeouts are clamped to 5–1800 seconds and retries to 0–4. These settings are
 per workspace. Keep existing fields in the file if it already exists.
+
+In **Settings → Koding → Test model tool calling**, run a harmless synthetic
+call against the assigned coding model or a model you enter. No tool is
+executed. Results are stored separately from API capability detection. One
+successful check is not a guarantee; a recent failed check makes KODING prefer
+the fallback protocol for that model and endpoint for seven days. Retest after
+changing the model or its template.

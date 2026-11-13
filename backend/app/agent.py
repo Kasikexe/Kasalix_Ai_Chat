@@ -3917,6 +3917,13 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     project_config = await read_project_config(root)
     workspace_profile = await build_workspace_profile(root, (verify or {}).get("command"), project_rules, agent_memory, project_config)
     native_tools = native_tools or bool(opts.get("cloudEndpoint"))
+    try:
+        from .capabilities import recently_failed_tool_use
+        if await recently_failed_tool_use(model, opts.get("cloudEndpoint")):
+            native_tools = False
+            log_info(f"[agent] Recent tool-use test failed for {model}; starting with fallback format")
+    except Exception:  # noqa: BLE001
+        pass
     schemas = native_tool_schemas(available_tools(auto_apply))
     protocol_state = {"mode": "native" if native_tools else "structured" if not opts.get("cloudEndpoint") else "text"}
     action_timeout, action_retry_limit = action_limits(root)
