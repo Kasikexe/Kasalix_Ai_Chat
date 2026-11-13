@@ -130,6 +130,7 @@ async def chat_route(request: Request) -> Any:
             conv_workspace_path = new_conv.get("workspacePath") or req_workspace_path
 
         journal = list((existing if provided_conv_id else new_conv).get("fileChanges") or [])
+        journal_updates: list[asyncio.Task] = []
 
         def on_file_written(write: dict[str, Any], emit: Any) -> None:
             """Record the first pre-change version and latest agent version."""
@@ -160,7 +161,7 @@ async def chat_route(request: Request) -> Any:
                                    "originalContent": original, "originalAvailable": original_available,
                                    "expectedContent": latest, "snapshotAvailable": snapshot_available})
             snapshot = [dict(item) for item in journal]
-            asyncio.create_task(update_conversation(conv_id, owner_id, {"fileChanges": snapshot}))
+            journal_updates.append(asyncio.create_task(update_conversation(conv_id, owner_id, {"fileChanges": snapshot})))
             emit({"type": "file_written", "path": path, "changeType": write.get("changeType"),
                   "originalContent": write.get("originalContent"), "expectedContent": latest,
                   "snapshotAvailable": snapshot_available})
@@ -384,6 +385,8 @@ async def chat_route(request: Request) -> Any:
                         if active_conv_id:
                             await update_conversation(active_conv_id, owner_id, {"agentState": None})
                 finally:
+                    if journal_updates:
+                        await asyncio.gather(*journal_updates, return_exceptions=True)
                     if active_conv_id:
                         active_runs.pop(active_conv_id, None)
                     watcher.cancel()

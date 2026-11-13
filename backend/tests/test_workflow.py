@@ -275,6 +275,38 @@ def _run_loop(workspace: str, responses: list[str]) -> tuple[str, int]:
         agent.stream_chat_with_retry = original
 
 
+def test_streamed_file_changes_persist_first_snapshot(client, auth, tmp_path, monkeypatch):
+    import app.routes.chat as chat_route
+
+    path = tmp_path / "changed.txt"
+    path.write_text("before", encoding="utf-8")
+
+    async def fake_pipeline(opts):
+        path.write_text("first", encoding="utf-8")
+        opts["onFileWritten"]({"path": str(path), "changeType": "edited", "originalContent": "before"})
+        path.write_text("second", encoding="utf-8")
+        opts["onFileWritten"]({"path": str(path), "changeType": "edited", "originalContent": "first"})
+        opts["onChunk"]("Done")
+        return "Done"
+
+    monkeypatch.setattr(chat_route, "run_pipeline", fake_pipeline)
+    token, _ = auth
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.post("/api/chat", headers=headers, json={
+        "model": "fake", "messages": [{"role": "user", "content": "edit"}],
+        "mode": "agent", "workspacePath": str(tmp_path), "autoApply": True,
+    })
+    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+    conversation_id = next(event["conversationId"] for event in events if event.get("type") == "conversationId")
+    saved = client.get(f"/api/conversations/{conversation_id}", headers=headers).json()["conversation"]
+    assert len(saved["fileChanges"]) == 1
+    assert saved["fileChanges"][0]["originalContent"] == "before"
+    assert saved["fileChanges"][0]["expectedContent"] == "second"
+    response = client.post(f"/api/conversations/{conversation_id}/revert-file", headers=headers, json={"filePath": str(path)})
+    assert response.status_code == 200, response.text
+    assert path.read_text(encoding="utf-8") == "before"
+
+
 class TestAgentLoopWorkflow:
     """The multi-round loop: tools chain, run finishes, no false max-steps."""
 
