@@ -12,6 +12,7 @@ import base64
 import json
 import os
 import re
+import signal as signal_module
 import shlex
 import shutil
 import subprocess
@@ -529,7 +530,7 @@ AGENT_TOOL_DEFS: list[dict[str, Any]] = [
     {"name": "list_files", "description": "List files and directories in the workspace (recursive, ignores node_modules/.git/dist etc). Use this to see what exists before editing.", "args": "{}", "mutating": False},
     {"name": "read_file", "description": "Read the contents of a file inside the workspace. Always read a file BEFORE editing it so you know exactly what is in it. Do NOT pass offset/length for normal files — read the whole file in one call; offset/length is ONLY for files larger than 200KB. Pass \"numbers\": true to get line numbers in front of each line (12| code) — needed for edit_lines; never copy those numbers into an edit's text.", "args": '{"path": "src/index.ts"} or {"path": "src/index.ts", "numbers": true} or {"path": "src/index.ts", "offset": 200000, "length": 100000}', "mutating": False},
     {"name": "search_files", "description": "Search the workspace for a text pattern. Returns matching file paths + line numbers. Use to find where things are defined.", "args": '{"query": "function render"}', "mutating": False},
-    {"name": "run_command", "description": "Run a shell command inside the workspace directory (e.g. build, test, install). The command is sandboxed to the workspace. Output is capped. For long-running commands (servers, watchers), set background=true to run async and poll with __bg_status:id.", "args": '{"command": "bun run build", "background": false}', "mutating": False},
+    {"name": "run_command", "description": "Run a shell command with the workspace as its working directory. Commands execute with the server user's permissions and are not filesystem-sandboxed. Output is capped. For long-running commands, set background=true and poll with __bg_status:id.", "args": '{"command": "bun run build", "background": false}', "mutating": False},
     {"name": "play_game", "description": "PLAY a game/interactive Python script headlessly to verify it WORKS — injects scripted keyboard input, steps the game loop for N frames, captures PNG frames, and MEASURES whether the picture actually changes between frames. Use this for pygame/SDL games instead of guessing: pass inputs to steer (e.g. hold right for 20 frames, then down), then read the captured frames with read_image to SEE the result. Reports frames run, any crash, and changed-pixels per frame — 'changedPixels: 0' between frames that should be animating is a REAL BUG (the actor is not moving or is drawn off-screen).", "args": '{"path": "snake.py", "frames": 120, "inputs": [{"frame": 0, "keys": ["right"]}, {"frame": 30, "keys": ["down"]}], "screenshotEvery": 10}', "mutating": False},
     {"name": "run_python", "description": "RUN a Python program to VERIFY it actually works — the fastest way to check a script you wrote or changed instead of guessing. Pass path (a .py file in the workspace) or code (an inline snippet). Runs with a timeout (games/event loops cannot hang the run), captures stdout/stderr + exit code, and by default sets HEADLESS graphics (SDL_VIDEODRIVER=dummy, matplotlib Agg) so pygame/SDL programs run with no monitor. Use this after writing or fixing any Python script, BEFORE you tell the user it works.", "args": '{"path": "snake.py"} or {"code": "import snake; print(snake.__file__)", "timeout": 15}', "mutating": False},
     {"name": "web_search", "description": "Search the live web and return current, real-time information (docs, APIs, syntax, news). Use when you need up-to-date knowledge that is not in your training data — search BEFORE you answer anything version-, API- or price-shaped, and cite the pages you used. If a search comes back empty, one retry with different words is worth it. Results are capped.", "args": '{"query": "python requests library latest API"}', "mutating": False},
@@ -995,6 +996,49 @@ async def authorize_tool_calls(
 NOOP_OK_TOOLS = {"write_file", "edit_lines", "edit_section"}
 
 
+def process_group_options() -> dict[str, Any]:
+    return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if sys.platform == "win32" else {"start_new_session": True}
+
+
+async def kill_process_tree(proc: asyncio.subprocess.Process) -> None:
+    """Stop the process group started for an agent command."""
+    if proc.returncode is not None:
+        return
+    try:
+        if sys.platform == "win32":
+            killer = await asyncio.create_subprocess_exec("taskkill", "/PID", str(proc.pid), "/T", "/F", stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            await asyncio.wait_for(killer.wait(), timeout=5)
+        else:
+            os.killpg(proc.pid, signal_module.SIGKILL)
+    except (OSError, ProcessLookupError, asyncio.TimeoutError):
+        pass
+    if proc.returncode is None:
+        try:
+            proc.kill()
+        except (OSError, ProcessLookupError):
+            pass
+
+
+async def communicate_with_stop(proc: asyncio.subprocess.Process, timeout: float, stop: asyncio.Event | None = None, input: bytes | None = None) -> tuple[bytes, bytes]:
+    communication = asyncio.create_task(proc.communicate(input=input) if input is not None else proc.communicate())
+    stopped = asyncio.create_task(stop.wait()) if stop is not None else None
+    try:
+        done, _ = await asyncio.wait({communication, *([stopped] if stopped else [])}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+        if stopped and stopped in done:
+            raise asyncio.CancelledError()
+        if communication not in done:
+            raise asyncio.TimeoutError()
+        return communication.result()
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        await kill_process_tree(proc)
+        communication.cancel()
+        await asyncio.gather(communication, return_exceptions=True)
+        raise
+    finally:
+        if stopped:
+            stopped.cancel()
+
+
 def git_exclude_args(root: str) -> list[str]:
     args = ["--", "."]
     protected = set(PROTECTED_DIRS) | set(protected_dirs_label(root).split(", "))
@@ -1435,7 +1479,7 @@ async def execute_tool(
             for tok in tokens
         )
         if dangerous.search(cmd) or escapes_workspace or touches_protected or touches_rules:
-            return await deny_out(f"Command blocked for security (must stay inside the workspace and must not touch protected directories or the USER RULES file: {protected_dirs_label(root)}).")
+            return await deny_out(f"Command matches a blocked command or protected path ({protected_dirs_label(root)}). Command filtering is not a filesystem sandbox.")
 
         is_background = args.get("background") is True
         if is_background:
@@ -1446,6 +1490,7 @@ async def execute_tool(
                     cwd=root,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    **process_group_options(),
                 )
             except Exception as e:  # noqa: BLE001
                 return await deny_out(f"Failed to start command: {e}")
@@ -1468,7 +1513,18 @@ async def execute_tool(
                 finally:
                     entry["done"] = True
 
-            asyncio.create_task(_pump(child, bg_entry))
+            pump_task = asyncio.create_task(_pump(child, bg_entry))
+            stop = (extra or {}).get("signal")
+            if stop is not None:
+                async def stop_background() -> None:
+                    stop_task = asyncio.create_task(stop.wait())
+                    try:
+                        done, _ = await asyncio.wait({stop_task, pump_task}, return_when=asyncio.FIRST_COMPLETED)
+                        if stop_task in done:
+                            await kill_process_tree(child)
+                    finally:
+                        stop_task.cancel()
+                asyncio.create_task(stop_background())
             return {"ok": True, "output": f'Command started in background (ID: {bg_id}). Use run_command with {{"command": "__bg_status:{bg_id}"}} to check status/output.'}
 
         if cmd.startswith("__bg_status:"):
@@ -1488,11 +1544,11 @@ async def execute_tool(
                 cwd=root,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **process_group_options(),
             )
             try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+                stdout, stderr = await communicate_with_stop(proc, 600, (extra or {}).get("signal"))
             except asyncio.TimeoutError:
-                proc.kill()
                 return await deny_out("Command timed out after 10 minutes.")
             out = (stdout or b"").decode("utf-8", "replace") + (f"\n[stderr]\n{(stderr or b'').decode('utf-8', 'replace')}" if stderr else "")
             out = out.strip()
@@ -1574,6 +1630,7 @@ async def execute_tool(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                **process_group_options(),
             )
         except Exception as e:  # noqa: BLE001
             if temp_file:
@@ -1585,19 +1642,19 @@ async def execute_tool(
 
         timed_out = False
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(input=stdin_bytes), timeout=timeout)
+            stdout, stderr = await communicate_with_stop(proc, timeout, (extra or {}).get("signal"), input=stdin_bytes)
             exit_code = proc.returncode
         except asyncio.TimeoutError:
             timed_out = True
-            try:
-                proc.kill()
-            except (ProcessLookupError, OSError):  # noqa: S110
-                pass
-            try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5)
-            except Exception:  # noqa: BLE001
-                stdout, stderr = b"", b""
+            stdout, stderr = b"", b""
             exit_code = proc.returncode
+        except asyncio.CancelledError:
+            if temp_file:
+                try:
+                    os.remove(temp_file)
+                except OSError:
+                    pass
+            raise
         except Exception as e:  # noqa: BLE001
             if temp_file:
                 try:
@@ -1730,14 +1787,15 @@ async def execute_tool(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                **process_group_options(),
             )
             try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=wall_limit + 20)
+                stdout, stderr = await communicate_with_stop(proc, wall_limit + 20, (extra or {}).get("signal"))
             except asyncio.TimeoutError:
-                try:
-                    proc.kill()
-                except (ProcessLookupError, OSError):  # noqa: S110
-                    pass
+                pass
+        except asyncio.CancelledError:
+            shutil.rmtree(workdir, ignore_errors=True)
+            raise
         except Exception as e:  # noqa: BLE001
             shutil.rmtree(workdir, ignore_errors=True)
             return await deny_out(f"play_game: failed to start the game harness: {e}")
@@ -3675,7 +3733,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     if auto_apply and verify and not (resume_state.get("history") or []) and looks_like_bug_hunt:
         _cb(opts, "onStage", "agent:verify")
         verify_cap = 3000
-        baseline_out = await _run_verify(verify["command"], root, verify_cap)
+        baseline_out = await _run_verify(verify["command"], root, verify_cap, signal)
         history.append({
             "role": "user",
             "content": f"[BASELINE VERIFICATION — run BEFORE any changes, current state of the project. {verify['label']} ({verify['command']})]\n{baseline_out}\n\nThis is the result of running the verify command before you changed anything. Use it to understand what currently works and what is broken. After you make changes, the same command runs automatically and you will see whether it passes.",
@@ -3687,7 +3745,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
         # model starts from evidence ("it really is stuck") rather than belief.
         _cb(opts, "onStage", "agent:verify")
         log_info(f"[agent] Baseline game check: playing {game_target['path']}")
-        baseline_check = await run_game_check(root, game_target, use_vision_model=use_vision_model)
+        baseline_check = await run_game_check(root, game_target, use_vision_model=use_vision_model, signal=signal)
         last_game_verdict = baseline_check["verdict"]
         last_game_failed = not baseline_check["ok"]
         game_verify_count += 1
@@ -4400,7 +4458,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     _cb(opts, "onToolStart", tc)
                     log_info(f"[agent] Tool call (parallel): {tc['tool']} {json.dumps(tc['args'])[:100]}")
                     await session_log.log_tool_call(tc["tool"], tc["args"])
-                    r = await execute_tool(root, tc, auto_apply, extra={"use_vision_model": use_vision_model})
+                    r = await execute_tool(root, tc, auto_apply, extra={"use_vision_model": use_vision_model, "signal": signal})
                     seen_outcomes[f"{tc['tool']}:{json.dumps(tc['args'], sort_keys=True)}"] = bool(r["ok"])
                     await session_log.log_tool_result(tc["tool"], r["output"], r["ok"])
                     _cb(opts, "onToolResult", {"tool": tc["tool"], "ok": r["ok"], "output": str(r["output"])[:2000]})
@@ -4430,7 +4488,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     _cb(opts, "onToolStart", tc)
                     log_info(f"[agent] Tool call: {tc['tool']} {json.dumps(tc['args'])[:120]}")
                     await session_log.log_tool_call(tc["tool"], tc["args"])
-                    result = await execute_tool(root, tc, auto_apply, extra={"use_vision_model": use_vision_model})
+                    result = await execute_tool(root, tc, auto_apply, extra={"use_vision_model": use_vision_model, "signal": signal})
                     seen_outcomes[f"{tc['tool']}:{json.dumps(tc['args'], sort_keys=True)}"] = bool(result["ok"])
                     # Raw screenshot for a vision-capable code model: the image
                     # rides on this variable into the ONE history append below
@@ -4590,7 +4648,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             if auto_apply and last_mutating and verify:
                 _cb(opts, "onStage", "agent:verify")
                 log_info(f"[agent] Verifying after {last_mutating['tool']}: {verify['command']}")
-                verify_out = await _run_verify(verify["command"], root, 3000)
+                verify_out = await _run_verify(verify["command"], root, 3000, signal)
                 history.append({
                     "role": "user",
                     "content": f"[VERIFICATION RESULT — {verify['label']} ({verify['command']})]\n{verify_out}\n\nThis is a verification you requested. If it PASSED, continue with the next step or finish the task. If it FAILED, call a tool (e.g. read_file / edit_file) to fix the code, then the verification will run again automatically.",
@@ -4615,7 +4673,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 game_verify_count += 1
                 _cb(opts, "onStage", "agent:verify")
                 log_info(f"[agent] Game check after {game_edit['tool']}: replaying {game_target['path']}")
-                check = await run_game_check(root, game_target, use_vision_model=use_vision_model)
+                check = await run_game_check(root, game_target, use_vision_model=use_vision_model, signal=signal)
                 last_game_verdict = check["verdict"]
                 last_game_failed = not check["ok"]
                 history.append({"role": "user", "content": game_verify_message(check, game_target)})
@@ -4810,6 +4868,7 @@ async def run_game_check(
     frames: int | None = None,
     inputs: list[dict[str, Any]] | None = None,
     use_vision_model: bool = False,
+    signal: asyncio.Event | None = None,
 ) -> dict[str, Any]:
     """Play the detected game headlessly and classify the outcome."""
     call_args: dict[str, Any] = {
@@ -4824,7 +4883,7 @@ async def run_game_check(
             root,
             {"tool": "play_game", "args": call_args},
             True,
-            extra={"use_vision_model": use_vision_model, "game_auto": True},
+            extra={"use_vision_model": use_vision_model, "game_auto": True, "signal": signal},
         )
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "verdict": "failed", "output": f"game check could not run: {e}"}
@@ -4872,7 +4931,7 @@ def game_verify_message(
     return f"{head}\n{check['output']}\n{tail}"
 
 
-async def _run_verify(command: str, root: str, cap: int) -> str:
+async def _run_verify(command: str, root: str, cap: int, signal: asyncio.Event | None = None) -> str:
     """Run a verify command; returns capped output with FAILED prefix on error."""
     try:
         proc = await asyncio.create_subprocess_shell(
@@ -4880,11 +4939,11 @@ async def _run_verify(command: str, root: str, cap: int) -> str:
             cwd=root,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **process_group_options(),
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+            stdout, stderr = await communicate_with_stop(proc, 60, signal)
         except asyncio.TimeoutError:
-            proc.kill()
             return "FAILED (exit code ?):\nCommand timed out after 60 seconds"
         out = (stdout or b"").decode("utf-8", "replace") + (f"\n[stderr]\n{(stderr or b'').decode('utf-8', 'replace')}" if stderr else "")
         out = out.strip()
