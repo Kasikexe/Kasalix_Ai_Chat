@@ -1,11 +1,11 @@
 // Shared service for fetching release notes from the GitHub Releases API.
 // Used by the Changelog view and the update notification banner.
 
-import { GITHUB_RELEASES_API, RELEASES_URL } from '../config';
+import { GITHUB_RELEASE_REPO, GITHUB_RELEASES_API, RELEASES_URL } from '../config';
 
 export const GITHUB_RELEASES_PAGE = RELEASES_URL;
 // Cache releases briefly so the GitHub API (rate-limited) isn't hit repeatedly
-const CACHE_KEY = 'kasalix:changelog:releases';
+const CACHE_KEY = `kasalix:changelog:releases:${GITHUB_RELEASE_REPO}`;
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 export interface ChangelogEntry {

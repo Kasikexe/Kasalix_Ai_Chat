@@ -35,6 +35,7 @@ from .config import (
     get_generated_images_dir,
     get_release_dir,
     get_static_dir,
+    github_releases_url,
     port,
 )
 from .deps import SESSION_PROTECTED_PATHS, session_authenticated, user_id_from_request
@@ -360,7 +361,7 @@ async def execute_tool_route(request: Request) -> Response:
 
 # ─── Download page + release files ────────────────────────────
 RELEASE_DIR = get_release_dir()
-GITHUB_RELEASES_URL = os.environ.get("GITHUB_RELEASES_URL") or f"https://github.com/{os.environ.get('GITHUB_REPO') or 'Kasikexe/Kasalix'}/releases"
+GITHUB_RELEASES_URL = github_releases_url()
 
 DOWNLOAD_HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en" class="dark">

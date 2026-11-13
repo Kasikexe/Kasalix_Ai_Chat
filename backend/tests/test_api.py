@@ -42,6 +42,33 @@ def _h(token, user_id=None):
     return headers
 
 
+def test_release_repository_defaults_and_overrides(monkeypatch):
+    from app.config import github_releases_url
+
+    monkeypatch.delenv("GITHUB_RELEASES_URL", raising=False)
+    monkeypatch.delenv("GITHUB_RELEASE_REPO", raising=False)
+    monkeypatch.delenv("GITHUB_REPO", raising=False)
+    assert github_releases_url() == "https://github.com/Kasikexe/Kasalix_Ai_Chat/releases"
+    monkeypatch.setenv("GITHUB_REPO", "fork/shared")
+    assert github_releases_url() == "https://github.com/fork/shared/releases"
+    monkeypatch.setenv("GITHUB_RELEASE_REPO", "fork/releases")
+    assert github_releases_url() == "https://github.com/fork/releases/releases"
+    monkeypatch.setenv("GITHUB_RELEASES_URL", "https://example.test/releases")
+    assert github_releases_url() == "https://example.test/releases"
+
+
+def test_download_fallback_points_to_release_repository(client, monkeypatch, tmp_path):
+    import app.main as main
+
+    monkeypatch.setattr(main, "RELEASE_DIR", tmp_path)
+    release_url = "https://github.com/Kasikexe/Kasalix_Ai_Chat/releases"
+    assert release_url in client.get("/download").text
+    for platform in ("desktop", "android"):
+        response = client.get(f"/download/{platform}", follow_redirects=False)
+        assert response.status_code == 307
+        assert response.headers["location"] == release_url
+
+
 class TestAuth:
     def test_register_login_me(self, client, auth):
         token, user_id = auth

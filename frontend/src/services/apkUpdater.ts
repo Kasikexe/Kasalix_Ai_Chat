@@ -7,7 +7,7 @@
 // grant is requested on demand.
 
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
-import { GITHUB_REPO } from '../config';
+import { GITHUB_RELEASE_REPO } from '../config';
 
 export interface ApkUpdaterPluginInterface {
   getVersion(): Promise<{ version: string; build: number }>;
@@ -37,7 +37,7 @@ export async function getInstalledApkVersion(): Promise<string> {
 /** Latest GitHub release version + its APK download URL, or null. */
 export async function getLatestApkRelease(): Promise<{ version: string; url: string } | null> {
   try {
-    const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
+    const res = await fetch(`https://api.github.com/repos/${GITHUB_RELEASE_REPO}/releases/latest`, {
       headers: { Accept: 'application/vnd.github.v3+json' },
     });
     if (!res.ok) return null;

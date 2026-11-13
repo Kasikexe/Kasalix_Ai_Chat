@@ -356,7 +356,7 @@ app.on('certificate-error', (event, _webContents, url, _error, _certificate, cal
 // via a detached helper after this app quits. No backend involvement,
 // so updates work no matter which server the client is connected to.
 
-const GITHUB_REPO = process.env.KASALIX_REPO || 'Kasikexe/Kasalix';
+const GITHUB_REPO = process.env.KASALIX_RELEASE_REPO || process.env.KASALIX_REPO || 'Kasikexe/Kasalix_Ai_Chat';
 const GITHUB_REPO_API = `https://api.github.com/repos/${GITHUB_REPO}`;
 const GITHUB_API = `${GITHUB_REPO_API}/releases/latest`;
 

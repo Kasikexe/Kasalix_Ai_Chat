@@ -471,9 +471,9 @@ app.post('/api/tools/execute', async (c) => {
 const RELEASE_DIR = path.join(process.cwd(), '..', 'release');
 
 // ─── Branding / upstream repo ──────────────────────────────────
-// Override with GITHUB_REPO ("owner/name") or GITHUB_RELEASES_URL
+// Override with GITHUB_RELEASE_REPO, GITHUB_REPO, or GITHUB_RELEASES_URL
 // when running a rebranded fork.
-const GITHUB_REPO = process.env.GITHUB_REPO || 'Kasikexe/Kasalix';
+const GITHUB_REPO = process.env.GITHUB_RELEASE_REPO || process.env.GITHUB_REPO || 'Kasikexe/Kasalix_Ai_Chat';
 const GITHUB_RELEASES_URL =
   process.env.GITHUB_RELEASES_URL || `https://github.com/${GITHUB_REPO}/releases`;
 

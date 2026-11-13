@@ -73,7 +73,8 @@ def github_releases_url() -> str:
     env = os.environ.get("GITHUB_RELEASES_URL")
     if env:
         return env
-    return f"https://github.com/{github_repo()}/releases"
+    release_repo = os.environ.get("GITHUB_RELEASE_REPO") or os.environ.get("GITHUB_REPO") or "Kasikexe/Kasalix_Ai_Chat"
+    return f"https://github.com/{release_repo}/releases"
 
 
 def app_version() -> str:
