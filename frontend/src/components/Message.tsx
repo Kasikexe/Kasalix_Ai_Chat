@@ -544,7 +544,7 @@ function TimelineRow({ event, isStreaming, isLast }: { event: TimelineEvent; isS
    git_commit: GitBranch, ask_user: HelpCircle, rename_file: PenLine, create_directory: FolderPlus,
    file_exists: FileText, read_url: Link2, diff_files: FileDiff, replace_in_file: Scissors,
    count_lines: Ruler, glob: Search, multi_edit: Scissors, edit_lines: Scissors, edit_section: Scissors,
-   delegate_to_subagent: Bot,
+   delegate_to_subagent: Bot, browser: Globe,
    read_image: Eye, find_references: Search, refactor_rename: PenLine, gen_image: ImageIcon, draw_image: Palette,
  };
  const ToolIcon = toolIcons[event.tool] || Wrench;
@@ -573,6 +573,7 @@ function TimelineRow({ event, isStreaming, isLast }: { event: TimelineEvent; isS
      {Header}
      {expanded && event.type === 'tool' && (
        <div className="mx-2.5 mb-1 rounded border border-gray-800 bg-[#0d1117] max-h-56 overflow-y-auto">
+         {event.args && <div className="px-2 py-1 text-[10px] font-mono text-gray-400 whitespace-pre-wrap break-words border-b border-gray-800/60">{event.args}</div>}
          <div className="px-2 py-1 border-b border-gray-800/60 text-[9px] uppercase tracking-wider text-gray-600 font-sans">
            {resultIsDiff ? 'Changes' : event.tool === 'run_command' || event.tool === 'run_python' || event.tool === 'play_game' ? 'Output' : 'Result'}
          </div>

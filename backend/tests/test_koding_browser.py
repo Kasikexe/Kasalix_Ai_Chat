@@ -30,6 +30,12 @@ def test_invalid_browser_actions_are_rejected(tmp_path, args):
     assert not result["ok"]
 
 
+def test_browser_validation_names_unexpected_arguments():
+    names = {tool["name"] for tool in agent.available_tools(True)}
+    with pytest.raises(ValueError, match="inspect does not accept url"):
+        normalize_native_calls([{"function": {"name": "browser", "arguments": {"operation": "inspect", "url": "http://localhost"}}}], names)
+
+
 @pytest.mark.parametrize("url", ["https://example.com", "file:///etc/passwd", "http://localhost@evil.test", "http://@localhost", "http://127.0.0.1:99999"])
 def test_browser_rejects_nonlocal_or_invalid_urls(tmp_path, url):
     result = asyncio.run(agent.execute_tool(str(tmp_path), {"tool": "browser", "args": {"operation": "open", "url": url}}, True))

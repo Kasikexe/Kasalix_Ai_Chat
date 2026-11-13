@@ -143,7 +143,7 @@ function installKodingBrowser(getWindow) {
         if (pending.cancelled) return { ok: false, error: 'Browser action cancelled.' };
         return { ok: true, output: `Opened ${entry.view.webContents.getURL()} in the visible Koding browser.` };
       }
-      if (!active || active.sessionId !== sessionId || active.view.webContents.isDestroyed()) return { ok: false, error: 'No browser is open for this Koding run.' };
+      if (!active || active.sessionId !== sessionId || active.view.webContents.isDestroyed()) return { ok: false, error: 'No browser is open for this chat. Open a static page with browser {"operation":"open","path":"index.html"}, or open the actual local server URL.' };
       if (args.operation === 'close') { destroy(); return { ok: true, output: 'Closed the Koding browser.' }; }
       // The approval modal may have just closed; let the renderer restore the pane.
       for (let i = 0; i < 40 && active && active.sessionId === sessionId && !active.visible && !pending.cancelled; i++) await new Promise((resolve) => setTimeout(resolve, 50));
@@ -177,14 +177,19 @@ function installKodingBrowser(getWindow) {
         if (typeof args.selector !== 'string' || args.selector.length > 4096) return { ok: false, error: 'A valid selector is required.' };
         contents.focus();
         const selector = JSON.stringify(args.selector);
-        await contents.executeJavaScript(`(() => {
-          const el = document.querySelector(${selector});
-          if (!el || !el.getClientRects().length || el.disabled) throw new Error('Element not found, visible, or enabled');
-          el.scrollIntoView({block:'center',inline:'center'}); el.focus();
-          if (el.animate) el.animate([{outline:'3px solid #8b5cf6'},{outline:'3px solid transparent'}], {duration:900});
-          ${args.operation === 'type' ? "if (!('value' in el) && !el.isContentEditable) throw new Error('Element is not editable'); if (el.select) el.select();" : ''}
-          return true;
+        const prepared = await contents.executeJavaScript(`(() => {
+          try {
+            const el = document.querySelector(${selector});
+            if (!el) return {ok:false,error:'No element matches this selector. Use browser inspect to find a current selector.'};
+            if (!el.getClientRects().length) return {ok:false,error:'The matching element is not visible.'};
+            if (el.disabled) return {ok:false,error:'The matching element is disabled.'};
+            el.scrollIntoView({block:'center',inline:'center'}); el.focus();
+            if (el.animate) el.animate([{outline:'3px solid #8b5cf6'},{outline:'3px solid transparent'}], {duration:900});
+            ${args.operation === 'type' ? "if (!('value' in el) && !el.isContentEditable) return {ok:false,error:'The matching element is not editable.'}; if (el.select) el.select();" : ''}
+            return {ok:true};
+          } catch (error) { return {ok:false,error:'Invalid selector or page error: ' + String(error.message || error)}; }
         })()`);
+        if (!prepared.ok) return { ok: false, error: `${args.operation} ${args.selector}: ${prepared.error}` };
         if (pending.cancelled) return { ok: false, error: 'Browser action cancelled.' };
         if (args.operation === 'click') {
           await contents.executeJavaScript(`(() => { const el = document.querySelector(${selector}); if (!el) throw new Error('Element disappeared'); el.click(); })()`);
@@ -206,7 +211,12 @@ function installKodingBrowser(getWindow) {
       }
       return { ok: false, error: 'Unknown browser operation.' };
     } catch (error) {
-      return { ok: false, error: error?.message || String(error) };
+      if (pending.cancelled) return { ok: false, error: 'Browser action cancelled.' };
+      const message = error?.message || String(error);
+      if (args.operation === 'open' && message.includes('ERR_CONNECTION_REFUSED')) {
+        return { ok: false, error: `Could not connect to ${args.url}. No server accepted the connection. For a static HTML page use browser open with path: "index.html"; for a framework app start its dev server and use its actual URL.` };
+      }
+      return { ok: false, error: `browser ${args.operation}: ${message}` };
     } finally {
       pendingActions.delete(request.key);
     }

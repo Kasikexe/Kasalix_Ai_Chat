@@ -521,7 +521,13 @@ export function useChat(
           onAgentTool: (call) => {
             e.handlers.onAgentTool?.(call);
             // Append a tool event to the assistant message's timeline
-            const argPreview = typeof call.args?.path === 'string'
+            const argPreview = call.tool === 'browser'
+              ? [call.args?.operation, call.args?.path || call.args?.url || call.args?.selector].filter((v) => typeof v === 'string').join(' ')
+              : call.tool === 'run_command' && typeof call.args?.operation === 'string' && call.args.operation !== 'start'
+              ? [call.args.operation, call.args.process_id].filter((v) => typeof v === 'string').join(' ')
+              : call.tool === 'run_command' && typeof call.args?.command === 'string'
+              ? call.args.command + (typeof call.args.cwd === 'string' ? ` (cwd: ${call.args.cwd})` : '')
+              : typeof call.args?.path === 'string'
               ? call.args.path
               : typeof call.args?.command === 'string'
               ? call.args.command

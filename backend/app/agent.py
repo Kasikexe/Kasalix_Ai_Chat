@@ -1489,7 +1489,8 @@ async def execute_tool(
             return await deny_out('run_command requires a workspace-relative "cwd".')
         directory = await resolve_in_workspace(root, cwd)
         if not directory or not os.path.isdir(directory):
-            return await deny_out(f'run_command: working directory "{cwd}" is unavailable or outside the workspace.')
+            return await deny_out(f'run_command: working directory "{cwd}" is unavailable or outside the workspace. '
+                                  'cwd is relative to the workspace root; use "." for the root or list_files to find a subfolder.')
         stop = (extra or {}).get("signal")
         if stop is not None and stop.is_set():
             raise asyncio.CancelledError()

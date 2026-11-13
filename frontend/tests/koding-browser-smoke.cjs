@@ -40,6 +40,10 @@ app.whenReady().then(async () => {
     assert(!otherChat.ok && (await invoke('koding-browser-state')).sessionId === 'smoke');
     const before = await call({ operation: 'inspect' });
     assert(before.ok && before.output.includes('Smoke test') && before.output.includes('#name'), JSON.stringify(before));
+    const missing = await call({ operation: 'click', selector: '#does-not-exist' });
+    assert(!missing.ok && missing.error.includes('#does-not-exist') && missing.error.includes('inspect'), JSON.stringify(missing));
+    const invalid = await call({ operation: 'click', selector: '[' });
+    assert(!invalid.ok && invalid.error.includes('Invalid selector'), JSON.stringify(invalid));
     const typed = await call({ operation: 'type', selector: '#name', text: 'Hello Koding' });
     assert(typed.ok, JSON.stringify(typed));
     const typedPage = await call({ operation: 'inspect' });
@@ -59,6 +63,12 @@ app.whenReady().then(async () => {
     }
     const external = await call({ operation: 'open', url: 'https://example.com/' });
     assert(!external.ok);
+    const unused = http.createServer();
+    await new Promise((resolve) => unused.listen(0, '127.0.0.1', resolve));
+    const unusedPort = unused.address().port;
+    await new Promise((resolve) => unused.close(resolve));
+    const refused = await call({ operation: 'open', url: `http://127.0.0.1:${unusedPort}/` });
+    assert(!refused.ok && refused.error.includes('No server accepted') && refused.error.includes('index.html'), JSON.stringify(refused));
     const closed = await call({ operation: 'close' });
     assert(closed.ok);
     assert.strictEqual(await invoke('koding-browser-state'), null);

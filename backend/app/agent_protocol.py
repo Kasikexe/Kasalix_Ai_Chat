@@ -67,8 +67,10 @@ def validate_browser_args(args: dict[str, Any]) -> str | None:
     }
     if not isinstance(operation, str) or operation not in allowed:
         return "browser operation must be open, inspect, click, type, screenshot, console, or close."
-    if set(args) - allowed[operation]:
-        return "Unexpected browser arguments for this operation."
+    unexpected = set(args) - allowed[operation]
+    if unexpected:
+        return (f"browser {operation} does not accept {', '.join(sorted(unexpected))}. "
+                f"Allowed arguments: {', '.join(sorted(allowed[operation]))}.")
     if operation == "open" and "url" in args and "path" in args:
         return "browser open accepts either url or path, not both."
     required = {"click": ("selector",), "type": ("selector", "text")}.get(operation, ())
@@ -126,6 +128,8 @@ def normalize_native_calls(calls: list[dict[str, Any]], permitted: set[str]) -> 
             except ValueError as exc:
                 raise ValueError(f"Invalid arguments for {name}") from exc
         required, optional = TOOL_ARGUMENTS[name]
+        if name == "browser" and isinstance(args, dict) and validate_browser_args(args):
+            raise ValueError(validate_browser_args(args))
         schema = {"type": "object", "properties": {**required, **optional}, "required": list(required)}
         if not _valid(args, schema):
             raise ValueError(f"Invalid arguments for {name}")
