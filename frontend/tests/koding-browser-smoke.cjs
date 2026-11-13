@@ -14,7 +14,19 @@ app.whenReady().then(async () => {
     assert(!isLocalUrl('http://localhost@example.com/'));
     server = http.createServer((_request, response) => {
       response.writeHead(200, { 'Content-Type': 'text/html' });
-      response.end('<!doctype html><title>Smoke test</title><input id="name"><button id="go" onclick="document.querySelector(\'#result\').textContent = document.querySelector(\'#name\').value; console.error(\'test error\')">Go</button><div id="result">Waiting</div>');
+      response.end(`<!doctype html><title>Smoke test</title><input id="name"><button id="go" onclick="document.querySelector('#result').textContent = document.querySelector('#name').value; console.error('test error')">Go</button><div id="result">Waiting</div><div id="pointer-result">No pointer</div>
+        <script>
+          let pointerSeen = false;
+          new MutationObserver(() => {
+            const pointer = document.querySelector('[data-koding-ai-pointer="true"]');
+            if (pointer && pointer.style.pointerEvents === 'none' && pointer.style.opacity === '0.55' && pointer.style.transition.includes('transform')) {
+              pointerSeen = true;
+              document.querySelector('#pointer-result').textContent = 'Animated pointer seen';
+            } else if (!pointer && pointerSeen) {
+              document.querySelector('#pointer-result').textContent = 'Pointer removed';
+            }
+          }).observe(document.documentElement, {childList:true});
+        </script>`);
     });
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     win = new BrowserWindow({ show: true, x: -10000, y: -10000, opacity: 0, skipTaskbar: true, width: 900, height: 700,
@@ -47,7 +59,13 @@ app.whenReady().then(async () => {
     const typed = await call({ operation: 'type', selector: '#name', text: 'Hello Koding' });
     assert(typed.ok, JSON.stringify(typed));
     const typedPage = await call({ operation: 'inspect' });
-    assert(typedPage.output.includes('Hello Koding'), JSON.stringify(typedPage));
+    assert(typedPage.output.includes('Hello Koding') && typedPage.output.includes('Animated pointer seen'), JSON.stringify(typedPage));
+    const cancelledClick = invoke('koding-browser-action', { key: 'cancel-click', sessionId: 'smoke', conversationId: 'chat',
+      args: { operation: 'click', selector: '#go' } });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert(await invoke('koding-browser-cancel', 'cancel-click'));
+    assert(!(await cancelledClick).ok);
+    assert(JSON.parse((await call({ operation: 'inspect' })).output).text.includes('Waiting'));
     const clicked = await call({ operation: 'click', selector: '#go' });
     assert(clicked.ok, JSON.stringify(clicked));
     const after = await call({ operation: 'inspect' });
@@ -61,6 +79,12 @@ app.whenReady().then(async () => {
       assert(String(screenshot.error).includes('surface not available'), JSON.stringify(screenshot));
       console.log('Screenshot capture skipped: no display surface for the hidden test window.');
     }
+    let pointerRemoved = false;
+    for (let i = 0; i < 20 && !pointerRemoved; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      pointerRemoved = JSON.parse((await call({ operation: 'inspect' })).output).text.includes('Pointer removed');
+    }
+    assert(pointerRemoved, 'The pointer should disappear after the action');
     const external = await call({ operation: 'open', url: 'https://example.com/' });
     assert(!external.ok);
     const unused = http.createServer();

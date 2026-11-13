@@ -175,6 +175,7 @@ function installKodingBrowser(getWindow) {
       }
       if (args.operation === 'click' || args.operation === 'type') {
         if (typeof args.selector !== 'string' || args.selector.length > 4096) return { ok: false, error: 'A valid selector is required.' };
+        if (args.operation === 'type' && (typeof args.text !== 'string' || args.text.length > 4096)) return { ok: false, error: 'A valid text value is required.' };
         contents.focus();
         const selector = JSON.stringify(args.selector);
         const prepared = await contents.executeJavaScript(`(() => {
@@ -183,18 +184,44 @@ function installKodingBrowser(getWindow) {
             if (!el) return {ok:false,error:'No element matches this selector. Use browser inspect to find a current selector.'};
             if (!el.getClientRects().length) return {ok:false,error:'The matching element is not visible.'};
             if (el.disabled) return {ok:false,error:'The matching element is disabled.'};
+            ${args.operation === 'type' ? "if (!('value' in el) && !el.isContentEditable) return {ok:false,error:'The matching element is not editable.'};" : ''}
             el.scrollIntoView({block:'center',inline:'center'}); el.focus();
             if (el.animate) el.animate([{outline:'3px solid #8b5cf6'},{outline:'3px solid transparent'}], {duration:900});
-            ${args.operation === 'type' ? "if (!('value' in el) && !el.isContentEditable) return {ok:false,error:'The matching element is not editable.'}; if (el.select) el.select();" : ''}
+            ${args.operation === 'type' ? 'if (el.select) el.select();' : ''}
+            // The page is a native view above the app UI, so draw a temporary,
+            // non-interactive marker in the page itself.
+            let pointer = document.querySelector('[data-koding-ai-pointer="true"]');
+            if (!pointer) {
+              pointer = document.createElement('div');
+              pointer.dataset.kodingAiPointer = 'true';
+              pointer.setAttribute('aria-hidden', 'true');
+              pointer.style.cssText = 'all:initial;position:fixed;left:0;top:0;width:20px;height:20px;z-index:2147483647;pointer-events:none;opacity:0.55;transition:transform 450ms ease-in-out,opacity 250ms ease;transform:translate3d(' + (innerWidth / 2 - 10) + 'px,' + (innerHeight / 2 - 10) + 'px,0)';
+              const dot = document.createElement('div');
+              dot.style.cssText = 'box-sizing:border-box;width:20px;height:20px;border:2px solid white;border-radius:50%;background:#8b5cf6;box-shadow:0 0 0 2px #6d28d9,0 2px 8px #0008';
+              pointer.attachShadow({mode:'closed'}).appendChild(dot);
+              document.documentElement.appendChild(pointer);
+              pointer.getBoundingClientRect(); // Establish the starting position before moving.
+            }
+            clearTimeout(pointer._kodingFadeTimer); clearTimeout(pointer._kodingRemoveTimer);
+            pointer.style.opacity = '0.55';
+            const rect = el.getBoundingClientRect();
+            const x = Math.max(0, Math.min(innerWidth, rect.left + rect.width / 2)) - 10;
+            const y = Math.max(0, Math.min(innerHeight, rect.top + rect.height / 2)) - 10;
+            pointer.style.transform = 'translate3d(' + x + 'px,' + y + 'px,0)';
+            pointer._kodingFadeTimer = setTimeout(() => {
+              pointer.style.opacity = '0';
+              pointer._kodingRemoveTimer = setTimeout(() => pointer.remove(), 250);
+            }, 1200);
             return {ok:true};
           } catch (error) { return {ok:false,error:'Invalid selector or page error: ' + String(error.message || error)}; }
         })()`);
         if (!prepared.ok) return { ok: false, error: `${args.operation} ${args.selector}: ${prepared.error}` };
+        await new Promise((resolve) => setTimeout(resolve, 450));
         if (pending.cancelled) return { ok: false, error: 'Browser action cancelled.' };
+        if (!active || active.sessionId !== sessionId || !active.visible || contents.isDestroyed()) return { ok: false, error: 'The browser pane is no longer visible.' };
         if (args.operation === 'click') {
           await contents.executeJavaScript(`(() => { const el = document.querySelector(${selector}); if (!el) throw new Error('Element disappeared'); el.click(); })()`);
         } else {
-          if (typeof args.text !== 'string' || args.text.length > 4096) return { ok: false, error: 'A valid text value is required.' };
           await contents.insertText(args.text);
         }
         await new Promise((resolve) => setTimeout(resolve, 250));
