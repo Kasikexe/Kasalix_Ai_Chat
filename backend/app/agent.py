@@ -1071,6 +1071,10 @@ async def kill_process_tree(proc: asyncio.subprocess.Process) -> None:
             proc.kill()
         except (OSError, ProcessLookupError):
             pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except (OSError, asyncio.TimeoutError):
+        pass
 
 
 async def communicate_with_stop(proc: asyncio.subprocess.Process, timeout: float, stop: asyncio.Event | None = None, input: bytes | None = None) -> tuple[bytes, bytes]:
