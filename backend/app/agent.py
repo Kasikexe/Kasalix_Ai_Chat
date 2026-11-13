@@ -752,7 +752,7 @@ async def build_workspace_profile(
     if profile["keyFiles"]:
         lines.append("- Key files: " + ", ".join(profile["keyFiles"][:12]))
     if verify_command:
-        lines.append(f"- Verify command: {verify_command} (auto-run after every file change to check your work)")
+        lines.append(f"- Verify command: {verify_command} (auto-run before the final answer when files change)")
     lines.append(
         f"- User rules: {project_rules if project_rules else 'none yet — the user can create .agent-rules.md for standing instructions'}"
     )
@@ -874,6 +874,39 @@ async def detect_verify_command(root: str) -> dict[str, Any] | None:
         or next((c for c in candidates if c["isTest"]), None)
     )
     return chosen
+
+
+async def detect_verify_for_paths(root: str, paths: set[str]) -> list[dict[str, Any]]:
+    """Choose checks from the nearest project root for each changed file."""
+    root_path = Path(root).resolve()
+    try:
+        config = json.loads((root_path / ".agent-config.json").read_text(encoding="utf-8"))
+        if config.get("verifyEnabled") is False:
+            return []
+        if config.get("verifyCommand"):
+            explicit = await detect_verify_command(str(root_path))
+            return [{**explicit, "cwd": str(root_path)}] if explicit else []
+    except (OSError, ValueError, AttributeError):
+        pass
+    roots: set[Path] = set()
+    manifests = ("package.json", "pyproject.toml", "pytest.ini", "Cargo.toml", "go.mod", "Makefile")
+    for path in paths:
+        target = Path(path)
+        target = target if target.is_absolute() else root_path / target
+        try:
+            directory = target.resolve().parent
+            directory.relative_to(root_path)
+        except ValueError:
+            continue
+        while directory != root_path and not any((directory / name).is_file() for name in manifests):
+            directory = directory.parent
+        roots.add(directory)
+    checks = []
+    for directory in sorted(roots, key=str):
+        check = await detect_verify_command(str(directory))
+        if check:
+            checks.append({**check, "cwd": str(directory)})
+    return checks
 
 
 async def find_main_script(root: str, extensions: list[str]) -> str | None:
@@ -3819,6 +3852,12 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     # Deleting your own fresh work (write → delete → write churn) is almost
     # always a confused rewrite loop, not a user request.
     files_touched_this_run: set[str] = set()
+    dirty_verify_paths: set[str] = set()
+
+    def record_file_write(write: dict[str, Any]) -> None:
+        if write.get("path"):
+            dirty_verify_paths.add(str(write["path"]))
+        _cb(opts, "onFileWritten", write)
     mutation_failed_ever = False   # any mutation attempt failed at some point
     mut_attempt_failed_last = False  # the most recent tool round had a failed mutation
     mut_recovered_last = False     # a mutation succeeded after that failure
@@ -4035,7 +4074,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
 
             applied_note = ""
             if not tool_calls and auto_apply and unrestricted:
-                applied_note = await apply_code_block_files(root, raw, callbacks.get("onFileWritten"))
+                applied_note = await apply_code_block_files(root, raw, record_file_write)
                 if not applied_note and "```" in raw:
                     block_count = len(re.findall(r"```", raw)) // 2
                     log_info(f"[agent] Response contains {block_count} code block(s) but none matched auto-apply format — no files written")
@@ -4180,6 +4219,19 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             )
 
             if not tool_calls:
+                if unrestricted and dirty_verify_paths:
+                    checks = await detect_verify_for_paths(root, dirty_verify_paths)
+                    dirty_verify_paths.clear()
+                    results = []
+                    for check in checks:
+                        _cb(opts, "onStage", "agent:verify")
+                        verify_out = await _run_verify(check["command"], check["cwd"], 3000, signal)
+                        results.append(f"{check['label']} in {check['cwd']}:\n{verify_out}")
+                        await session_log.log_verify(check["command"], verify_out, not verify_out.startswith("FAILED"))
+                        _cb(opts, "onAgentCommand", {"command": check["command"], "output": verify_out, "failed": verify_out.startswith("FAILED")})
+                    history.append({"role": "assistant", "content": raw})
+                    history.append({"role": "user", "content": "[FINAL VERIFICATION]\n" + ("\n\n".join(results) if results else "No verification command was detected for the changed files.") + "\nReport the actual results. If a check failed, fix it or explain the failure."})
+                    continue
                 # Game-check guard: never let a run finish on a "fixed!" claim
                 # while the LAST automatic play test still failed. Bounded (2
                 # nudges) so an honest "it is still broken" reply can still ship.
@@ -4482,7 +4534,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     if tc["tool"] in ("list_files", "read_file", "search_files", "read_rules"):
                         maybe_fire_reading()
                     for write in result.get("fileWrites", [result["fileWrite"]] if result.get("fileWrite") else []):
-                        _cb(opts, "onFileWritten", write)
+                        record_file_write(write)
             else:
                 for tc in calls_to_run:
                     _cb(opts, "onToolStart", tc)
@@ -4601,7 +4653,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     if tc["tool"] in ("list_files", "read_file", "search_files", "read_rules"):
                         maybe_fire_reading()
                     for write in result.get("fileWrites", [result["fileWrite"]] if result.get("fileWrite") else []):
-                        _cb(opts, "onFileWritten", write)
+                        record_file_write(write)
                     result_content = f"[TOOL RESULT — {tc['tool']}]\n{result['output']}"
                     if pending_image:
                         result_content += f"\n\n[image:{pending_image}]"
@@ -4643,18 +4695,6 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     "Continue the task WITHOUT the preview: verify your work with read_file and run_command, "
                     "and in your final answer tell the user that live preview verification was unavailable."
                 )})
-
-            last_mutating = next((tc for tc in calls_to_run if tc["tool"] in MUTATING_TOOLS), None)
-            if auto_apply and last_mutating and verify:
-                _cb(opts, "onStage", "agent:verify")
-                log_info(f"[agent] Verifying after {last_mutating['tool']}: {verify['command']}")
-                verify_out = await _run_verify(verify["command"], root, 3000, signal)
-                history.append({
-                    "role": "user",
-                    "content": f"[VERIFICATION RESULT — {verify['label']} ({verify['command']})]\n{verify_out}\n\nThis is a verification you requested. If it PASSED, continue with the next step or finish the task. If it FAILED, call a tool (e.g. read_file / edit_file) to fix the code, then the verification will run again automatically.",
-                })
-                await session_log.log_verify(verify["command"], verify_out, not verify_out.startswith("FAILED"))
-                _cb(opts, "onAgentCommand", {"command": verify["command"], "output": verify_out, "failed": verify_out.startswith("FAILED")})
 
             # ── Automatic game replay after a Python edit ───────────────
             # Same idea as the verify command above, but for GAMES: a static
