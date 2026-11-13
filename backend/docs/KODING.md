@@ -39,7 +39,9 @@ page content and screenshots are sent to the model. Screenshots require a
 vision-capable coding model and a usable display surface; `inspect` also works
 with text-only models. Clicks are DOM-generated, so pages that require trusted
 physical input may reject them. Ask requires approval, and Read-only blocks
-browser actions. Closing or hiding the pane prevents further interactions.
+browser actions. KODING inspects the current page before interacting and
+checks the result before claiming it was verified. Closing or hiding the pane
+prevents further interactions.
 
 Automatic project verification and game checks remain separate from the tool
 catalog. In Auto mode those checks may execute project code with the server

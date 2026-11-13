@@ -106,6 +106,73 @@ def test_agent_waits_for_browser_result_before_continuing(tmp_path, monkeypatch)
     assert any("Login form found" in str(message.get("content", "")) for message in messages_seen[1])
 
 
+def test_browser_requires_inspection_before_each_click(tmp_path):
+    async def scenario():
+        requests = []
+        evidence = {"inspected": False, "needs_observation": False, "used": False, "closed_unverified": False, "failed_interaction": False}
+        def callback(request):
+            requests.append(request["args"]["operation"])
+            agent.resolve_browser_action(request["key"], "owner", {"ok": True, "output": "Action completed"})
+        context = {"callbacks": {"onBrowserAction": callback}, "userId": "owner", "browserSession": "session", "browser_evidence": evidence}
+        async def call(args):
+            return await agent.execute_tool(str(tmp_path), {"tool": "browser", "args": args}, True, context)
+        assert not (await call({"operation": "click", "selector": "#button"}))["ok"]
+        assert requests == []
+        assert (await call({"operation": "inspect"}))["ok"]
+        assert (await call({"operation": "click", "selector": "#button"}))["ok"]
+        assert evidence["needs_observation"]
+        assert not (await call({"operation": "click", "selector": "#button"}))["ok"]
+        assert requests == ["inspect", "click"]
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("inspect", [True, False])
+def test_agent_does_not_claim_browser_was_verified_without_observing_it(tmp_path, monkeypatch, inspect):
+    calls = []
+    replies = [json.dumps({"tool": "browser", "args": {"operation": "open", "url": "http://localhost:3000"}}), "Everything works perfectly."]
+    if inspect:
+        replies.extend([json.dumps({"tool": "browser", "args": {"operation": "inspect"}}), "The page contains a login form."])
+    else:
+        replies.extend(["Everything works perfectly.", "Everything works perfectly."])
+    replies = iter(replies)
+
+    async def stream(_opts, _messages, on_chunk, _thinking, **_kwargs):
+        reply = next(replies, "Everything works perfectly.")
+        on_chunk(reply)
+        return reply
+
+    def callback(request):
+        calls.append(request["args"]["operation"])
+        agent.resolve_browser_action(request["key"], "owner", {"ok": True, "output": "Observed page"})
+
+    monkeypatch.setattr(agent, "stream_chat_with_retry", stream)
+    answer = asyncio.run(agent.run_agent_loop({"model": "fake", "workspacePath": str(tmp_path), "autoApply": True,
+        "userId": "owner", "messages": [{"role": "user", "content": "Open the page"}], "callbacks": {"onBrowserAction": callback}}))
+    if inspect:
+        assert calls == ["open", "inspect"] and "login form" in answer
+    else:
+        assert calls == ["open"] and "could not verify" in answer.lower()
+        assert "works perfectly" not in answer
+
+
+def test_agent_does_not_claim_failed_page_open_succeeded(tmp_path, monkeypatch):
+    replies = iter([json.dumps({"tool": "browser", "args": {"operation": "open", "url": "http://localhost:3000"}}),
+                    "The page opened and works."])
+
+    async def stream(_opts, _messages, on_chunk, _thinking, **_kwargs):
+        reply = next(replies, "The page opened and works.")
+        on_chunk(reply)
+        return reply
+
+    def callback(request):
+        agent.resolve_browser_action(request["key"], "owner", {"ok": False, "error": "connection refused"})
+
+    monkeypatch.setattr(agent, "stream_chat_with_retry", stream)
+    answer = asyncio.run(agent.run_agent_loop({"model": "fake", "workspacePath": str(tmp_path), "autoApply": True,
+        "userId": "owner", "messages": [{"role": "user", "content": "Open the page"}], "callbacks": {"onBrowserAction": callback}}))
+    assert "could not open" in answer.lower() and "opened and works" not in answer
+
+
 def test_static_html_preview_is_started_and_survives_follow_up(tmp_path):
     (tmp_path / "index.html").write_text("<h1>Test1</h1>", encoding="utf-8")
     (tmp_path / "styles.css").write_text("body { color: red; }", encoding="utf-8")

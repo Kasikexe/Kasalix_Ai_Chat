@@ -1410,9 +1410,15 @@ async def execute_tool(
         return await deny_out(f'Unknown or unavailable tool: "{tool}".')
 
     if tool == "browser":
+        evidence = (extra or {}).get("browser_evidence")
         error = validate_browser_args(args)
         if error:
+            if isinstance(evidence, dict) and args.get("operation") in ("click", "type"):
+                evidence["failed_interaction"] = True
             return await deny_out(error)
+        if isinstance(evidence, dict) and args["operation"] in ("click", "type") and not evidence["inspected"]:
+            evidence["failed_interaction"] = True
+            return await deny_out("Inspect the current page with browser {\"operation\":\"inspect\"} before clicking or typing; use a visible element and its selector from the result.")
         preview = None
         request = dict(args)
         if args["operation"] == "open":
@@ -1468,6 +1474,25 @@ async def execute_tool(
                 result["output"] += f" Static preview URL: {preview.url}"
             else:
                 await preview.close()
+        if result["ok"] and isinstance(evidence, dict):
+            operation = args["operation"]
+            if operation == "open":
+                evidence.update({"needs_observation": True, "inspected": False, "used": True, "closed_unverified": False})
+                result["output"] += " Inspect the page before reporting what it shows."
+            elif operation == "inspect":
+                evidence.update({"needs_observation": False, "inspected": True, "used": True})
+            elif operation == "screenshot" and result.get("imageData"):
+                evidence.update({"needs_observation": False, "used": True})
+            elif operation == "click":
+                evidence.update({"needs_observation": True, "inspected": False, "used": True, "failed_interaction": False})
+                result["output"] += " Inspect the updated page before another click or reporting the outcome."
+            elif operation == "type":
+                evidence.update({"needs_observation": True, "used": True, "failed_interaction": False})
+            elif operation == "close":
+                evidence["closed_unverified"] = evidence["needs_observation"]
+                evidence["needs_observation"] = False
+        elif isinstance(evidence, dict) and args["operation"] in ("click", "type"):
+            evidence["failed_interaction"] = True
         return result
 
     if tool == "run_command":
@@ -3280,10 +3305,12 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                         + str(resources["browser"].get("url") or "an unknown URL")
                         + ". Use browser inspect to continue; running background processes: "
                         + ("; ".join(running) if running else "none") + ". Check their status before assuming they are ready."})
+    browser_evidence = {"needs_observation": False, "inspected": False, "used": False, "closed_unverified": False, "failed_interaction": False, "failed_open": False}
+    browser_inspection_nudges = 0
     browser_context = {"callbacks": opts.get("callbacks"), "userId": opts.get("userId"),
                        "conversationId": opts.get("conversationId"), "browserSession": browser_session,
                        "use_vision_model": use_vision_model, "signal": signal, "command_manager": command_manager,
-                       "browser_state": resources["browser"], "resources": resources}
+                       "browser_state": resources["browser"], "resources": resources, "browser_evidence": browser_evidence}
     cancelled = False
     try:
         iter = 0
@@ -3511,6 +3538,8 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 and "```" not in raw
                 and len(raw) < 3000
                 and not files_touched_this_run  # real work already happened — a wrap-up is legitimate
+                and not ((browser_evidence["used"] or browser_evidence["failed_open"] or browser_evidence["failed_interaction"])
+                         and re.search(r"\b(?:browser|opened|loaded|inspected|clicked|pressed|typed|checked)\b", raw, re.I))
                 and not (mutation_failed_ever and not mutated_ok)  # writes were attempted and EVERY one failed
             )
             if claims_done and malformed_tool_calls < 4:
@@ -3632,6 +3661,28 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             )
 
             if not tool_calls:
+                original_final_raw = raw
+                if browser_evidence["needs_observation"]:
+                    honest_failure = bool(re.search(r"\b(?:could not|couldn't|unable|did not|didn't|not able|not)\b.{0,70}\b(?:inspect|check|verify|test|view)\b", raw, re.I))
+                    if not honest_failure and browser_inspection_nudges < 2:
+                        browser_inspection_nudges += 1
+                        history.append({"role": "assistant", "content": raw})
+                        history.append({"role": "user", "content": "[BROWSER VERIFICATION] Opening a page or clicking does not verify the result. Call browser inspect now to observe the current page, then report what actually happened. If inspection is unavailable, say so without claiming success."})
+                        continue
+                    if not honest_failure:
+                        raw = ("I made file changes. " if files_touched_this_run else "") + "I could not verify the page or the last browser interaction. Please check the browser pane."
+                elif browser_evidence["closed_unverified"]:
+                    raw += "\n\nThe browser was closed before I could inspect the result."
+                if (browser_evidence["failed_interaction"]
+                        and re.search(r"\b(?:clicked|pressed|typed|tested|worked|working)\b", raw, re.I)
+                        and not re.search(r"\b(?:failed|unable|could not|couldn't|did not|didn't|not able)\b", raw, re.I)):
+                    raw = "I could not complete the browser interaction. The tool result explains what failed."
+                if (browser_evidence["failed_open"]
+                        and re.search(r"\b(?:opened|loaded|working|works|visible)\b", raw, re.I)
+                        and not re.search(r"\b(?:failed|unable|could not|couldn't|did not|didn't|not able)\b", raw, re.I)):
+                    raw = ("I made file changes, but " if files_touched_this_run else "") + "I could not open the page in the browser. The tool result explains what failed."
+                if raw != original_final_raw:
+                    chunks = [raw]
                 if unrestricted and dirty_verify_paths:
                     checks = await detect_verify_for_paths(root, dirty_verify_paths)
                     dirty_verify_paths.clear()
@@ -3881,7 +3932,14 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     return msg
 
 
+            proposed_calls = calls_to_run
             calls_to_run, permission_feedback = await authorize_tool_calls(calls_to_run, opts, signal, session_log)
+            for denied in proposed_calls:
+                if denied not in calls_to_run and denied["tool"] == "browser":
+                    if denied["args"].get("operation") == "open":
+                        browser_evidence["failed_open"] = True
+                    elif denied["args"].get("operation") in ("click", "type"):
+                        browser_evidence["failed_interaction"] = True
             if permission_feedback:
                 history.append({"role": "assistant", "content": raw})
                 history.append({"role": "user", "content": "\n".join(permission_feedback)})
@@ -3934,6 +3992,8 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     log_info(f"[agent] Tool call: {tc['tool']} {json.dumps(tc['args'])[:120]}")
                     await session_log.log_tool_call(tc["tool"], tc["args"])
                     result = await execute_tool(root, tc, auto_apply, extra=browser_context)
+                    if tc["tool"] == "browser" and tc["args"].get("operation") == "open":
+                        browser_evidence["failed_open"] = not result["ok"]
                     seen_outcomes[f"{tc['tool']}:{json.dumps(tc['args'], sort_keys=True)}"] = bool(result["ok"])
                     # Raw screenshot for a vision-capable code model: the image
                     # rides on this variable into the ONE history append below

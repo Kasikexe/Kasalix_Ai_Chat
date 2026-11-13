@@ -265,6 +265,7 @@ def test_browser_and_server_survive_follow_up_in_same_chat(tmp_path, monkeypatch
         replies = iter([
             json.dumps({"tool": "run_command", "args": {"command": command, "background": True}}),
             json.dumps({"tool": "browser", "args": {"operation": "open", "url": "http://localhost:3000"}}),
+            json.dumps({"tool": "browser", "args": {"operation": "inspect"}}),
             "The preview is open.",
             json.dumps({"tool": "browser", "args": {"operation": "inspect"}}),
             "The buttons are visible.",
@@ -292,7 +293,7 @@ def test_browser_and_server_survive_follow_up_in_same_chat(tmp_path, monkeypatch
             assert proc.returncode is None
             opts["messages"] = [{"role": "user", "content": "Inspect the buttons"}]
             await agent.run_agent_loop(opts)
-            assert len(requests) == 2 and requests[0]["sessionId"] == requests[1]["sessionId"]
+            assert len(requests) == 3 and len({request["sessionId"] for request in requests}) == 1
             assert any("EXISTING BROWSER PREVIEW" in str(message.get("content", "")) for turn in histories for message in turn)
             assert proc.returncode is None
         finally:
