@@ -227,6 +227,53 @@ def test_static_preview_stops_if_client_cannot_open(tmp_path):
     asyncio.run(scenario())
 
 
+def test_closing_preview_during_open_cleans_up_pending_server(tmp_path):
+    (tmp_path / "index.html").write_text("hello", encoding="utf-8")
+    async def scenario():
+        key, resources = await agent.acquire_conversation_resources("owner", "closing-static", str(tmp_path))
+        urls = []
+        async def close_then_reply(request):
+            urls.append(request["args"]["url"])
+            await agent.close_conversation_resources("owner", "closing-static")
+            agent.resolve_browser_action(request["key"], "owner", {"ok": True, "output": "Opened."})
+        def callback(request):
+            asyncio.create_task(close_then_reply(request))
+        context = {"callbacks": {"onBrowserAction": callback}, "userId": "owner", "browserSession": resources["browser_session"],
+                   "browser_state": resources["browser"], "resources": resources}
+        result = await agent.execute_tool(str(tmp_path), {"tool": "browser", "args": {"operation": "open"}}, True, context)
+        assert not result["ok"] and "closed" in result["output"]
+        async with httpx.AsyncClient(trust_env=False) as client:
+            with pytest.raises(httpx.ConnectError):
+                await client.get(urls[0])
+        await agent.release_conversation_resources(key, resources)
+        assert ("owner", "closing-static") not in agent._conversation_resources
+    asyncio.run(scenario())
+
+
+def test_browser_close_requires_conversation_owner(monkeypatch):
+    from app.routes import chat
+    closed = []
+
+    class Request:
+        async def json(self):
+            return {"conversationId": "chat"}
+
+    async def get_conversation(conversation_id, owner_id):
+        return {"id": conversation_id} if owner_id == "owner" else None
+
+    async def close(owner_id, conversation_id):
+        closed.append((owner_id, conversation_id))
+
+    monkeypatch.setattr(chat, "get_conversation", get_conversation)
+    monkeypatch.setattr(chat, "close_conversation_resources", close)
+    monkeypatch.setattr(chat, "user_id_from_request", lambda _request: "other")
+    response = asyncio.run(chat.browser_close(Request()))
+    assert response.status_code == 404 and not closed
+    monkeypatch.setattr(chat, "user_id_from_request", lambda _request: "owner")
+    response = asyncio.run(chat.browser_close(Request()))
+    assert response.status_code == 200 and closed == [("owner", "chat")]
+
+
 def test_automatic_static_preview_refuses_ambiguous_or_outside_paths(tmp_path):
     for directory in ("one", "two"):
         (tmp_path / directory).mkdir()

@@ -1333,7 +1333,7 @@ async def acquire_conversation_resources(owner: str | None, conversation: str | 
         entry = None
     if entry is None:
         entry = {"root": os.path.realpath(root), "manager": BackgroundCommandManager(),
-                 "browser_session": secrets.token_urlsafe(18), "browser": {"open": False}, "preview": None, "active": 0, "expiry": None}
+                 "browser_session": secrets.token_urlsafe(18), "browser": {"open": False}, "preview": None, "active": 0, "expiry": None, "closed": False}
         if key:
             _conversation_resources[key] = entry
     expiry = entry.get("expiry")
@@ -1348,7 +1348,7 @@ async def release_conversation_resources(key: tuple[str, str] | None, entry: dic
     entry["active"] = max(0, entry["active"] - 1)
     if entry["active"]:
         return
-    if key is None or cancelled or not entry["browser"]["open"]:
+    if key is None or cancelled or entry["closed"] or not entry["browser"]["open"]:
         if key and _conversation_resources.get(key) is entry:
             _conversation_resources.pop(key, None)
         await dispose_conversation_resources(entry)
@@ -1366,6 +1366,8 @@ async def close_conversation_resources(owner: str | None, conversation: str | No
         return
     entry = _conversation_resources.pop((owner, conversation), None)
     if entry:
+        entry["closed"] = True
+        entry["browser"]["open"] = False
         if entry.get("expiry"):
             entry["expiry"].cancel()
         await dispose_conversation_resources(entry)
@@ -1411,6 +1413,8 @@ async def execute_tool(
 
     if tool == "browser":
         evidence = (extra or {}).get("browser_evidence")
+        if (extra or {}).get("resources", {}).get("closed"):
+            return await deny_out("The user closed this browser preview. Start a new message to open it again.")
         error = validate_browser_args(args)
         if error:
             if isinstance(evidence, dict) and args.get("operation") in ("click", "type"):
@@ -1459,6 +1463,10 @@ async def execute_tool(
             if preview:
                 await preview.close()
             raise
+        if (extra or {}).get("resources", {}).get("closed"):
+            if preview:
+                await preview.close()
+            return await deny_out("The user closed this browser preview before the action completed.")
         browser_state = (extra or {}).get("browser_state")
         if result["ok"] and isinstance(browser_state, dict):
             if args["operation"] == "open":

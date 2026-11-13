@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ..agent import get_background_processes, resolve_pending_approval, resolve_pending_question, resolve_browser_action
+from ..agent import get_background_processes, resolve_pending_approval, resolve_pending_question, resolve_browser_action, close_conversation_resources
 from ..attachments import persist_data_urls, strip_image_markers
 from ..deps import user_id_from_request
 from ..extractor import extract_memory_from_turn
@@ -452,6 +452,19 @@ async def stop(request: Request) -> dict:
     except Exception as e:  # noqa: BLE001
         log_error("[chat] Stop route error:", e)
         return JSONResponse({"error": str(e) or "Failed to stop"}, status_code=500)
+
+
+@router.post("/browser-close")
+async def browser_close(request: Request) -> JSONResponse:
+    owner_id = user_id_from_request(request)
+    body = await read_json_object(request)
+    conversation_id = body.get("conversationId") if body else None
+    if not isinstance(conversation_id, str) or not conversation_id:
+        return JSONResponse({"error": "conversationId is required"}, status_code=400)
+    if not await get_conversation(conversation_id, owner_id):
+        return JSONResponse({"error": "Conversation not found"}, status_code=404)
+    await close_conversation_resources(owner_id, conversation_id)
+    return JSONResponse({"ok": True})
 
 
 @router.post("/browser-result")

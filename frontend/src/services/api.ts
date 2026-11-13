@@ -315,6 +315,11 @@ export function clearImageCache(): void {
 
 
 export const api = {
+  async closeKodingBrowser(conversationId: string): Promise<void> {
+    await handleResponse(await fetch(`${API_BASE}/chat/browser-close`, authedFetch(`${API_BASE}/chat/browser-close`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
+    })));
+  },
   async getModels(): Promise<OllamaModel[]> {
     const data = await handleResponse<{ models: OllamaModel[] }>(
       await fetch(`${API_BASE}/models`, authedFetch(`${API_BASE}/models`))

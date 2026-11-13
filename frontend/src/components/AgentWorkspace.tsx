@@ -198,11 +198,14 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
   }, [conversation?.id]);
 
   const closeBrowser = useCallback(() => {
-    if (browserSession) void (window as any).electronAPI?.kodingBrowserClose(browserSession);
+    if (browserSession) {
+      void (window as any).electronAPI?.kodingBrowserClose(browserSession);
+      if (conversation?.id) void api.closeKodingBrowser(conversation.id).catch((error) => console.error('Could not stop browser preview', error));
+    }
     setBrowserSession(null);
     setBrowserUrl('');
     setBrowserOpen(false);
-  }, [browserSession]);
+  }, [browserSession, conversation?.id]);
   const [leftWidth, setLeftWidth] = useState(224);
   const dragRef = useRef<{ type: 'left'; startX: number; startSize: number } | null>(null);
   // Activity bar: explorer | terminal — VS Code style left rail (SVG icons)

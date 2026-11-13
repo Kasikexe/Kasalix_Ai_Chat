@@ -18,7 +18,7 @@ exit status; `wait` can wait up to 10 seconds for new output. Use
 `operation: "stop"` to stop it. Background processes normally stop when the run
 ends. If the run opens a browser preview, its processes and browser session can
 be reused by follow-up messages in the same chat. They stop when the run is
-cancelled, the chat is deleted, the server shuts down, or the preview has been
+cancelled, the browser pane is closed, the chat is deleted, the server shuts down, or the preview has been
 inactive for 30 minutes. Handles are private to their chat, and at most eight
 processes are retained per chat. Commands that deliberately
 detach child processes can escape process-tree cleanup; do not daemonize them. Commands
