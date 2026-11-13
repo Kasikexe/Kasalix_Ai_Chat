@@ -29,7 +29,11 @@ them. Auto-edit also asks before executing commands.
 
 The desktop `browser` tool opens a right-side pane and supports `open`, `inspect`,
 `click`, `type`, `console`, `screenshot`, and `close`. It accepts local HTTP(S)
-top-level URLs only. Localhost refers to the desktop client machine; a server
+top-level URLs only. `open` with `path: "index.html"` (or without a path) starts
+a loopback static server automatically; it serves the HTML file's folder and
+blocks traversal, hidden files, protected files, and directory listings. For a
+framework app, start its development server and pass its actual URL instead.
+Localhost refers to the desktop client machine; a server
 running on a different host requires a suitable local port forward. Inspected
 page content and screenshots are sent to the model. Screenshots require a
 vision-capable coding model and a usable display surface; `inspect` also works

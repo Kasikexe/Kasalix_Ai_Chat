@@ -18,7 +18,7 @@ TOOL_ARGUMENTS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     "search_files": ({"query": STRING}, {"case_sensitive": BOOLEAN}),
     "run_command": ({}, {"command": STRING, "cwd": STRING, "timeout": NUMBER, "background": BOOLEAN,
                          "operation": STRING, "process_id": STRING, "wait": NUMBER}),
-    "browser": ({"operation": STRING}, {"url": STRING, "selector": STRING, "text": STRING}),
+    "browser": ({"operation": STRING}, {"url": STRING, "path": STRING, "selector": STRING, "text": STRING}),
     "edit_file": ({"path": STRING, "old_string": STRING, "new_string": STRING}, {}),
     "edit_lines": ({"path": STRING, "start": NUMBER, "content": STRING}, {"end": NUMBER, "expect": STRING}),
     "write_file": ({"path": STRING, "content": STRING}, {"force": BOOLEAN}),
@@ -61,7 +61,7 @@ def validate_command_args(args: dict[str, Any]) -> str | None:
 def validate_browser_args(args: dict[str, Any]) -> str | None:
     operation = args.get("operation")
     allowed = {
-        "open": {"operation", "url"}, "inspect": {"operation"}, "click": {"operation", "selector"},
+        "open": {"operation", "url", "path"}, "inspect": {"operation"}, "click": {"operation", "selector"},
         "type": {"operation", "selector", "text"}, "screenshot": {"operation"},
         "console": {"operation"}, "close": {"operation"},
     }
@@ -69,7 +69,11 @@ def validate_browser_args(args: dict[str, Any]) -> str | None:
         return "browser operation must be open, inspect, click, type, screenshot, console, or close."
     if set(args) - allowed[operation]:
         return "Unexpected browser arguments for this operation."
-    required = {"open": ("url",), "click": ("selector",), "type": ("selector", "text")}.get(operation, ())
+    if operation == "open" and "url" in args and "path" in args:
+        return "browser open accepts either url or path, not both."
+    required = {"click": ("selector",), "type": ("selector", "text")}.get(operation, ())
+    if operation == "open":
+        required = tuple(key for key in ("url", "path") if key in args)
     for key in required:
         if not isinstance(args.get(key), str) or (key != "text" and not args[key].strip()) or len(args[key]) > 4096:
             return f"browser {operation} requires a valid {key} string."

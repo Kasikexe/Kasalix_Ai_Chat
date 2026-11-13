@@ -665,7 +665,7 @@ AGENT_TOOL_DEFS: list[dict[str, Any]] = [
     {"name": "read_file", "description": "Read the contents of a file inside the workspace. Always read a file BEFORE editing it so you know exactly what is in it. Do NOT pass offset/length for normal files — read the whole file in one call; offset/length is ONLY for files larger than 200KB. Pass \"numbers\": true to get line numbers in front of each line (12| code) — needed for edit_lines; never copy those numbers into an edit's text.", "args": '{"path": "src/index.ts"} or {"path": "src/index.ts", "numbers": true} or {"path": "src/index.ts", "offset": 200000, "length": 100000}', "mutating": False},
     {"name": "search_files", "description": "Search workspace file contents for literal text, returning paths and line numbers. Matching is case-insensitive by default; set case_sensitive to true for an exact-case search. Results may include comments and strings, not just code references.", "args": '{"query": "function render"} or {"query": "render", "case_sensitive": true}', "mutating": False},
     {"name": "run_command", "description": "Run a shell command for testing or start a background server. Start: pass command, optional workspace-relative cwd, and background=true. Status: operation=status and process_id, optionally wait=0-10 seconds. Stop: operation=stop and process_id. timeout=1-600 seconds is optional; foreground defaults to 120 seconds. Background processes used for an open browser preview remain available to follow-up messages in this chat, otherwise they stop when the run ends. Do not daemonize. Check status and exit code: starting is not proof of success. Commands run with the server user's permissions, not in a sandbox.", "args": '{"command": "python -m pytest -q"} or {"command": "npm run dev", "background": true} or {"operation": "status", "process_id": "<id>", "wait": 3} or {"operation": "stop", "process_id": "<id>"}', "mutating": False},
-    {"name": "browser", "description": "Control the visible Koding browser pane for local web apps. Use open with a localhost URL, inspect to read visible text and element selectors, click or type with a selector, console to see browser errors, screenshot to see the page if your model supports vision, and close when finished. Start a local server with run_command background=true first. Browser actions are visible to the user and can change the app's data.", "args": '{"operation": "open", "url": "http://127.0.0.1:3000/"} or {"operation": "inspect"} or {"operation": "click", "selector": "button"} or {"operation": "type", "selector": "input", "text": "hello"} or {"operation": "screenshot"} or {"operation": "console"}', "mutating": False},
+    {"name": "browser", "description": "Control the visible Koding browser pane. For a static HTML page, use open with its workspace-relative path (or omit path to open index.html); Koding starts a local preview automatically. For an existing dev server, open its actual localhost URL. Use inspect to read page text and selectors, click or type with a selector, console for errors, screenshot if your model supports vision, and close when finished. Browser actions can change the app's data.", "args": '{"operation": "open", "path": "index.html"} or {"operation": "open", "url": "http://127.0.0.1:3000/"} or {"operation": "inspect"} or {"operation": "click", "selector": "button"} or {"operation": "type", "selector": "input", "text": "hello"} or {"operation": "screenshot"} or {"operation": "console"}', "mutating": False},
     {"name": "edit_file", "description": "SURGICAL edit of an existing file: replace an exact snippet (old_string) with new content (new_string). Use this for SMALL changes to existing files instead of rewriting the whole file. old_string must appear exactly once in the file (or differ only in whitespace). ONLY available in auto-apply mode. After a successful edit the result includes a diff summary.", "args": '{"path": "src/app.ts", "old_string": "const x = 1;", "new_string": "const x = 2;"}', "mutating": True},
     {"name": "edit_lines", "description": "Edit an existing file BY LINE NUMBER — replaces lines start..end with content, so you NEVER copy the old text. This is the easiest way to change a few lines, a loop, or one statement inside a file you have read. start/end are 1-based line numbers (from read_file with \"numbers\": true); omit end to change one line; make end smaller than start to INSERT before start; negative counts from the end (-1 = last line); content \"\" deletes those lines. Pass expect (the first line being replaced, copied from the file) and the edit is refused if the numbers are stale. ONLY available in auto-apply mode.", "args": '{"path": "snake.py", "start": 42, "end": 48, "content": "    new_line_1\\n    new_line_2", "expect": "    def update(self):"}', "mutating": True},
     {"name": "write_file", "description": "Create a NEW file. If the file already exists, only YOUR CHANGED LINES are applied and everything else in the file is preserved exactly (safe to pass the full new file content — a version that rewrites most of the file is refused). ONLY available in auto-apply mode — the file is written immediately and can be reverted by the user.", "args": '{"path": "src/app.ts", "content": "..."}', "mutating": True},
@@ -684,7 +684,8 @@ TOOL_JSON_EXAMPLES = f"""Available tools — to use one, respond with ONLY a sin
 {{"tool": "run_command", "args": {{"command": "npm run dev", "background": true}}}} — start a background server; use the returned process_id
 {{"tool": "run_command", "args": {{"operation": "status", "process_id": "<id>", "wait": 3}}}} — inspect status and output
 {{"tool": "run_command", "args": {{"operation": "stop", "process_id": "<id>"}}}} — stop the process
-{{"tool": "browser", "args": {{"operation": "open", "url": "http://127.0.0.1:3000/"}}}} — open a local app in the visible browser pane
+{{"tool": "browser", "args": {{"operation": "open", "path": "index.html"}}}} — automatically serve and open a static page
+{{"tool": "browser", "args": {{"operation": "open", "url": "http://127.0.0.1:3000/"}}}} — open an existing local server
 {{"tool": "browser", "args": {{"operation": "inspect"}}}} — read page text and selectors before interacting
 {{"tool": "edit_file", "args": {{"path": "src/app.ts", "old_string": "const x = 1;", "new_string": "const x = 2;"}}}}
 {{"tool": "edit_lines", "args": {{"path": "snake.py", "start": 42, "end": 48, "content": "    new_line_1\\n    new_line_2"}}}} — change lines BY NUMBER (read_file with "numbers": true); no old text needed
@@ -1332,7 +1333,7 @@ async def acquire_conversation_resources(owner: str | None, conversation: str | 
         entry = None
     if entry is None:
         entry = {"root": os.path.realpath(root), "manager": BackgroundCommandManager(),
-                 "browser_session": secrets.token_urlsafe(18), "browser": {"open": False}, "active": 0, "expiry": None}
+                 "browser_session": secrets.token_urlsafe(18), "browser": {"open": False}, "preview": None, "active": 0, "expiry": None}
         if key:
             _conversation_resources[key] = entry
     expiry = entry.get("expiry")
@@ -1350,13 +1351,13 @@ async def release_conversation_resources(key: tuple[str, str] | None, entry: dic
     if key is None or cancelled or not entry["browser"]["open"]:
         if key and _conversation_resources.get(key) is entry:
             _conversation_resources.pop(key, None)
-        await entry["manager"].close()
+        await dispose_conversation_resources(entry)
         return
     async def expire() -> None:
         await asyncio.sleep(CONVERSATION_IDLE_SECONDS)
         if _conversation_resources.get(key) is entry and entry["active"] == 0:
             _conversation_resources.pop(key, None)
-            await entry["manager"].close()
+            await dispose_conversation_resources(entry)
     entry["expiry"] = asyncio.create_task(expire())
 
 
@@ -1367,6 +1368,15 @@ async def close_conversation_resources(owner: str | None, conversation: str | No
     if entry:
         if entry.get("expiry"):
             entry["expiry"].cancel()
+        await dispose_conversation_resources(entry)
+
+
+async def dispose_conversation_resources(entry: dict[str, Any]) -> None:
+    try:
+        if entry.get("preview"):
+            await entry["preview"].close()
+            entry["preview"] = None
+    finally:
         await entry["manager"].close()
 
 
@@ -1403,21 +1413,61 @@ async def execute_tool(
         error = validate_browser_args(args)
         if error:
             return await deny_out(error)
+        preview = None
+        request = dict(args)
         if args["operation"] == "open":
+            if "url" not in args:
+                resources = (extra or {}).get("resources")
+                if not resources:
+                    return await deny_out("Static previews are only available during a Koding run.")
+                path = args.get("path") or "index.html"
+                target = await resolve_in_workspace(root, path)
+                if target and os.path.isdir(target):
+                    target = await resolve_in_workspace(root, os.path.join(path, "index.html"))
+                if target and not os.path.isfile(target) and "path" not in args:
+                    candidates = await find_workspace_files_by_basename(root, "index.html")
+                    if len(candidates) > 1:
+                        return await deny_out("Multiple index.html files found. Use list_files or glob and pass the desired path.")
+                    target = await resolve_in_workspace(root, os.path.relpath(candidates[0], root)) if candidates else None
+                if not target or not os.path.isfile(target) or not target.lower().endswith((".html", ".htm")):
+                    return await deny_out(f"Cannot preview {path}: provide an existing workspace HTML file.")
+                if is_user_rules_path(root, target):
+                    return await deny_out("Cannot preview a protected rules file.")
+                from .static_preview import StaticPreview
+                try:
+                    preview = StaticPreview(root, target, is_user_rules_path)
+                except OSError as exc:
+                    return await deny_out(f"Could not start the static preview server: {exc}")
+                request.pop("path", None)
+                request["url"] = preview.url
             try:
-                url = urlsplit(args["url"])
+                url = urlsplit(request["url"])
                 if url.scheme.lower() not in ("http", "https") or url.hostname not in ("localhost", "127.0.0.1", "::1") or url.username is not None or url.password is not None:
                     return await deny_out("The Koding browser only opens local HTTP(S) URLs without credentials.")
                 _ = url.port  # reject invalid ports
             except ValueError:
                 return await deny_out("Invalid browser URL.")
-        result = await request_browser_action(args, extra or {})
+        try:
+            result = await request_browser_action(request, extra or {})
+        except BaseException:
+            if preview:
+                await preview.close()
+            raise
         browser_state = (extra or {}).get("browser_state")
         if result["ok"] and isinstance(browser_state, dict):
             if args["operation"] == "open":
-                browser_state.update({"open": True, "url": args["url"]})
+                browser_state.update({"open": True, "url": request["url"]})
             elif args["operation"] == "close":
                 browser_state.update({"open": False, "url": ""})
+        if preview:
+            if result["ok"]:
+                old_preview = resources.get("preview")
+                resources["preview"] = preview
+                if old_preview:
+                    await old_preview.close()
+                result["output"] += f" Static preview URL: {preview.url}"
+            else:
+                await preview.close()
         return result
 
     if tool == "run_command":
@@ -3232,7 +3282,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     browser_context = {"callbacks": opts.get("callbacks"), "userId": opts.get("userId"),
                        "conversationId": opts.get("conversationId"), "browserSession": browser_session,
                        "use_vision_model": use_vision_model, "signal": signal, "command_manager": command_manager,
-                       "browser_state": resources["browser"]}
+                       "browser_state": resources["browser"], "resources": resources}
     cancelled = False
     try:
         iter = 0

@@ -1,6 +1,7 @@
 import asyncio
 import json
 
+import httpx
 import pytest
 
 from app import agent
@@ -17,7 +18,7 @@ def test_browser_schema_supports_all_call_formats():
 
 
 @pytest.mark.parametrize("args", [
-    {}, {"operation": "open"}, {"operation": "click", "selector": ""},
+    {}, {"operation": "open", "url": "", "path": "index.html"}, {"operation": "click", "selector": ""},
     {"operation": "type", "selector": "#x"}, {"operation": "eval", "text": "alert(1)"},
     {"operation": "inspect", "url": "http://localhost"},
 ])
@@ -97,3 +98,74 @@ def test_agent_waits_for_browser_result_before_continuing(tmp_path, monkeypatch)
         "callbacks": {"onBrowserAction": browser_action}}))
     assert len(messages_seen) >= 2
     assert any("Login form found" in str(message.get("content", "")) for message in messages_seen[1])
+
+
+def test_static_html_preview_is_started_and_survives_follow_up(tmp_path):
+    (tmp_path / "index.html").write_text("<h1>Test1</h1>", encoding="utf-8")
+    (tmp_path / "styles.css").write_text("body { color: red; }", encoding="utf-8")
+    (tmp_path / ".env").write_text("secret", encoding="utf-8")
+    (tmp_path / "AGENT_RULES.md").write_text("private", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "secret.txt").write_text("private", encoding="utf-8")
+
+    async def scenario():
+        key, resources = await agent.acquire_conversation_resources("owner", "static-chat", str(tmp_path))
+        seen = []
+        def callback(request):
+            seen.append(request)
+            agent.resolve_browser_action(request["key"], "owner", {"ok": True, "output": "Opened."})
+        context = {"callbacks": {"onBrowserAction": callback}, "userId": "owner", "browserSession": resources["browser_session"],
+                   "browser_state": resources["browser"], "resources": resources}
+        try:
+            result = await agent.execute_tool(str(tmp_path), {"tool": "browser", "args": {"operation": "open", "path": "index.html"}}, True, context)
+            assert result["ok"] and seen[0]["args"]["url"].startswith("http://127.0.0.1:")
+            url = resources["browser"]["url"]
+            async with httpx.AsyncClient(trust_env=False) as client:
+                assert "Test1" in (await client.get(url)).text
+                base = url.rsplit("/", 1)[0]
+                assert (await client.get(base + "/styles.css")).status_code == 200
+                for forbidden in ("/.env", "/AGENT_RULES.md", "/node_modules/secret.txt", "/%2e%2e/secret.txt"):
+                    assert (await client.get(base + forbidden)).status_code == 403
+                await agent.release_conversation_resources(key, resources)
+                again_key, again = await agent.acquire_conversation_resources("owner", "static-chat", str(tmp_path))
+                assert again is resources and (await client.get(url)).status_code == 200
+                await agent.release_conversation_resources(again_key, again)
+        finally:
+            await agent.close_conversation_resources("owner", "static-chat")
+    asyncio.run(scenario())
+
+
+def test_static_preview_stops_if_client_cannot_open(tmp_path):
+    (tmp_path / "index.html").write_text("hello", encoding="utf-8")
+    async def scenario():
+        key, resources = await agent.acquire_conversation_resources("owner", "failed-static", str(tmp_path))
+        urls = []
+        def callback(request):
+            urls.append(request["args"]["url"])
+            agent.resolve_browser_action(request["key"], "owner", {"ok": False, "error": "client unavailable"})
+        context = {"callbacks": {"onBrowserAction": callback}, "userId": "owner", "browserSession": resources["browser_session"],
+                   "browser_state": resources["browser"], "resources": resources}
+        result = await agent.execute_tool(str(tmp_path), {"tool": "browser", "args": {"operation": "open"}}, True, context)
+        assert not result["ok"] and resources["preview"] is None
+        async with httpx.AsyncClient(trust_env=False) as client:
+            with pytest.raises(httpx.ConnectError):
+                await client.get(urls[0])
+        await agent.release_conversation_resources(key, resources)
+    asyncio.run(scenario())
+
+
+def test_automatic_static_preview_refuses_ambiguous_or_outside_paths(tmp_path):
+    for directory in ("one", "two"):
+        (tmp_path / directory).mkdir()
+        (tmp_path / directory / "index.html").write_text("hello", encoding="utf-8")
+    async def scenario():
+        key, resources = await agent.acquire_conversation_resources("owner", "ambiguous", str(tmp_path))
+        context = {"resources": resources}
+        try:
+            result = await agent.execute_tool(str(tmp_path), {"tool": "browser", "args": {"operation": "open"}}, True, context)
+            assert not result["ok"] and "Multiple" in result["output"]
+            result = await agent.execute_tool(str(tmp_path), {"tool": "browser", "args": {"operation": "open", "path": "../index.html"}}, True, context)
+            assert not result["ok"]
+        finally:
+            await agent.release_conversation_resources(key, resources)
+    asyncio.run(scenario())
