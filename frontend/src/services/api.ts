@@ -550,6 +550,17 @@ export const api = {
     );
   },
 
+  /** Koding edits the server workspace, which may differ from the desktop machine. */
+  async getAgentFileContent(filePath: string, workspacePath: string): Promise<{ content: string | null; binary: boolean }> {
+    return handleResponse(await fetch(`${API_BASE}/files/content?path=${encodeURIComponent(filePath)}&workspacePath=${encodeURIComponent(workspacePath)}`, authedFetch(`${API_BASE}/files`)));
+  },
+
+  async revertAgentFile(conversationId: string, filePath: string): Promise<void> {
+    await handleResponse(await fetch(`${API_BASE}/conversations/${encodeURIComponent(conversationId)}/revert-file`, authedFetch(`${API_BASE}/conversations`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filePath }),
+    })));
+  },
+
   /** Delete a file — uses local IPC in Electron, backend API on web */
   async deleteFile(filePath: string, workspacePath?: string): Promise<{ success: boolean; path: string }> {
     if (isElectron) {
@@ -643,7 +654,7 @@ streamChat(
     onAgentTool?: (call: { tool: string; args: Record<string, unknown> }) => void;
     onToolResult?: (r: { tool: string; ok: boolean; output: string }) => void;
     /** Agent mode: fired when the AI writes/deletes a file */
-    onFileWritten?: (write: { path: string; changeType: string; originalContent?: string }) => void;
+    onFileWritten?: (write: { path: string; changeType: string; originalContent?: string | null; expectedContent?: string | null; snapshotAvailable?: boolean }) => void;
     /** Fired with each reasoning chunk from thinking models (qwen3, deepseek-r1, etc.) */
     onThinking?: (chunk: string) => void;
     /** Agent mode: fired when the AI runs a shell command or auto-verify (terminal feed) */
@@ -760,7 +771,7 @@ streamChat(
             case 'stage': callbacks.onStage(parsed.stage); break;
             case 'agent_tool': callbacks.onAgentTool?.({ tool: parsed.tool, args: parsed.args || {} }); break;
             case 'agent_tool_result': callbacks.onToolResult?.({ tool: parsed.tool, ok: !!parsed.ok, output: parsed.output || '' }); break;
-            case 'file_written': callbacks.onFileWritten?.({ path: parsed.path, changeType: parsed.changeType, originalContent: parsed.originalContent }); break;
+            case 'file_written': callbacks.onFileWritten?.({ path: parsed.path, changeType: parsed.changeType, originalContent: parsed.originalContent, expectedContent: parsed.expectedContent, snapshotAvailable: parsed.snapshotAvailable }); break;
             case 'agent_command': callbacks.onAgentCommand?.({ command: parsed.command, output: parsed.output, failed: !!parsed.failed }); break;
             case 'agent_question': callbacks.onQuestion?.({ key: parsed.key, question: parsed.question }); break;
             case 'agent_approval_request': callbacks.onApprovalRequest?.({ key: parsed.key, tool: parsed.tool, args: parsed.args || {} }); break;

@@ -41,7 +41,7 @@ interface StreamHandlers {
   onConversationStarted?: (id: string) => void;
   onAgentTool?: (call: { tool: string; args: Record<string, unknown> }) => void;
   onToolResult?: (r: { tool: string; ok: boolean; output: string }) => void;
-  onFileWritten?: (write: { path: string; changeType: string; originalContent?: string }) => void;
+  onFileWritten?: (write: { path: string; changeType: string; originalContent?: string | null; expectedContent?: string | null; snapshotAvailable?: boolean }) => void;
   onAgentCommand?: (cmd: { command: string; output: string; failed: boolean }) => void;
   onQuestion?: (q: { key: string; question: string }) => void;
   onApprovalRequest?: (q: { key: string; tool: string; args: Record<string, unknown> }) => void;
@@ -207,7 +207,7 @@ export function useChat(
   planningEnabled = false,
   autoApply = false,
   onAgentTool?: (call: { tool: string; args: Record<string, unknown> }) => void,
-  onFileWritten?: (write: { path: string; changeType: string; originalContent?: string }) => void,
+  onFileWritten?: (write: { path: string; changeType: string; originalContent?: string | null; expectedContent?: string | null; snapshotAvailable?: boolean }) => void,
   onAgentCommand?: (cmd: { command: string; output: string; failed: boolean }) => void,
   onQuestion?: (q: { key: string; question: string }) => void,
   onConversationStarted?: (id: string) => void,

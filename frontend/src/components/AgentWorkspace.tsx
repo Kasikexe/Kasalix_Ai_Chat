@@ -63,16 +63,21 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
   const modifiedFilesRef = useRef<ModifiedFile[]>([]);
   const { toast } = useToast();
 
-  const handleFileWritten = useCallback((write: { path: string; changeType: string; originalContent?: string }) => {
+  const handleFileWritten = useCallback((write: { path: string; changeType: string; originalContent?: string | null; expectedContent?: string | null; snapshotAvailable?: boolean }) => {
     const filePath = normPath(write.path);
     const fileName = filePath.split('/').pop() || filePath;
     modifiedFilesSetterRef.current((prev) => {
       const filtered = prev.filter((f) => f.filePath !== filePath);
+      const previous = prev.find((f) => f.filePath === filePath);
+      if (previous?.changeType === 'created' && write.changeType === 'deleted') return filtered;
       return [{
         filePath,
         fileName,
-        changeType: write.changeType === 'deleted' ? 'deleted' : (write.changeType === 'edited' ? 'edited' : 'created'),
-        originalContent: write.originalContent,
+        changeType: previous?.changeType === 'created' ? 'created' : (write.changeType === 'deleted' ? 'deleted' : (previous ? 'edited' : (write.changeType === 'edited' ? 'edited' : 'created'))),
+        originalContent: previous ? previous.originalContent : write.originalContent,
+        originalAvailable: previous ? previous.originalAvailable : (write.changeType === 'created' || typeof write.originalContent === 'string'),
+        expectedContent: write.expectedContent,
+        snapshotAvailable: write.snapshotAvailable,
         timestamp: Date.now(),
       }, ...filtered];
     });
@@ -181,7 +186,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
   }, []);
 
   // ─── File Modified State ───────────────────────────────────
-  const [modifiedFiles, setModifiedFiles] = useState<ModifiedFile[]>(() => modifiedFilesCache.get(convKey) || []);
+  const [modifiedFiles, setModifiedFiles] = useState<ModifiedFile[]>(() => modifiedFilesCache.get(convKey) || (conversation?.fileChanges || []).map(f => ({ ...f, filePath: normPath(f.filePath) })));
   modifiedFilesSetterRef.current = setModifiedFiles;
   modifiedFilesRef.current = modifiedFiles;
 
@@ -191,7 +196,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     const prev = prevConvRef.current;
     if (prev !== convKey) {
       modifiedFilesCache.set(prev, modifiedFilesRef.current);
-      setModifiedFiles(modifiedFilesCache.get(convKey) || []);
+      setModifiedFiles(modifiedFilesCache.get(convKey) || (conversation?.fileChanges || []).map(f => ({ ...f, filePath: normPath(f.filePath) })));
       prevConvRef.current = convKey;
     }
   }, [convKey]);
@@ -422,7 +427,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
 
   const handleViewDiff = useCallback(async (mf: ModifiedFile) => {
     try {
-      const result = await api.getFileContent(mf.filePath, loadedPath);
+      const result = mf.changeType === 'deleted' ? { content: '', binary: false } : await api.getAgentFileContent(mf.filePath, loadedPath);
       if (result.content === null || result.binary) {
         toast('error', 'Cannot show a diff for this file (binary or unreadable)');
         return;
@@ -443,15 +448,9 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     setRevertingFile(mf.filePath);
     setRevertError(null);
     try {
-      if (mf.changeType === 'created') {
-        await api.deleteFile(mf.filePath, loadedPath);
-      } else if (mf.changeType === 'deleted') {
-        if (mf.originalContent !== undefined) {
-          await api.writeFile(mf.filePath, mf.originalContent, loadedPath);
-        }
-      } else if (mf.originalContent !== undefined) {
-        await api.writeFile(mf.filePath, mf.originalContent, loadedPath);
-      }
+      if (!conversation?.id) throw new Error('Save the conversation before reverting changes.');
+      await api.revertAgentFile(conversation.id, mf.filePath);
+      setTreeRefreshToken((t) => t + 1);
       setRevertedFiles((prev) => ({ ...prev, [mf.filePath]: true }));
       setTimeout(() => {
         setModifiedFiles((prev) => prev.filter((f) => f.filePath !== mf.filePath));
@@ -770,7 +769,7 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
                         {isReverted ? (
                           <Check size={8} className="text-green-400"/>
                         ) : (
-                          <button onClick={() => handleRevert(mf)} disabled={isReverting}
+                          <button onClick={() => handleRevert(mf)} disabled={isReverting || isStreaming || !mf.snapshotAvailable || !mf.originalAvailable}
                             className="p-0.5 rounded text-gray-600 hover:text-[#b8966a] opacity-0 group-hover:opacity-100 transition-all disabled:opacity-30"
                             title="Revert"
                           >

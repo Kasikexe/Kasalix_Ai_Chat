@@ -44,6 +44,7 @@ export interface Message {
 
 export interface Conversation {
   id: string;
+  fileChanges?: ModifiedFile[];
   title: string;
   messages: Message[];
   model: string;
@@ -80,8 +81,11 @@ export interface ModifiedFile {
   filePath: string;
   fileName: string;
   changeType: 'created' | 'edited' | 'deleted';
-  originalContent?: string;
-  timestamp: number;
+  originalContent?: string | null;
+  originalAvailable?: boolean;
+  expectedContent?: string | null;
+  snapshotAvailable?: boolean;
+  timestamp?: number;
 }
 
 export interface UserProfile {

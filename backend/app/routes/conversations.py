@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -16,8 +17,50 @@ from ..storage import (
     update_conversation,
 )
 from ..models import make_message
+from ..utils import is_path_inside, is_protected_path
 
 router = APIRouter()
+
+
+@router.post("/{conv_id}/revert-file")
+async def revert_file(conv_id: str, request: Request) -> dict:
+    """Restore a journaled file only if it still matches the agent's version."""
+    owner = user_id_from_request(request)
+    conv = await get_conversation(conv_id, owner)
+    if not conv:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    body = await request.json()
+    path = body.get("filePath")
+    root = conv.get("workspacePath")
+    if not isinstance(path, str) or not isinstance(root, str):
+        return JSONResponse({"error": "Invalid workspace or file path"}, status_code=400)
+    path = os.path.abspath(path)
+    if is_protected_path(root, path) or not await is_path_inside(root, path):
+        return JSONResponse({"error": "Access denied"}, status_code=403)
+    changes = conv.get("fileChanges") or []
+    entry = next ( (item for item in changes if item.get("filePath") == path), None )
+    if not entry or not entry.get("originalAvailable") or not entry.get("snapshotAvailable"):
+        return JSONResponse({"error": "A complete undo snapshot is not available for this file"}, status_code=409)
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8", newline="") as stream:
+                current = stream.read()
+        else:
+            current = None
+        if current != entry.get("expectedContent"):
+            return JSONResponse({"error": "The file changed since Koding last edited it. Review it before reverting."}, status_code=409)
+        original = entry.get("originalContent")
+        if original is None:
+            if current is not None:
+                os.remove(path)
+        else:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="") as stream:
+                stream.write(original)
+        await update_conversation(conv_id, owner, {"fileChanges": [item for item in changes if item is not entry]})
+        return {"success": True}
+    except (OSError, UnicodeError):
+        return JSONResponse({"error": "Could not restore file"}, status_code=500)
 
 
 @router.get("")

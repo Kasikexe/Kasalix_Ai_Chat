@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from typing import Any
 
@@ -127,6 +128,42 @@ async def chat_route(request: Request) -> Any:
             conv_id = new_conv["id"]
             conv_mode = mode
             conv_workspace_path = new_conv.get("workspacePath") or req_workspace_path
+
+        journal = list((existing if provided_conv_id else new_conv).get("fileChanges") or [])
+
+        def on_file_written(write: dict[str, Any], emit: Any) -> None:
+            """Record the first pre-change version and latest agent version."""
+            raw_path = write.get("path") or ""
+            path = os.path.abspath(os.path.join(conv_workspace_path or "", raw_path))
+            original = write.get("originalContent")
+            deleted = write.get("changeType") == "deleted"
+            latest = None
+            snapshot_available = deleted
+            if not deleted:
+                try:
+                    if os.path.getsize(path) <= 1024 * 1024:
+                        with open(path, "r", encoding="utf-8", newline="") as stream:
+                            latest = stream.read()
+                        snapshot_available = True
+                except (OSError, UnicodeError):
+                    pass
+            old = next((item for item in journal if item.get("filePath") == path), None)
+            if old:
+                original = old.get("originalContent")
+                original_available = old.get("originalAvailable", False)
+            else:
+                original_available = write.get("changeType") == "created" or isinstance(original, str)
+            kind = "created" if original is None and original_available else "deleted" if deleted else "edited"
+            journal[:] = [item for item in journal if item.get("filePath") != path]
+            if not (kind == "created" and deleted):
+                journal.insert(0, {"filePath": path, "fileName": os.path.basename(path), "changeType": kind,
+                                   "originalContent": original, "originalAvailable": original_available,
+                                   "expectedContent": latest, "snapshotAvailable": snapshot_available})
+            snapshot = [dict(item) for item in journal]
+            asyncio.create_task(update_conversation(conv_id, owner_id, {"fileChanges": snapshot}))
+            emit({"type": "file_written", "path": path, "changeType": write.get("changeType"),
+                  "originalContent": write.get("originalContent"), "expectedContent": latest,
+                  "snapshotAvailable": snapshot_available})
 
         last_message = messages[-1]
         if last_message.get("role") == "user" and conv_id:
@@ -284,7 +321,7 @@ async def chat_route(request: Request) -> Any:
                             "autoApply": auto_apply,
                             "onAgentTool": lambda call: emit({"type": "agent_tool", "tool": call.get("tool"), "args": call.get("args")}),
                             "onToolResult": lambda r: emit({"type": "agent_tool_result", "tool": r.get("tool"), "ok": bool(r.get("ok")), "output": r.get("output")}),
-                            "onFileWritten": lambda w: emit({"type": "file_written", "path": w.get("path"), "changeType": w.get("changeType"), "originalContent": w.get("originalContent")}),
+                            "onFileWritten": lambda w: on_file_written(w, emit),
                             "onAgentCommand": lambda cmd: emit({"type": "agent_command", "command": cmd.get("command"), "output": cmd.get("output"), "failed": cmd.get("failed")}),
                             "onQuestion": lambda key, q: emit({"type": "agent_question", "key": key, "question": q}),
                             "onApprovalRequest": lambda key, tool, args: emit({"type": "agent_approval_request", "key": key, "tool": tool, "args": args}),

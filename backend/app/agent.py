@@ -1235,6 +1235,8 @@ async def execute_tool(
                 if source_name.lower().endswith(".png") and p.lower().endswith((".jpg", ".jpeg")):
                     target_rel = target_rel.rsplit(".", 1)[0] + ".png"
                     exact = os.path.splitext(exact)[0] + ".png"
+                if os.path.exists(exact):
+                    return await deny_out(f"Refusing to overwrite existing image: {target_rel}")
                 shutil.copyfile(source_path, exact)
                 os.remove(source_path)
                 size_kb = os.path.getsize(exact) / 1024
@@ -1886,7 +1888,7 @@ async def execute_tool(
             with open(target, "w", encoding="utf-8") as f:
                 f.write(final_content)
             diff = summarize_diff(p, original_content, final_content)
-            return {"ok": True, "output": f"Edited {p}.\n{diff}", "fileWrite": {"path": p, "changeType": "edited", "originalContent": original_content}}
+            return {"ok": True, "output": f"Edited {p}.\n{diff}", "fileWrite": {"path": target, "changeType": "edited", "originalContent": original_content}}
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"Failed to edit {p}: {e}")
 
@@ -1968,7 +1970,7 @@ async def execute_tool(
                     f"\nNOTE: this removed {replaced} lines in a single edit. Re-read the file (read_file) and "
                     "confirm nothing you meant to keep is gone before you call this done."
                 )
-            return {"ok": True, "output": summary, "fileWrite": {"path": p, "changeType": "edited", "originalContent": original_content}}
+            return {"ok": True, "output": summary, "fileWrite": {"path": target, "changeType": "edited", "originalContent": original_content}}
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"Failed to edit {p}: {e}")
 
@@ -2032,7 +2034,7 @@ async def execute_tool(
                 hunks = cc.get("hunks")
                 display_changed = sum(max(h["oldCount"], h["newCount"]) for h in hunks) if hunks else changed
                 change_label = f"changed {display_changed} line" + ("s" if display_changed != 1 else "")
-                return {"ok": True, "output": f"Updated {p} — {change_label}.\n{summarize_diff(p, orig, final_content)}", "fileWrite": {"path": p, "changeType": "edited", "originalContent": orig}}
+                return {"ok": True, "output": f"Updated {p} — {change_label}.\n{summarize_diff(p, orig, final_content)}", "fileWrite": {"path": target, "changeType": "edited", "originalContent": orig}}
 
             # New-file guard for multi-project roots
             rel_dir = os.path.relpath(os.path.dirname(target), root).replace(os.sep, "/")
@@ -2076,7 +2078,7 @@ async def execute_tool(
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, "w", encoding="utf-8") as f:
                 f.write(content)
-            return {"ok": True, "output": f"Created {p} ({len(content.encode('utf-8'))} bytes).", "fileWrite": {"path": p, "changeType": "created"}}
+            return {"ok": True, "output": f"Created {p} ({len(content.encode('utf-8'))} bytes).", "fileWrite": {"path": target, "changeType": "created"}}
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"Failed to write {p}: {e}")
 
@@ -2241,7 +2243,7 @@ async def execute_tool(
             except OSError:  # noqa: S110
                 pass
             os.remove(target)
-            return {"ok": True, "output": f"Deleted {p}.", "fileWrite": {"path": p, "changeType": "deleted", "originalContent": original_content}}
+            return {"ok": True, "output": f"Deleted {p}.", "fileWrite": {"path": target, "changeType": "deleted", "originalContent": original_content}}
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"Failed to delete {p}: {e}")
 
@@ -2288,6 +2290,10 @@ async def execute_tool(
             return await deny_out(f"Access denied: {to_path} is outside the workspace.")
         if is_protected_path(root, to_full):
             return await deny_out(f"Access denied: {to_path} is a protected directory.")
+        if os.path.exists(to_full):
+            return await deny_out(f"Cannot rename: {to_path} already exists.")
+        if not os.path.isfile(from_target["target"]):
+            return await deny_out("rename_file only supports files, not directories.")
         try:
             original_content: str | None = None
             try:
@@ -2297,7 +2303,10 @@ async def execute_tool(
                 pass
             os.makedirs(os.path.dirname(to_full), exist_ok=True)
             os.rename(from_target["target"], to_full)
-            return {"ok": True, "output": f"Renamed {from_path} → {to_path}", "fileWrite": {"path": to_path, "changeType": "created", "originalContent": original_content}}
+            return {"ok": True, "output": f"Renamed {from_path} → {to_path}", "fileWrites": [
+                {"path": from_target["target"], "changeType": "deleted", "originalContent": original_content},
+                {"path": to_full, "changeType": "created"},
+            ]}
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"Failed to rename {from_path} → {to_path}: {e}")
 
@@ -2381,6 +2390,7 @@ async def execute_tool(
             return await deny_out("oldName and newName are the same — nothing to do.")
         try:
             changed: list[str] = []
+            file_writes: list[dict[str, Any]] = []
             ignored = {"node_modules", ".git", "dist", "build", ".cache", "__pycache__", "vendor", ".venv", "venv"}
             pattern = re.compile(r"\b" + re.escape(old_name) + r"\b")
 
@@ -2401,7 +2411,9 @@ async def execute_tool(
                         await walk(full, depth + 1)
                     else:
                         try:
-                            content = open(full, "r", encoding="utf-8", errors="replace").read()
+                            if is_user_rules_path(root, full) or not await is_path_inside(root, full):
+                                continue
+                            content = Path(full).read_text(encoding="utf-8")
                             if not pattern.search(content):
                                 continue
                             new_content = pattern.sub(new_name, content)
@@ -2410,13 +2422,14 @@ async def execute_tool(
                             rel = os.path.relpath(full, root).replace(os.sep, "/")
                             count = len(pattern.findall(content))
                             changed.append(f"{rel} ({count} occurrence{'s' if count != 1 else ''})")
-                        except OSError:  # noqa: S110
+                            file_writes.append({"path": full, "changeType": "edited", "originalContent": content})
+                        except (OSError, UnicodeError):  # noqa: S110
                             pass
 
             await walk(root, 0)
             if not changed:
                 return {"ok": True, "output": f'No occurrences of "{old_name}" found — nothing renamed.'}
-            return {"ok": True, "output": f'Renamed "{old_name}" → "{new_name}" in {len(changed)} file(s):\n' + "\n".join(changed)}
+            return {"ok": True, "output": f'Renamed "{old_name}" → "{new_name}" in {len(changed)} file(s):\n' + "\n".join(changed), "fileWrites": file_writes}
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"refactor_rename failed: {e}")
 
@@ -2464,8 +2477,10 @@ async def execute_tool(
         if not re.match(r"^https?://", url, re.I):
             return await deny_out("URL must start with http:// or https://")
         save_target = os.path.abspath(os.path.join(root, save_as))
-        if not (await is_path_inside(root, save_target)):
+        if is_protected_path(root, save_target) or not (await is_path_inside(root, save_target)):
             return await deny_out(f"Access denied: {save_as} is outside the workspace.")
+        if os.path.exists(save_target):
+            return await deny_out(f"Refusing to overwrite existing image: {save_as}")
         try:
             import httpx
 
@@ -2538,7 +2553,7 @@ async def execute_tool(
                 return {"ok": True, "output": f'No occurrences of "{find}" found in {p} — nothing replaced.'}
             with open(target, "w", encoding="utf-8") as f:
                 f.write(new_content)
-            return {"ok": True, "output": f'Replaced {count} occurrence(s) of "{find}" → "{replace}" in {p}', "fileWrite": {"path": p, "changeType": "edited", "originalContent": original_content}}
+            return {"ok": True, "output": f'Replaced {count} occurrence(s) of "{find}" → "{replace}" in {p}', "fileWrite": {"path": target, "changeType": "edited", "originalContent": original_content}}
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"replace_in_file failed: {e}")
 
@@ -2700,7 +2715,7 @@ async def execute_tool(
                 f.write(final_content)
             cc = changed_line_count(original_content.replace("\r\n", "\n"), final_content.replace("\r\n", "\n"))
             changed = cc["count"]
-            return {"ok": True, "output": f"Applied {applied_count} edit(s) to {p} — changed {changed} line(s).", "fileWrite": {"path": p, "changeType": "edited", "originalContent": original_content}}
+            return {"ok": True, "output": f"Applied {applied_count} edit(s) to {p} — changed {changed} line(s).", "fileWrite": {"path": target, "changeType": "edited", "originalContent": original_content}}
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"multi_edit failed: {e}")
 
@@ -4408,8 +4423,8 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                         _cb(opts, "onAgentCommand", {"command": cmd, "output": result["output"], "failed": not result["ok"]})
                     if tc["tool"] in ("list_files", "read_file", "search_files", "read_rules"):
                         maybe_fire_reading()
-                    if result.get("fileWrite"):
-                        _cb(opts, "onFileWritten", result["fileWrite"])
+                    for write in result.get("fileWrites", [result["fileWrite"]] if result.get("fileWrite") else []):
+                        _cb(opts, "onFileWritten", write)
             else:
                 for tc in calls_to_run:
                     _cb(opts, "onToolStart", tc)
@@ -4527,8 +4542,8 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                         _cb(opts, "onAgentCommand", {"command": cmd, "output": result["output"], "failed": not result["ok"]})
                     if tc["tool"] in ("list_files", "read_file", "search_files", "read_rules"):
                         maybe_fire_reading()
-                    if result.get("fileWrite"):
-                        _cb(opts, "onFileWritten", result["fileWrite"])
+                    for write in result.get("fileWrites", [result["fileWrite"]] if result.get("fileWrite") else []):
+                        _cb(opts, "onFileWritten", write)
                     result_content = f"[TOOL RESULT — {tc['tool']}]\n{result['output']}"
                     if pending_image:
                         result_content += f"\n\n[image:{pending_image}]"
