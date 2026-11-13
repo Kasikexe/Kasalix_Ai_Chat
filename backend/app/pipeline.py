@@ -1147,6 +1147,8 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
                 "workspacePath": workspace_path,
                 "autoApply": True,
                 "userName": user_name,
+                "userId": user_id,
+                "conversationId": opts.get("conversationId"),
                 "signal": signal,
                 "think": think,
                 "askKey": opts.get("conversationId"),

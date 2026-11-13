@@ -18,7 +18,7 @@ run the parity harness (`tests/parity/`) to diff them.
 |---|---|---|
 | `Authorization: Bearer <token>` | session token (from register/login) | chat, conversations, files, memory, auth/me |
 | `X-User-Id: <id>` | generated client-side profile id | fallback identity everywhere |
-| `Cookie: settings_auth=1` | admin cookie (set via `POST /api/settings/auth`) | settings, planned, changelog, speedtest, plugins, cloud-usage, session-logs, ollama |
+| Bearer session token | authenticated user session | chat, conversations, files, memory, attachments, session logs |
 
 401 is returned when a Bearer-token-protected route gets no valid token.
 First-run flow: frontend generates a profile id and passes `X-User-Id`; registration is optional
@@ -118,7 +118,7 @@ Containment: target must resolve inside `workspacePath` and not inside protected
 | GET | `/api/planned` · POST/PUT/DELETE | planned features (admin) |
 | GET | `/api/changelog` · `/api/changelog/draft` · `/api/changelog/draft/publish` | changelog (admin) |
 | GET | `/api/speedtest/tests` · POST `/api/speedtest/run` · GET `/api/speedtest/results` · DELETE `/api/speedtest/results/{id}` | speed tests (admin) |
-| GET | `/api/session-logs` · `/api/session-logs/{id}` | agent session logs (admin) |
+| GET, DELETE | `/api/session-logs` · `/api/session-logs/{id}` | list/read/delete the authenticated user's agent session logs (DELETE applies to an individual log) |
 | GET | `/api/plugins` · POST install/update/uninstall/enable | plugins (admin) |
 | GET | `/api/ollama/status` · POST `/api/ollama/start` · POST `/api/ollama/stop` · POST `/api/ollama/restart` · GET `/api/ollama/ps` | Ollama process mgmt (admin) |
 | POST | `/api/terminal` | `{command, cwd, workspacePath}` → `{output, exitCode}` |

@@ -36,7 +36,7 @@ from .services.project_rules import (
     read_project_config,
     read_project_rules,
 )
-from .services.session_log import SessionLog, list_session_logs, read_session_log
+from .services.session_log import SessionLog
 from .settings_store import get_cloud_settings
 from .utils import (
     PROTECTED_DIRS,
@@ -3575,7 +3575,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
         return "".join(out)
 
     # ── Session log ────────────────────────────────────────────────────
-    session_log = SessionLog()
+    session_log = SessionLog(owner_id=opts.get("userId"), conversation_id=opts.get("conversationId"))
     await session_log.init()
     log_info(f"[agent] Session log: {session_log.get_file_path()}")
 
@@ -3619,32 +3619,11 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
 
     # ── Resume state (from opts or latest session log) ────────────────
     resume_state = opts.get("resumeState") or {}
-    session_log_history: list[dict[str, str]] = []
-    if not (resume_state.get("history") or []):
-        try:
-            log_list = await list_session_logs()
-            if log_list:
-                events = await read_session_log(log_list[0]["runId"])
-                session_log_history = [
-                    {"role": e["role"], "content": e["content"]}
-                    for e in events
-                    if e.get("type") == "message" and e.get("role") and e.get("content")
-                ]
-                if session_log_history:
-                    log_info(f"[agent] Resumed {len(session_log_history)} messages from session log {log_list[0]['runId']}")
-        except Exception as e:  # noqa: BLE001
-            log_info(f"[agent] Could not resume from session log: {e}")
-
     last_user_msgs = [{"role": "user", "content": m.get("content", "")} for m in opts["messages"] if m.get("role") == "user"]
     if resume_state.get("history"):
         history: list[dict[str, str]] = [
             *resume_state["history"],
             *[{"role": "user", "content": "[RESUMING a previously stopped run] " + m["content"]} for m in last_user_msgs[-1:]],
-        ]
-    elif session_log_history:
-        history = [
-            *session_log_history,
-            *[{"role": "user", "content": "[RESUMING from session log] " + m["content"]} for m in last_user_msgs[-1:]],
         ]
     else:
         history = [

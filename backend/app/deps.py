@@ -3,7 +3,7 @@
 - Every request gets a user id: Bearer session token wins, else the
   X-User-Id header, else a fresh generated id.
 - Admin routes (settings, planned, changelog, speedtest, plugins,
-  cloud-usage, session-logs, ollama) are OPEN: the settings password was
+  cloud-usage, ollama) are OPEN: the settings password was
   removed because a one-click reset made it security theater. Securing the
   host is now the operator's job (lock the PC / restrict the server).
 - /api/chat, /api/conversations, /api/files, /api/memory, /api/attachments
@@ -27,7 +27,6 @@ ADMIN_PATHS = [
     "/api/speedtest",
     "/api/plugins",
     "/api/cloud-usage",
-    "/api/session-logs",
     "/api/ollama",
 ]
 # ADMIN_PATHS is kept only to document which routes used to be password-protected;
@@ -39,6 +38,7 @@ SESSION_PROTECTED_PATHS = [
     "/api/files",
     "/api/memory",
     "/api/attachments",
+    "/api/session-logs",
 ]
 
 

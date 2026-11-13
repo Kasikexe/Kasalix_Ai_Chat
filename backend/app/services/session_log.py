@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,11 +38,13 @@ SESSION_EVENT_TYPES = (
 class SessionLog:
     """Append-only JSONL writer for a single agent run."""
 
-    def __init__(self, run_id: str | None = None) -> None:
+    def __init__(self, run_id: str | None = None, owner_id: str | None = None, conversation_id: str | None = None) -> None:
         import random
 
         self.run_id = run_id or f"run-{int(time.time() * 1000)}-{''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=6))}"
         self.started_at = datetime.now(timezone.utc).isoformat()
+        self.owner_id = owner_id
+        self.conversation_id = conversation_id
         self.seq = 0
         data_dir = get_data_dir()
         self.file_path = str(Path(data_dir) / "session-logs" / f"{self.run_id}.jsonl")
@@ -50,7 +53,7 @@ class SessionLog:
         """Initialize the log file and write run:start event."""
         try:
             os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
-            await self.append({"ts": self.started_at, "type": "run:start", "meta": {"runId": self.run_id}})
+            await self.append({"ts": self.started_at, "type": "run:start", "meta": {"runId": self.run_id, "ownerId": self.owner_id, "conversationId": self.conversation_id}})
         except Exception as e:  # noqa: BLE001
             log_error(f"[session-log] Failed to init: {e}")
 
@@ -172,7 +175,7 @@ class SessionLog:
         return self.file_path
 
 
-async def list_session_logs() -> list[dict[str, str]]:
+async def list_session_logs(owner_id: str | None = None) -> list[dict[str, str]]:
     """List all session log files, sorted by most recent first."""
     try:
         log_dir = Path(get_data_dir()) / "session-logs"
@@ -182,6 +185,14 @@ async def list_session_logs() -> list[dict[str, str]]:
         for f in log_dir.iterdir():
             if not f.name.endswith(".jsonl"):
                 continue
+            if owner_id is not None:
+                try:
+                    with f.open("r", encoding="utf-8") as stream:
+                        first = json.loads(stream.readline())
+                    if first.get("meta", {}).get("ownerId") != owner_id:
+                        continue
+                except (OSError, ValueError, AttributeError):
+                    continue
             logs.append(
                 {
                     "runId": f.name[: -len(".jsonl")],
@@ -196,6 +207,8 @@ async def list_session_logs() -> list[dict[str, str]]:
 
 async def read_session_log(run_id: str) -> list[dict[str, Any]]:
     """Read a specific session log by run ID."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", run_id):
+        return []
     file_path = Path(get_data_dir()) / "session-logs" / f"{run_id}.jsonl"
     try:
         with open(file_path, "r", encoding="utf-8") as f:
