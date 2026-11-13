@@ -541,7 +541,7 @@ AGENT_TOOL_DEFS: list[dict[str, Any]] = [
     {"name": "ask_user", "description": "Ask the user a short clarifying question mid-task when you genuinely cannot proceed (ambiguous requirements, conflicting instructions, a destructive action you must not assume). The run pauses until the user answers. Use ONLY for questions you cannot answer yourself from the workspace, your rules, or memory — never ask about things you can check yourself.", "args": '{"question": "Should the new module be TypeScript or plain JavaScript?"}', "mutating": False},
     {"name": "git_status", "description": "Show the current git repository state (branch, staged/unstaged changes, untracked files). Run this before committing so you know what changed. Returns an error if the workspace is not a git repo.", "args": "{}", "mutating": False},
     {"name": "git_diff", "description": "Show the exact changes (diff) of files in the workspace. Use this to review your own work and to write an accurate commit message. Returns an error if the workspace is not a git repo.", "args": "{}", "mutating": False},
-    {"name": "git_commit", "description": "Stage ALL changes and create a LOCAL git commit with the given summary. ALWAYS write a concise, accurate summary (what changed and why) based on your diff — never generic text like \"update files\". Uses \"Koding\" as the author unless you pass a name. IMPORTANT: commits are LOCAL ONLY — this tool NEVER pushes to GitHub or any remote, so never claim to have pushed anything. Returns an error if the workspace is not a git repo or there is nothing to commit.", "args": '{"summary": "Raise max connections to 500 and add retry logic"} or {"summary": "...", "name": "User Name"}', "mutating": True},
+    {"name": "git_commit", "description": "Create a LOCAL commit of explicitly selected files, after user approval. Review git status and diff first. Never include unrelated user changes. Existing staged changes in selected files are refused. This tool never pushes.", "args": '{"summary": "Fix retry handling", "paths": ["src/client.py"]}', "mutating": True},
     {"name": "edit_file", "description": "SURGICAL edit of an existing file: replace an exact snippet (old_string) with new content (new_string). Use this for SMALL changes to existing files instead of rewriting the whole file. old_string must appear exactly once in the file (or differ only in whitespace). ONLY available in auto-apply mode. After a successful edit the result includes a diff summary.", "args": '{"path": "src/app.ts", "old_string": "const x = 1;", "new_string": "const x = 2;"}', "mutating": True},
     {"name": "edit_lines", "description": "Edit an existing file BY LINE NUMBER — replaces lines start..end with content, so you NEVER copy the old text. This is the easiest way to change a few lines, a loop, or one statement inside a file you have read. start/end are 1-based line numbers (from read_file with \"numbers\": true); omit end to change one line; make end smaller than start to INSERT before start; negative counts from the end (-1 = last line); content \"\" deletes those lines. Pass expect (the first line being replaced, copied from the file) and the edit is refused if the numbers are stale. ONLY available in auto-apply mode.", "args": '{"path": "snake.py", "start": 42, "end": 48, "content": "    new_line_1\\n    new_line_2", "expect": "    def update(self):"}', "mutating": True},
     {"name": "edit_section", "description": "Rewrite ONE REGION of an existing file identified by ANCHORS instead of by the old text. Everything BETWEEN start_anchor and end_anchor is replaced by content; the anchor lines themselves and everything outside them are kept exactly as they were. Use this to rewrite a whole function or block without reproducing its old body — e.g. start_anchor \"def update(self):\" (kept) and end_anchor \"def draw(self):\" (kept), content = the new body lines. Both anchors must be whole lines copied EXACTLY from the file and must each appear only once; omit start_anchor to start at the top of the file, omit end_anchor to go to the end. ONLY available in auto-apply mode.", "args": '{"path": "snake.py", "start_anchor": "def update(self):", "end_anchor": "def draw(self):", "content": "        # new body lines only"}', "mutating": True},
@@ -588,7 +588,7 @@ TOOL_JSON_EXAMPLES = f"""Available tools — to use one, respond with ONLY a sin
 {{"tool": "read_image", "args": {{"path": "screenshots/ui.png"}}}} — have the vision model DESCRIBE a workspace image (screenshot, mockup, captured frame)
 {{"tool": "git_status", "args": {{}}}}
 {{"tool": "git_diff", "args": {{}}}}
-{{"tool": "git_commit", "args": {{"summary": "Raise max connections to 500"}}}}
+{{"tool": "git_commit", "args": {{"summary": "Raise max connections to 500", "paths": ["src/server.py"]}}}}
 {{"tool": "read_rules", "args": {{}}}}
 {{"tool": "update_memory", "args": {{"rule": "The test command is: python -m unittest"}}}}
 {{"tool": "ask_user", "args": {{"question": "TypeScript or JavaScript?"}}}}
@@ -969,7 +969,7 @@ async def authorize_tool_calls(
         if blocked:
             reason = "Blocked by the selected permission mode"
         else:
-            needs_approval = mode in ("ask-each", "suggest") or (mode == "auto-edit" and name in EXECUTION_TOOLS)
+            needs_approval = name == "git_commit" or mode in ("ask-each", "suggest") or (mode == "auto-edit" and name in EXECUTION_TOOLS)
             if needs_approval:
                 key = f"approval-{int(time.time() * 1000)}-{''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=6))}"
                 _cb(opts, "onApprovalRequest", key, name, call["args"])
@@ -1001,16 +1001,9 @@ def git_exclude_args() -> list[str]:
 
 
 async def run_git(root: str, args: list[str]) -> str:
-    quoted = []
-    for a in args:
-        if re.fullmatch(r"[A-Za-z0-9_./:=@%+,-]+", a):
-            quoted.append(a)
-        else:
-            quoted.append('"' + a.replace('"', "'") + '"')
-    cmd = "git " + " ".join(quoted)
     try:
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
+        proc = await asyncio.create_subprocess_exec(
+            "git", *args,
             cwd=root,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -1022,6 +1015,8 @@ async def run_git(root: str, args: list[str]) -> str:
             raise RuntimeError("git command timed out")
         out = (stdout or b"").decode("utf-8", "replace")
         err = (stderr or b"").decode("utf-8", "replace")
+        if proc.returncode != 0:
+            raise RuntimeError((err or out).strip() or f"git exited with code {proc.returncode}")
         return (out + (f"\n[stderr]\n{err}" if err else "")).strip()
     except asyncio.CancelledError:
         raise
@@ -1331,21 +1326,31 @@ async def execute_tool(
         summary = summary.strip()
         if not summary:
             return await deny_out('git_commit requires a "summary" string argument (what changed and why).')
+        paths = args.get("paths")
+        if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p.strip() for p in paths):
+            return await deny_out('git_commit requires a non-empty "paths" list of specific files to commit.')
+        for path in paths:
+            target = await resolve_in_workspace(root, path)
+            if not target or os.path.isdir(target) or path.startswith(":"):
+                return await deny_out(f"Invalid commit path: {path}. Select individual workspace files.")
+        staged_by_tool = False
         try:
             status = await run_git(root, ["status", "--short"])
             if not status.strip():
                 return {"ok": True, "output": "Nothing to commit — the working tree is clean."}
             author = args.get("name") if isinstance(args.get("name"), str) and args.get("name").strip() else "Koding"
             email = "agent@kasalix.local"
-            await run_git(root, ["add", "-A", *git_exclude_args()])
-            staged = await run_git(root, ["diff", "--cached", "--name-only", *git_exclude_args()])
-            if not staged.strip():
-                return {"ok": True, "output": "Nothing to commit — the only changed files are in protected server directories (not tracked by the agent)."}
+            staged = await run_git(root, ["diff", "--cached", "--name-only", "--", *paths])
+            if staged.strip():
+                return await deny_out("Selected files already have staged changes. Preserve the user's index and ask them to commit these files manually.")
+            await run_git(root, ["add", "-A", "--", *paths])
+            staged_by_tool = True
             await run_git(root, [
                 "-c", f"user.name={author}",
                 "-c", f"user.email={email}",
                 "commit", "-m", summary.replace('"', "'"),
                 "--author", f"{author} <{email}>",
+                "--only", "--", *paths,
             ])
             log_text = ""
             try:
@@ -1354,6 +1359,11 @@ async def execute_tool(
                 pass
             return {"ok": True, "output": f"Committed LOCALLY as {author} — this was NOT pushed to GitHub or any remote (this tool never pushes).\n{log_text[:MAX_OUTPUT_CHARS]}"}
         except Exception as e:  # noqa: BLE001
+            if staged_by_tool:
+                try:
+                    await run_git(root, ["reset", "-q", "--", *paths])
+                except Exception:  # noqa: BLE001
+                    return await deny_out(f"git commit failed: {e}. The selected files may still be staged; inspect git status.")
             return await deny_out(f"git commit failed (is this a git repository?): {e}")
 
     if tool == "search_files":

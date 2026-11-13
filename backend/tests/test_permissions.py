@@ -44,3 +44,13 @@ def test_auto_edit_requires_approval_for_commands(monkeypatch):
     allowed, feedback = asyncio.run(agent.authorize_tool_calls(calls, {"toolPermission": "auto-edit"}, None, Log()))
     assert allowed == [call("edit_file")]
     assert len(feedback) == 2
+
+
+def test_auto_mode_requires_commit_approval(monkeypatch):
+    async def deny(*args):
+        return False
+
+    monkeypatch.setattr(agent, "wait_for_approval", deny)
+    allowed, feedback = asyncio.run(agent.authorize_tool_calls([call("git_commit")], {"toolPermission": "auto"}, None, Log()))
+    assert not allowed
+    assert len(feedback) == 1
