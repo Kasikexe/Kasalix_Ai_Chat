@@ -61,3 +61,14 @@ def test_smart_edit_reports_actual_file_path(tmp_path):
     result = asyncio.run(execute_tool(str(tmp_path), call, True))
     assert result["ok"]
     assert result["fileWrite"]["path"] == str(path)
+
+
+def test_edit_preserves_original_line_endings_for_undo(tmp_path):
+    path = tmp_path / "app.txt"
+    original = b"first\r\nsecond\r\n"
+    path.write_bytes(original)
+    call = {"tool": "edit_file", "args": {"path": "app.txt", "old_string": "second", "new_string": "updated"}}
+    result = asyncio.run(execute_tool(str(tmp_path), call, True))
+    assert result["ok"], result
+    assert result["fileWrite"]["originalContent"].encode("utf-8") == original
+    assert path.read_bytes() == b"first\r\nupdated\r\n"

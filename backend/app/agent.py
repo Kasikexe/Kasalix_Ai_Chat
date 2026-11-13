@@ -1982,7 +1982,7 @@ async def execute_tool(
             return await deny_out(f"Access denied: {p} is the USER RULES file — it is read-only for you. The user edits it themselves. Save project knowledge to your own memory file (.agent-memory.md) with update_memory instead.")
         try:
             try:
-                with open(target, "r", encoding="utf-8") as f:
+                with open(target, "r", encoding="utf-8", newline="") as f:
                     original_content = f.read()
             except OSError:
                 return await deny_out(f"Could not read {p} — the file may not exist. Use write_file to create it.")
@@ -1997,7 +1997,7 @@ async def execute_tool(
                     f"Refusing this edit of {p}: it changes {changed} of {total} lines — that replaces most of the file instead of a targeted change. Instead of copying a huge old_string, use one of these: (1) edit_lines {{\"path\": \"{p}\", \"start\": <first line>, \"end\": <last line>, \"content\": \"<new lines>\"}} — get the numbers from read_file with \"numbers\": true, no old text needed; (2) edit_section {{\"path\": \"{p}\", \"start_anchor\": \"<line to keep above>\", \"end_anchor\": \"<line to keep below>\", \"content\": \"<new region>\"}} to rewrite a whole block between two anchors. Or use a SMALLER old_string that matches only the lines you are changing. If the USER really asked to rewrite the whole file, describe the new version in your final message and let the user apply it, instead of rewriting it yourself."
                 )
             final_content = result["newContent"].replace("\r\n", "\n").replace("\n", "\r\n") if "\r\n" in original_content else result["newContent"]
-            with open(target, "w", encoding="utf-8") as f:
+            with open(target, "w", encoding="utf-8", newline="") as f:
                 f.write(final_content)
             diff = summarize_diff(p, original_content, final_content)
             return {"ok": True, "output": f"Edited {p}.\n{diff}", "fileWrite": {"path": target, "changeType": "edited", "originalContent": original_content}}
@@ -2032,7 +2032,7 @@ async def execute_tool(
             return await deny_out(f"Access denied: {p} is the USER RULES file — it is read-only for you. The user edits it themselves. Save project knowledge to your own memory file (.agent-memory.md) with update_memory instead.")
         try:
             try:
-                with open(target, "r", encoding="utf-8", errors="replace") as f:
+                with open(target, "r", encoding="utf-8", errors="replace", newline="") as f:
                     original_content = f.read()
             except OSError:
                 return await deny_out(f"Could not read {p} — the file may not exist. Use write_file to create it.")
@@ -2069,7 +2069,7 @@ async def execute_tool(
             final_content = result["newContent"].replace("\r\n", "\n").replace("\n", "\r\n") if "\r\n" in original_content else result["newContent"]
             if final_content == original_content:
                 return {"ok": True, "output": f"{p} already has exactly that content in {where} — no change needed."}
-            with open(target, "w", encoding="utf-8") as f:
+            with open(target, "w", encoding="utf-8", newline="") as f:
                 f.write(final_content)
             diff = summarize_diff(p, original_content, final_content)
             summary = (
@@ -2113,7 +2113,7 @@ async def execute_tool(
             original_content: str | None = None
             change_type = "created"
             try:
-                with open(target, "r", encoding="utf-8") as f:
+                with open(target, "r", encoding="utf-8", newline="") as f:
                     original_content = f.read()
                 change_type = "edited"
             except OSError:  # noqa: S110
@@ -2141,7 +2141,7 @@ async def execute_tool(
                         "Only change the lines you intend to change."
                     )
                 final_content = norm_new.replace("\n", "\r\n") if "\r\n" in orig else norm_new
-                with open(target, "w", encoding="utf-8") as f:
+                with open(target, "w", encoding="utf-8", newline="") as f:
                     f.write(final_content)
                 hunks = cc.get("hunks")
                 display_changed = sum(max(h["oldCount"], h["newCount"]) for h in hunks) if hunks else changed
@@ -2188,7 +2188,7 @@ async def execute_tool(
                         f'{{"tool": "write_file", "args": {{"path": "{p}", "content": "...", "force": true}}}}.'
                     )
             os.makedirs(os.path.dirname(target), exist_ok=True)
-            with open(target, "w", encoding="utf-8") as f:
+            with open(target, "w", encoding="utf-8", newline="") as f:
                 f.write(content)
             return {"ok": True, "output": f"Created {p} ({len(content.encode('utf-8'))} bytes).", "fileWrite": {"path": target, "changeType": "created"}}
         except Exception as e:  # noqa: BLE001
@@ -2350,7 +2350,7 @@ async def execute_tool(
         try:
             original_content: str | None = None
             try:
-                with open(target, "r", encoding="utf-8") as f:
+                with open(target, "r", encoding="utf-8", newline="") as f:
                     original_content = f.read()
             except OSError:  # noqa: S110
                 pass
@@ -2409,7 +2409,7 @@ async def execute_tool(
         try:
             original_content: str | None = None
             try:
-                with open(from_target["target"], "r", encoding="utf-8") as f:
+                with open(from_target["target"], "r", encoding="utf-8", newline="") as f:
                     original_content = f.read()
             except OSError:  # noqa: S110
                 pass
@@ -2525,11 +2525,12 @@ async def execute_tool(
                         try:
                             if is_user_rules_path(root, full) or not await is_path_inside(root, full):
                                 continue
-                            content = Path(full).read_text(encoding="utf-8")
+                            with open(full, "r", encoding="utf-8", newline="") as stream:
+                                content = stream.read()
                             if not pattern.search(content):
                                 continue
                             new_content = pattern.sub(new_name, content)
-                            with open(full, "w", encoding="utf-8") as f:
+                            with open(full, "w", encoding="utf-8", newline="") as f:
                                 f.write(new_content)
                             rel = os.path.relpath(full, root).replace(os.sep, "/")
                             count = len(pattern.findall(content))
@@ -2651,7 +2652,7 @@ async def execute_tool(
         if is_user_rules_path(root, target):
             return await deny_out(f"Access denied: {p} is the USER RULES file — read-only.")
         try:
-            with open(target, "r", encoding="utf-8") as f:
+            with open(target, "r", encoding="utf-8", newline="") as f:
                 original_content = f.read()
             use_regex = args.get("regex") is True
             if use_regex:
@@ -2663,7 +2664,7 @@ async def execute_tool(
                 new_content = original_content.replace(find, replace)
             if count == 0:
                 return {"ok": True, "output": f'No occurrences of "{find}" found in {p} — nothing replaced.'}
-            with open(target, "w", encoding="utf-8") as f:
+            with open(target, "w", encoding="utf-8", newline="") as f:
                 f.write(new_content)
             return {"ok": True, "output": f'Replaced {count} occurrence(s) of "{find}" → "{replace}" in {p}', "fileWrite": {"path": target, "changeType": "edited", "originalContent": original_content}}
         except Exception as e:  # noqa: BLE001
@@ -2803,7 +2804,7 @@ async def execute_tool(
         if is_user_rules_path(root, target):
             return await deny_out(f"Access denied: {p} is the USER RULES file — it is read-only for you.")
         try:
-            with open(target, "r", encoding="utf-8") as f:
+            with open(target, "r", encoding="utf-8", newline="") as f:
                 content = f.read()
             original_content = content
             applied_count = 0
@@ -2823,7 +2824,7 @@ async def execute_tool(
                 content = result["newContent"]
                 applied_count += 1
             final_content = content.replace("\r\n", "\n").replace("\n", "\r\n") if "\r\n" in original_content else content
-            with open(target, "w", encoding="utf-8") as f:
+            with open(target, "w", encoding="utf-8", newline="") as f:
                 f.write(final_content)
             cc = changed_line_count(original_content.replace("\r\n", "\n"), final_content.replace("\r\n", "\n"))
             changed = cc["count"]
