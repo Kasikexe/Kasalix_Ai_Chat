@@ -664,7 +664,7 @@ AGENT_TOOL_DEFS: list[dict[str, Any]] = [
     {"name": "list_files", "description": "List files and directories in the workspace (recursive, ignores node_modules/.git/dist etc). Use this to see what exists before editing.", "args": "{}", "mutating": False},
     {"name": "read_file", "description": "Read the contents of a file inside the workspace. Always read a file BEFORE editing it so you know exactly what is in it. Do NOT pass offset/length for normal files — read the whole file in one call; offset/length is ONLY for files larger than 200KB. Pass \"numbers\": true to get line numbers in front of each line (12| code) — needed for edit_lines; never copy those numbers into an edit's text.", "args": '{"path": "src/index.ts"} or {"path": "src/index.ts", "numbers": true} or {"path": "src/index.ts", "offset": 200000, "length": 100000}', "mutating": False},
     {"name": "search_files", "description": "Search workspace file contents for literal text, returning paths and line numbers. Matching is case-insensitive by default; set case_sensitive to true for an exact-case search. Results may include comments and strings, not just code references.", "args": '{"query": "function render"} or {"query": "render", "case_sensitive": true}', "mutating": False},
-    {"name": "run_command", "description": "Run a shell command for testing or start a background server. Start: pass command, optional workspace-relative cwd, and background=true for a process that stays running during this agent run. Status: operation=status and process_id, optionally wait=0-10 seconds for new output. Stop: operation=stop and process_id. timeout=1-600 seconds is optional; foreground defaults to 120 seconds, background lasts until stopped or the run ends unless timeout is supplied. Do not daemonize or detach children. Check status and exit code: starting is not proof of success. Commands run with the server user's permissions, not in a sandbox.", "args": '{"command": "python -m pytest -q"} or {"command": "npm run dev", "background": true} or {"operation": "status", "process_id": "<id>", "wait": 3} or {"operation": "stop", "process_id": "<id>"}', "mutating": False},
+    {"name": "run_command", "description": "Run a shell command for testing or start a background server. Start: pass command, optional workspace-relative cwd, and background=true. Status: operation=status and process_id, optionally wait=0-10 seconds. Stop: operation=stop and process_id. timeout=1-600 seconds is optional; foreground defaults to 120 seconds. Background processes used for an open browser preview remain available to follow-up messages in this chat, otherwise they stop when the run ends. Do not daemonize. Check status and exit code: starting is not proof of success. Commands run with the server user's permissions, not in a sandbox.", "args": '{"command": "python -m pytest -q"} or {"command": "npm run dev", "background": true} or {"operation": "status", "process_id": "<id>", "wait": 3} or {"operation": "stop", "process_id": "<id>"}', "mutating": False},
     {"name": "browser", "description": "Control the visible Koding browser pane for local web apps. Use open with a localhost URL, inspect to read visible text and element selectors, click or type with a selector, console to see browser errors, screenshot to see the page if your model supports vision, and close when finished. Start a local server with run_command background=true first. Browser actions are visible to the user and can change the app's data.", "args": '{"operation": "open", "url": "http://127.0.0.1:3000/"} or {"operation": "inspect"} or {"operation": "click", "selector": "button"} or {"operation": "type", "selector": "input", "text": "hello"} or {"operation": "screenshot"} or {"operation": "console"}', "mutating": False},
     {"name": "edit_file", "description": "SURGICAL edit of an existing file: replace an exact snippet (old_string) with new content (new_string). Use this for SMALL changes to existing files instead of rewriting the whole file. old_string must appear exactly once in the file (or differ only in whitespace). ONLY available in auto-apply mode. After a successful edit the result includes a diff summary.", "args": '{"path": "src/app.ts", "old_string": "const x = 1;", "new_string": "const x = 2;"}', "mutating": True},
     {"name": "edit_lines", "description": "Edit an existing file BY LINE NUMBER — replaces lines start..end with content, so you NEVER copy the old text. This is the easiest way to change a few lines, a loop, or one statement inside a file you have read. start/end are 1-based line numbers (from read_file with \"numbers\": true); omit end to change one line; make end smaller than start to INSERT before start; negative counts from the end (-1 = last line); content \"\" deletes those lines. Pass expect (the first line being replaced, copied from the file) and the edit is refused if the numbers are stale. ONLY available in auto-apply mode.", "args": '{"path": "snake.py", "start": 42, "end": 48, "content": "    new_line_1\\n    new_line_2", "expect": "    def update(self):"}', "mutating": True},
@@ -1218,6 +1218,8 @@ class BackgroundCommandManager:
             "sizes": {"stdout": 0, "stderr": 0}, "changed": asyncio.Event(), "lock": asyncio.Lock(),
         }
         self.processes[process_id] = entry
+        entry["command"] = command
+        entry["cwd"] = cwd
 
         async def drain(name: str, stream: asyncio.StreamReader | None, limit: int) -> None:
             if stream is None:
@@ -1316,6 +1318,63 @@ class BackgroundCommandManager:
         await asyncio.gather(*watchdogs, return_exceptions=True)
 
 
+# A preview needs to survive a completed answer so a follow-up can use it.
+# Only runs that actually opened a browser keep their managed processes alive.
+_conversation_resources: dict[tuple[str, str], dict[str, Any]] = {}
+CONVERSATION_IDLE_SECONDS = 30 * 60
+
+
+async def acquire_conversation_resources(owner: str | None, conversation: str | None, root: str) -> tuple[tuple[str, str] | None, dict[str, Any]]:
+    key = (owner, conversation) if owner and conversation else None
+    entry = _conversation_resources.get(key) if key else None
+    if entry and entry["root"] != os.path.realpath(root):
+        await close_conversation_resources(owner, conversation)
+        entry = None
+    if entry is None:
+        entry = {"root": os.path.realpath(root), "manager": BackgroundCommandManager(),
+                 "browser_session": secrets.token_urlsafe(18), "browser": {"open": False}, "active": 0, "expiry": None}
+        if key:
+            _conversation_resources[key] = entry
+    expiry = entry.get("expiry")
+    if expiry and not expiry.done():
+        expiry.cancel()
+    entry["expiry"] = None
+    entry["active"] += 1
+    return key, entry
+
+
+async def release_conversation_resources(key: tuple[str, str] | None, entry: dict[str, Any], *, cancelled: bool = False) -> None:
+    entry["active"] = max(0, entry["active"] - 1)
+    if entry["active"]:
+        return
+    if key is None or cancelled or not entry["browser"]["open"]:
+        if key and _conversation_resources.get(key) is entry:
+            _conversation_resources.pop(key, None)
+        await entry["manager"].close()
+        return
+    async def expire() -> None:
+        await asyncio.sleep(CONVERSATION_IDLE_SECONDS)
+        if _conversation_resources.get(key) is entry and entry["active"] == 0:
+            _conversation_resources.pop(key, None)
+            await entry["manager"].close()
+    entry["expiry"] = asyncio.create_task(expire())
+
+
+async def close_conversation_resources(owner: str | None, conversation: str | None) -> None:
+    if not owner or not conversation:
+        return
+    entry = _conversation_resources.pop((owner, conversation), None)
+    if entry:
+        if entry.get("expiry"):
+            entry["expiry"].cancel()
+        await entry["manager"].close()
+
+
+async def close_all_conversation_resources() -> None:
+    keys = list(_conversation_resources)
+    await asyncio.gather(*(close_conversation_resources(*key) for key in keys), return_exceptions=True)
+
+
 
 
 
@@ -1352,7 +1411,14 @@ async def execute_tool(
                 _ = url.port  # reject invalid ports
             except ValueError:
                 return await deny_out("Invalid browser URL.")
-        return await request_browser_action(args, extra or {})
+        result = await request_browser_action(args, extra or {})
+        browser_state = (extra or {}).get("browser_state")
+        if result["ok"] and isinstance(browser_state, dict):
+            if args["operation"] == "open":
+                browser_state.update({"open": True, "url": args["url"]})
+            elif args["operation"] == "close":
+                browser_state.update({"open": False, "url": ""})
+        return result
 
     if tool == "run_command":
         error = validate_command_args(args)
@@ -3154,11 +3220,20 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     except Exception:  # noqa: BLE001
         pass
 
-    command_manager = BackgroundCommandManager()
-    browser_session = secrets.token_urlsafe(18)
+    resource_key, resources = await acquire_conversation_resources(opts.get("userId"), opts.get("conversationId"), root)
+    command_manager = resources["manager"]
+    browser_session = resources["browser_session"]
+    if resources["browser"]["open"]:
+        running = [f'{pid}: {entry["command"]} (cwd: {entry["cwd"]})' for pid, entry in command_manager.processes.items() if not entry["done"]]
+        history.append({"role": "user", "content": "[EXISTING BROWSER PREVIEW] This chat has an open browser at "
+                        + str(resources["browser"].get("url") or "an unknown URL")
+                        + ". Use browser inspect to continue; running background processes: "
+                        + ("; ".join(running) if running else "none") + ". Check their status before assuming they are ready."})
     browser_context = {"callbacks": opts.get("callbacks"), "userId": opts.get("userId"),
                        "conversationId": opts.get("conversationId"), "browserSession": browser_session,
-                       "use_vision_model": use_vision_model, "signal": signal, "command_manager": command_manager}
+                       "use_vision_model": use_vision_model, "signal": signal, "command_manager": command_manager,
+                       "browser_state": resources["browser"]}
+    cancelled = False
     try:
         iter = 0
         while iter < max_iterations:
@@ -3986,10 +4061,11 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 break
 
     except BaseException as e:
+        cancelled = True
         fire_resume_state()
         raise
     finally:
-        await command_manager.close()
+        await release_conversation_resources(resource_key, resources, cancelled=cancelled or bool(signal and signal.is_set()))
         # Live preview is per-run: always closed when the agent loop ends
         # (done, stalled, errored, or cancelled) so no window or server
         # outlives the session.

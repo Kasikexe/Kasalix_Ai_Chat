@@ -259,6 +259,64 @@ def test_agent_can_start_inspect_and_stop_background_command(tmp_path, monkeypat
     assert "stopped" in str(observed[3])
 
 
+def test_browser_and_server_survive_follow_up_in_same_chat(tmp_path, monkeypatch):
+    async def scenario():
+        command = python_command("import time; time.sleep(30)")
+        replies = iter([
+            json.dumps({"tool": "run_command", "args": {"command": command, "background": True}}),
+            json.dumps({"tool": "browser", "args": {"operation": "open", "url": "http://localhost:3000"}}),
+            "The preview is open.",
+            json.dumps({"tool": "browser", "args": {"operation": "inspect"}}),
+            "The buttons are visible.",
+        ])
+        requests, histories = [], []
+
+        async def stream(_opts, messages, on_chunk, _thinking, **_kwargs):
+            histories.append([dict(message) for message in messages])
+            reply = next(replies, "The buttons are visible.")
+            on_chunk(reply)
+            return reply
+
+        def browser_action(request):
+            requests.append(request)
+            agent.resolve_browser_action(request["key"], "owner", {"ok": True, "output": "browser action completed"})
+
+        monkeypatch.setattr(agent, "stream_chat_with_retry", stream)
+        opts = {"model": "fake", "workspacePath": str(tmp_path), "autoApply": True,
+                "userId": "owner", "conversationId": "preview-chat", "callbacks": {"onBrowserAction": browser_action},
+                "messages": [{"role": "user", "content": "Open the preview"}]}
+        try:
+            await agent.run_agent_loop(opts)
+            entry = agent._conversation_resources[("owner", "preview-chat")]
+            proc = next(iter(entry["manager"].processes.values()))["proc"]
+            assert proc.returncode is None
+            opts["messages"] = [{"role": "user", "content": "Inspect the buttons"}]
+            await agent.run_agent_loop(opts)
+            assert len(requests) == 2 and requests[0]["sessionId"] == requests[1]["sessionId"]
+            assert any("EXISTING BROWSER PREVIEW" in str(message.get("content", "")) for turn in histories for message in turn)
+            assert proc.returncode is None
+        finally:
+            await agent.close_conversation_resources("owner", "preview-chat")
+        assert proc.returncode is not None
+    asyncio.run(scenario())
+
+
+def test_preview_resources_are_isolated_and_expire(tmp_path, monkeypatch):
+    async def scenario():
+        monkeypatch.setattr(agent, "CONVERSATION_IDLE_SECONDS", 0.1)
+        key, entry = await agent.acquire_conversation_resources("owner", "chat", str(tmp_path))
+        entry["browser"]["open"] = True
+        result = await entry["manager"].start(python_command("import time; time.sleep(30)"), str(tmp_path), None)
+        proc = entry["manager"].processes[result["process_id"]]["proc"]
+        other_key, other = await agent.acquire_conversation_resources("other", "chat", str(tmp_path))
+        assert other is not entry and other["browser_session"] != entry["browser_session"]
+        await agent.release_conversation_resources(other_key, other)
+        await agent.release_conversation_resources(key, entry)
+        await asyncio.wait_for(entry["expiry"], 10)
+        assert ("owner", "chat") not in agent._conversation_resources and proc.returncode is not None
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("cancel", [False, True])
 def test_agent_run_cleans_up_background_processes(tmp_path, monkeypatch, cancel):
     managers = []

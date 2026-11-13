@@ -99,6 +99,12 @@ async def _startup_event() -> None:
     asyncio.create_task(_probe_task())
 
 
+@app.on_event("shutdown")
+async def _shutdown_agent_resources() -> None:
+    from .agent import close_all_conversation_resources
+    await close_all_conversation_resources()
+
+
 async def _probe_task() -> None:
     try:
         await probe_all_models()

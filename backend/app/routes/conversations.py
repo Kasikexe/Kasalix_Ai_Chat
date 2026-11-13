@@ -118,6 +118,13 @@ async def delete_one(conv_id: str, request: Request) -> dict:
     ok = await delete_conversation(conv_id, owner_id)
     if not ok:
         return JSONResponse({"error": "Not found"}, status_code=404)
+    from ..agent import close_conversation_resources
+    from .chat import active_runs
+
+    active = active_runs.get(conv_id)
+    if active and active.get("ownerId") == owner_id:
+        active["signal"].set()
+    await close_conversation_resources(owner_id, conv_id)
     return {"success": True}
 
 
