@@ -38,7 +38,7 @@
 - The file path MUST include a file extension (.html, .py, .ts, .css, etc.).
 - Use relative paths like src/index.ts, components/Button.tsx, etc.
 - To delete a file, output a code block with the first line as: `// DELETE: path/to/file.ext` and NO other content.
-- Use automatic verification results when provided; do not claim to have run checks that did not run.
+- Use run_command for relevant tests and checks. Report actual results, and do not claim to have run checks that did not run.
 - Match the project language (see workspace profile).
 - Prefer editing existing files over creating new ones.
 - Keep changes minimal and focused.

@@ -16,14 +16,14 @@ def call(name):
 
 def test_read_only_blocks_every_mutation():
     calls = [call(name) for name in sorted(agent.MUTATING_TOOLS)]
-    calls.append(call("read_file"))
+    calls.extend([call("run_command"), call("read_file")])
     allowed, feedback = asyncio.run(agent.authorize_tool_calls(calls, {"toolPermission": "read-only"}, None, Log()))
     assert allowed == [call("read_file")]
     assert len(feedback) == len(calls) - 1
 
 
 def test_ask_each_executes_only_approved_calls(monkeypatch):
-    answers = iter([False, True])
+    answers = iter([False, True, False])
 
     async def approve(*args):
         return next(answers)
@@ -44,6 +44,21 @@ def test_auto_edit_allows_edits_but_blocks_removed_tools(monkeypatch):
     allowed, feedback = asyncio.run(agent.authorize_tool_calls(calls, {"toolPermission": "auto-edit"}, None, Log()))
     assert allowed == [call("edit_file")]
     assert len(feedback) == 2
+
+
+def test_auto_edit_requires_approval_for_commands(monkeypatch):
+    requests = []
+
+    async def approve(*args):
+        return True
+
+    monkeypatch.setattr(agent, "wait_for_approval", approve)
+    calls = [call("edit_file"), call("run_command")]
+    allowed, feedback = asyncio.run(agent.authorize_tool_calls(
+        calls, {"toolPermission": "auto-edit", "callbacks": {"onApprovalRequest": lambda *args: requests.append(args)}}, None, Log(),
+    ))
+    assert allowed == calls and not feedback
+    assert len(requests) == 1 and requests[0][1] == "run_command"
 
 
 def test_auto_mode_blocks_removed_commit_tool(monkeypatch):

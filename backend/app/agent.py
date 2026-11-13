@@ -612,6 +612,7 @@ AGENT_TOOL_DEFS: list[dict[str, Any]] = [
     {"name": "list_files", "description": "List files and directories in the workspace (recursive, ignores node_modules/.git/dist etc). Use this to see what exists before editing.", "args": "{}", "mutating": False},
     {"name": "read_file", "description": "Read the contents of a file inside the workspace. Always read a file BEFORE editing it so you know exactly what is in it. Do NOT pass offset/length for normal files — read the whole file in one call; offset/length is ONLY for files larger than 200KB. Pass \"numbers\": true to get line numbers in front of each line (12| code) — needed for edit_lines; never copy those numbers into an edit's text.", "args": '{"path": "src/index.ts"} or {"path": "src/index.ts", "numbers": true} or {"path": "src/index.ts", "offset": 200000, "length": 100000}', "mutating": False},
     {"name": "search_files", "description": "Search workspace file contents for literal text, returning paths and line numbers. Matching is case-insensitive by default; set case_sensitive to true for an exact-case search. Results may include comments and strings, not just code references.", "args": '{"query": "function render"} or {"query": "render", "case_sensitive": true}', "mutating": False},
+    {"name": "run_command", "description": "Run a foreground shell command to reproduce a failure or verify changes. cwd is relative to the workspace; timeout is in seconds (1-600, default 120). Commands run with the server user's permissions and are not sandboxed; they can change files or access the network. Check the exit status and output before reporting success.", "args": '{"command": "python -m pytest -q", "cwd": ".", "timeout": 120}', "mutating": False},
     {"name": "edit_file", "description": "SURGICAL edit of an existing file: replace an exact snippet (old_string) with new content (new_string). Use this for SMALL changes to existing files instead of rewriting the whole file. old_string must appear exactly once in the file (or differ only in whitespace). ONLY available in auto-apply mode. After a successful edit the result includes a diff summary.", "args": '{"path": "src/app.ts", "old_string": "const x = 1;", "new_string": "const x = 2;"}', "mutating": True},
     {"name": "edit_lines", "description": "Edit an existing file BY LINE NUMBER — replaces lines start..end with content, so you NEVER copy the old text. This is the easiest way to change a few lines, a loop, or one statement inside a file you have read. start/end are 1-based line numbers (from read_file with \"numbers\": true); omit end to change one line; make end smaller than start to INSERT before start; negative counts from the end (-1 = last line); content \"\" deletes those lines. Pass expect (the first line being replaced, copied from the file) and the edit is refused if the numbers are stale. ONLY available in auto-apply mode.", "args": '{"path": "snake.py", "start": 42, "end": 48, "content": "    new_line_1\\n    new_line_2", "expect": "    def update(self):"}', "mutating": True},
     {"name": "write_file", "description": "Create a NEW file. If the file already exists, only YOUR CHANGED LINES are applied and everything else in the file is preserved exactly (safe to pass the full new file content — a version that rewrites most of the file is refused). ONLY available in auto-apply mode — the file is written immediately and can be reverted by the user.", "args": '{"path": "src/app.ts", "content": "..."}', "mutating": True},
@@ -626,6 +627,7 @@ TOOL_JSON_EXAMPLES = f"""Available tools — to use one, respond with ONLY a sin
 {{"tool": "read_file", "args": {{"path": "src/index.ts"}}}}
 {{"tool": "read_file", "args": {{"path": "src/index.ts", "numbers": true}}}} — line numbers in front of each line (12| code) for use with edit_lines
 {{"tool": "search_files", "args": {{"query": "function render"}}}}
+{{"tool": "run_command", "args": {{"command": "python -m pytest -q", "cwd": ".", "timeout": 120}}}}
 {{"tool": "edit_file", "args": {{"path": "src/app.ts", "old_string": "const x = 1;", "new_string": "const x = 2;"}}}}
 {{"tool": "edit_lines", "args": {{"path": "snake.py", "start": 42, "end": 48, "content": "    new_line_1\\n    new_line_2"}}}} — change lines BY NUMBER (read_file with "numbers": true); no old text needed
 {{"tool": "write_file", "args": {{"path": "src/app.ts", "content": "..."}}}} — for an EXISTING file only your changed lines are applied; the rest is preserved
@@ -975,6 +977,7 @@ async def find_main_script(root: str, extensions: list[str]) -> str | None:
 
 # ─── Git helpers ────────────────────────────────────────────────────────
 MUTATING_TOOLS = {tool["name"] for tool in AGENT_TOOL_DEFS if tool["mutating"]}
+EXECUTION_TOOLS = {"run_command"}
 
 
 async def authorize_tool_calls(
@@ -989,12 +992,12 @@ async def authorize_tool_calls(
     feedback: list[str] = []
     for call in calls:
         name = call["tool"]
-        unsafe = name in MUTATING_TOOLS
+        unsafe = name in MUTATING_TOOLS | EXECUTION_TOOLS
         blocked = name not in {tool["name"] for tool in AGENT_TOOL_DEFS} or (mode == "read-only" and unsafe)
         if blocked:
             reason = "Blocked by the selected permission mode"
         else:
-            needs_approval = mode in ("ask-each", "suggest")
+            needs_approval = mode in ("ask-each", "suggest") or (mode == "auto-edit" and name in EXECUTION_TOOLS)
             if needs_approval:
                 key = f"approval-{int(time.time() * 1000)}-{''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=6))}"
                 _cb(opts, "onApprovalRequest", key, name, call["args"])
@@ -1065,6 +1068,68 @@ async def communicate_with_stop(proc: asyncio.subprocess.Process, timeout: float
             stopped.cancel()
 
 
+async def collect_command_output(
+    proc: asyncio.subprocess.Process, timeout: int, stop: asyncio.Event | None,
+) -> dict[str, Any]:
+    """Drain both pipes while retaining a bounded tail, and stop the process on timeout/cancel."""
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    sizes = {"stdout": 0, "stderr": 0}
+    limits = {"stdout": 6000, "stderr": 2000}
+
+    async def drain(name: str, stream: asyncio.StreamReader | None) -> None:
+        if stream is None:
+            return
+        while chunk := await stream.read(8192):
+            sizes[name] += len(chunk)
+            buffers[name].extend(chunk)
+            if len(buffers[name]) > limits[name]:
+                del buffers[name][:-limits[name]]
+
+    async def finish() -> None:
+        await asyncio.gather(proc.wait(), drain("stdout", proc.stdout), drain("stderr", proc.stderr))
+
+    finished = asyncio.create_task(finish())
+    stopped = asyncio.create_task(stop.wait()) if stop is not None else None
+    timed_out = False
+
+    async def stop_and_drain() -> None:
+        await kill_process_tree(proc)
+        try:
+            await asyncio.wait_for(asyncio.shield(finished), timeout=3)
+        except Exception:  # cleanup must not hide the original stop
+            finished.cancel()
+            await asyncio.gather(finished, return_exceptions=True)
+
+    try:
+        done, _ = await asyncio.wait(
+            {finished, *([stopped] if stopped else [])}, timeout=timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if stopped is not None and stopped in done:
+            raise asyncio.CancelledError()
+        if finished not in done:
+            timed_out = True
+            await stop_and_drain()
+        else:
+            finished.result()
+    except asyncio.CancelledError:
+        await stop_and_drain()
+        raise
+    except Exception:
+        await stop_and_drain()
+        raise
+    finally:
+        if stopped:
+            stopped.cancel()
+
+    parts = [f"Command timed out after {timeout} seconds." if timed_out else f"Exit code: {proc.returncode}"]
+    for name in ("stdout", "stderr"):
+        if sizes[name]:
+            note = f" (truncated; showing last {len(buffers[name])} of {sizes[name]} bytes)" if sizes[name] > len(buffers[name]) else ""
+            parts.append(f"{name}{note}:\n{bytes(buffers[name]).decode('utf-8', 'replace')}")
+    return {"ok": not timed_out and proc.returncode == 0, "output": "\n".join(parts)}
+
+
 
 
 
@@ -1088,6 +1153,34 @@ async def execute_tool(
     # Game replay is an automatic verification path, not a model-facing tool.
     if tool not in {item["name"] for item in AGENT_TOOL_DEFS} and not (tool == "play_game" and (extra or {}).get("game_auto") is True):
         return await deny_out(f'Unknown or unavailable tool: "{tool}".')
+
+    if tool == "run_command":
+        command = args.get("command")
+        cwd = args.get("cwd", ".")
+        timeout = args.get("timeout", 120)
+        if not isinstance(command, str) or not command.strip():
+            return await deny_out('run_command requires a non-empty "command" string.')
+        if not isinstance(cwd, str) or not cwd.strip() or os.path.isabs(cwd):
+            return await deny_out('run_command requires a workspace-relative "cwd".')
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 600:
+            return await deny_out('run_command "timeout" must be an integer from 1 to 600 seconds.')
+        directory = await resolve_in_workspace(root, cwd)
+        if not directory or not os.path.isdir(directory):
+            return await deny_out(f'run_command: working directory "{cwd}" is unavailable or outside the workspace.')
+        stop = (extra or {}).get("signal")
+        if stop is not None and stop.is_set():
+            raise asyncio.CancelledError()
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                command, cwd=directory, stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                **process_group_options(),
+            )
+            return await collect_command_output(proc, timeout, stop)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            return await deny_out(f"Could not start command: {e}")
 
     if tool == "list_files":
         tree = await list_workspace_tree(root)
@@ -2143,6 +2236,9 @@ def salvage_tool_call_heuristic(raw: str) -> dict[str, Any] | None:
     tool_name = m.group(1)
     if not any(t["name"] == tool_name for t in AGENT_TOOL_DEFS):
         return None
+    # Do not heuristically salvage an incomplete shell command.
+    if tool_name in EXECUTION_TOOLS:
+        return None
 
     args: dict[str, Any] = {}
     # Match "key": <value> pairs; values are scanned leniently (the value
@@ -2499,6 +2595,7 @@ def build_native_system_prompt(workspace_path: str, user_name: str) -> str:
         "Use the supplied tools to inspect files and make requested changes. "
         "A statement that you will act is not a tool call. Call tools when needed, "
         "inspect their results, and verify changes before reporting success. "
+        "Use run_command for relevant tests or checks and report their actual results. "
         "Use targeted edits, respect the user's rules and permissions, and never invent tool results. "
         "When no tool is needed, answer normally or ask a necessary question."
     )
@@ -2533,7 +2630,8 @@ def build_system_prompt(workspace_path: str, user_name: str, auto_apply: bool) -
         f"{edit_guidance}"
         "Respect workspace rules. "
         "If no tool is needed, answer normally or ask the user a question in your final response. "
-        "Command execution, Git, web search, images, subagents, and live preview tools are unavailable. "
+        "Use run_command to verify relevant changes when appropriate; report the actual exit status and any failures. "
+        "Git, web search, image generation, subagent, and live preview tools are unavailable. "
         "Automatic verification may report results separately; never claim a check ran without such a result.")
 
 
@@ -2911,7 +3009,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             # with instructions; the model retries in smaller pieces.
             truncated_calls = [
                 tc for tc in tool_calls
-                if (tc.get("args") or {}).pop("_truncated", None) and tc["tool"] in MUTATING_TOOLS
+                if (tc.get("args") or {}).pop("_truncated", None) and tc["tool"] in (MUTATING_TOOLS | EXECUTION_TOOLS)
             ]
             if truncated_calls:
                 stopped = await action_failed("The tool call was cut off.")
@@ -2923,7 +3021,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 history.append({"role": "assistant", "content": raw})
                 history.append({"role": "user", "content": (
                     "[TRUNCATED CALL] Your last tool call was cut off mid-JSON (you likely ran out of output tokens), "
-                    f"so it was NOT executed — no file was written or changed ({t_paths}). Do NOT retry the same full call. "
+                    f"so it was NOT executed ({t_paths}). Do NOT retry the same full call. "
                     "Instead: write files in SMALLER pieces — create the file with just the first part via write_file, then "
                     "append the rest with edit_lines (read_file with \"numbers\": true, then "
                     '{"tool": "edit_lines", "args": {"path": "<file>", "start": <last line + 1>, "end": <last line>, "content": "<next part>"}} — '
@@ -3460,7 +3558,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 _cb(opts, "onNarration", narration)
 
             has_mutating = any(tc["tool"] in MUTATING_TOOLS for tc in calls_to_run)
-            all_read_only = all(tc["tool"] not in MUTATING_TOOLS for tc in calls_to_run)
+            all_read_only = all(tc["tool"] not in (MUTATING_TOOLS | EXECUTION_TOOLS) for tc in calls_to_run)
 
             if all_read_only and len(calls_to_run) > 1:
                 _cb(opts, "onStage", "agent:tool-parallel")

@@ -1259,8 +1259,8 @@ export function UserSettingsModal({
  <div className="px-4 py-3 bg-gray-800/30 border border-gray-800 rounded-xl">
  <p className="text-xs text-gray-500 leading-relaxed">
  <span className="text-gray-300 font-medium">Good to know:</span> your rules in{' '}
- <code className="text-gray-400 font-mono">.agent-rules.md</code> are read-only for the AI — it
- can never change them. Existing notes in{' '}
+ <code className="text-gray-400 font-mono">.agent-rules.md</code> are protected from file tools;
+ shell commands run with the server user's permissions. Existing notes in{' '}
  <code className="text-gray-400 font-mono">.agent-memory.md</code> can still be read automatically
  and are lower priority than your rules.
  </p>

@@ -9,12 +9,12 @@ from app.agent_protocol import TOOL_ARGUMENTS, native_tool_schemas, normalize_na
 
 KEPT = {
     "list_files", "glob", "read_file", "search_files", "edit_file", "edit_lines", "write_file",
-    "rename_file", "delete_file",
+    "rename_file", "delete_file", "run_command",
 }
 REMOVED = {
     "find_references", "refactor_rename", "create_directory", "file_exists", "diff_files",
     "replace_in_file", "count_lines", "edit_section", "multi_edit",
-    "run_command", "play_game", "run_python", "web_search", "draw_image", "gen_image", "read_image",
+    "play_game", "run_python", "web_search", "draw_image", "gen_image", "read_image",
     "read_rules", "update_memory", "ask_user", "git_status", "git_diff", "git_commit", "delegate_to_subagent",
     "read_url", "read_url_image", "preview_start", "preview_stop", "preview_screenshot", "preview_eval", "preview_console",
 }
@@ -56,7 +56,7 @@ def test_old_custom_rules_are_filtered_without_editing_the_source(monkeypatch):
     monkeypatch.setattr(ai_rules, "_load_rules", lambda: {"core": "Core rule", "agent": original, "chat": ""})
     result = ai_rules.get_ai_rules("agent")
     assert "Keep changes focused" in result
-    assert "git_commit" not in result and "run_command" not in result
+    assert "git_commit" not in result and "run_command" in result
     assert "edit_section" not in result
     assert "git_commit" in original
 

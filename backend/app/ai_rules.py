@@ -60,7 +60,7 @@ DEFAULT_RULES = """# AI Rules
 - The file path MUST include a file extension (.html, .py, .ts, .css, etc.).
 - Use relative paths like src/index.ts, components/Button.tsx, etc.
 - To delete a file, output a code block with the first line as: `// DELETE: path/to/file.ext` and NO other content.
-- Use automatic verification results when provided; do not claim to have run checks that did not run.
+- Use run_command for relevant tests and checks. Report actual results, and do not claim to have run checks that did not run.
 - Match the project language (see workspace profile).
 - Prefer editing existing files over creating new ones.
 - Keep changes minimal and focused.
@@ -212,7 +212,7 @@ def get_ai_rules(mode: str) -> str:
         # Existing installations may still have the older, user-editable rules
         # file. Leave it untouched, but do not inject instructions to call
         # tools that are no longer available to Koding.
-        removed = re.compile(r"\b(?:run_command|run_python|play_game|web_search|draw_image|gen_image|read_image|read_rules|update_memory|ask_user|git_status|git_diff|git_commit|delegate_to_subagent|read_url|read_url_image|preview_start|preview_stop|preview_screenshot|preview_eval|preview_console|find_references|refactor_rename|create_directory|file_exists|diff_files|replace_in_file|count_lines|edit_section|multi_edit)\b", re.I)
+        removed = re.compile(r"\b(?:run_python|play_game|web_search|draw_image|gen_image|read_image|read_rules|update_memory|ask_user|git_status|git_diff|git_commit|delegate_to_subagent|read_url|read_url_image|preview_start|preview_stop|preview_screenshot|preview_eval|preview_console|find_references|refactor_rename|create_directory|file_exists|diff_files|replace_in_file|count_lines|edit_section|multi_edit)\b", re.I)
         specific = "\n".join(line for line in specific.splitlines() if not removed.search(line) and line.strip() != "### Git Rules (critical — do not ask the user)" and line.strip() != "- Run verify command after changes (build, test, syntax check).")
     if specific:
         parts.append(specific)

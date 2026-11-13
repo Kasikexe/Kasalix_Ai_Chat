@@ -2,10 +2,19 @@
 
 KODING exposes nine workspace tools: `list_files`, `glob`, `read_file`,
 `search_files`, `edit_file`, `edit_lines`, `write_file`, `rename_file`, and
-`delete_file`. Search is literal text matching, not semantic symbol lookup.
-Search and listing outputs report when their limits may hide results. Shell,
-Git, web, image, subagent, and live-preview tools are not available to the
-model. It can still ask a question as a normal final response.
+`delete_file`, plus `run_command` for foreground verification commands. Search
+is literal text matching, not semantic symbol lookup. Search and listing
+outputs report when their limits may hide results. Git-specific, web, image,
+subagent, and live-preview tools are not available to the model. It can still
+ask a question as a normal final response.
+
+`run_command` accepts a command, an optional workspace-relative `cwd`, and a
+timeout in seconds (1–600, default 120). It returns the exit code and bounded
+stdout/stderr; timeouts and user cancellation stop the process tree. Commands
+run with the server user's permissions and are not sandboxed: they may change
+files or access the network, and shell-created changes are not tracked for
+revert. Auto permits commands, Ask requires approval, and Read-only blocks
+them. Auto-edit also asks before executing commands.
 
 Automatic project verification and game checks remain separate from the tool
 catalog. In Auto mode those checks may execute project code with the server

@@ -16,6 +16,7 @@ TOOL_ARGUMENTS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     "list_files": ({}, {}),
     "read_file": ({"path": STRING}, {"numbers": BOOLEAN, "offset": NUMBER, "length": NUMBER}),
     "search_files": ({"query": STRING}, {"case_sensitive": BOOLEAN}),
+    "run_command": ({"command": STRING}, {"cwd": STRING, "timeout": NUMBER}),
     "edit_file": ({"path": STRING, "old_string": STRING, "new_string": STRING}, {}),
     "edit_lines": ({"path": STRING, "start": NUMBER, "content": STRING}, {"end": NUMBER, "expect": STRING}),
     "write_file": ({"path": STRING, "content": STRING}, {"force": BOOLEAN}),

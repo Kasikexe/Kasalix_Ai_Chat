@@ -281,7 +281,7 @@ class TestAgentPromptGuards:
         from app.agent import build_system_prompt
         p = build_system_prompt("/ws", "user", True)
         assert "File edits are available" in p
-        assert "run_command" not in p
+        assert "run_command" in p
 
     def test_system_prompt_availability_readonly(self):
         from app.agent import build_system_prompt
