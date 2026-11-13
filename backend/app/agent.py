@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .ai_rules import with_ai_rules
-from .agent_protocol import native_tool_schemas, normalize_native_calls
+from .agent_protocol import native_tool_schemas, normalize_native_calls, normalize_structured_action, structured_action_schema
 from .game_harness import HARNESS_SOURCE
 from .imagegen import get_generated_images_dir, sanitize_svg, save_artwork
 from .logger import error as log_error, info as log_info, warn as log_warn
@@ -293,8 +293,16 @@ async def stream_chat_with_retry(
                     on_metrics=(opts.get("callbacks") or {}).get("onMetrics"),
                 )
             schemas = opts.get("toolSchemas")
-            if schemas:
+            protocol = opts.get("protocolState") or {"mode": "native" if schemas else "text"}
+            mode = protocol.get("mode", "text")
+            if schemas and mode == "native":
                 result = await stream_chat_with_tools(opts["model"], to_native_tool_history(messages), schemas, buffered.append, stream_options)
+                if result.get("toolsEnabled") is False:
+                    # The capability cache was optimistic and Ollama rejected
+                    # tools. Never treat its tool-less reply as a native call.
+                    buffered.clear()
+                    protocol["mode"] = "structured" if not opts.get("cloudEndpoint") else "text"
+                    mode = protocol["mode"]
                 calls = result.get("toolCalls") or []
                 if calls:
                     try:
@@ -305,7 +313,22 @@ async def stream_chat_with_retry(
                         # Only execute the validated native calls. Model prose
                         # can itself contain JSON-looking examples.
                         buffered = ["\n".join(json.dumps(c, ensure_ascii=False) for c in normalized)]
-            else:
+            if mode == "structured":
+                stream_options.output_format = structured_action_schema({tool["function"]["name"] for tool in schemas})
+                structured_messages = [*messages, {"role": "system", "content": build_structured_system_prompt(opts.get("workspacePath") or "workspace", opts.get("userName") or "a user", schemas)}]
+                await stream_chat(opts["model"], structured_messages, buffered.append, stream_options)
+                try:
+                    action = normalize_structured_action("".join(buffered), {tool["function"]["name"] for tool in schemas})
+                except ValueError as exc:
+                    buffered = [f"[INVALID STRUCTURED ACTION] {exc}"]
+                else:
+                    if action["action"] == "tool":
+                        buffered = [json.dumps(action["call"], ensure_ascii=False)]
+                    else:
+                        buffered = [action["message"]]
+                        if isinstance(opts.get("roundMeta"), dict):
+                            opts["roundMeta"]["structuredFinal"] = True
+            elif mode == "text":
                 await stream_chat(opts["model"], messages, buffered.append, stream_options)
             out = "".join(buffered)
             for c in buffered:
@@ -3604,6 +3627,18 @@ def build_native_system_prompt(workspace_path: str, user_name: str) -> str:
     )
 
 
+def build_structured_system_prompt(workspace_path: str, user_name: str, schemas: list[dict[str, Any]]) -> str:
+    tools = []
+    for schema in schemas:
+        function = schema["function"]
+        tools.append(f"- {function['name']}: {function['description'][:220]} Arguments: {json.dumps(function['parameters'], ensure_ascii=False)}")
+    return (build_native_system_prompt(workspace_path, user_name)
+        + '\nRespond with exactly one JSON object: {"action":"tool","tool":"name","args":{...}}, '
+          '{"action":"final","message":"..."}, or {"action":"question","question":"..."}. '
+          'Use a tool when work remains; do not claim to have acted without a tool result.\nAvailable tools:\n'
+        + "\n".join(tools))
+
+
 # ─── The agent loop ─────────────────────────────────────────────────────
 def available_tools(auto_apply: bool) -> list[dict[str, Any]]:
     return [t for t in AGENT_TOOL_DEFS if auto_apply or not t["mutating"]]
@@ -3820,8 +3855,14 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     project_config = await read_project_config(root)
     workspace_profile = await build_workspace_profile(root, (verify or {}).get("command"), project_rules, agent_memory, project_config)
     native_tools = native_tools or bool(opts.get("cloudEndpoint"))
-    schemas = native_tool_schemas(available_tools(auto_apply)) if native_tools else []
-    base_prompt = build_native_system_prompt(root, user_name or "a user") if schemas else build_system_prompt(root, user_name or "a user", auto_apply)
+    schemas = native_tool_schemas(available_tools(auto_apply))
+    protocol_state = {"mode": "native" if native_tools else "structured" if not opts.get("cloudEndpoint") else "text"}
+    if protocol_state["mode"] == "native":
+        base_prompt = build_native_system_prompt(root, user_name or "a user")
+    elif protocol_state["mode"] == "structured":
+        base_prompt = build_structured_system_prompt(root, user_name or "a user", schemas)
+    else:
+        base_prompt = build_system_prompt(root, user_name or "a user", auto_apply)
     system = await with_ai_rules(base_prompt, "agent")
 
     # ── Resume state (from opts or latest session log) ────────────────
@@ -4044,16 +4085,18 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
 
             chunks: list[str] = []
             thinking_chunks: list[str] = []
-            await stream_chat_with_retry({**opts, "toolSchemas": schemas}, bounded, chunks.append, thinking_chunks.append)
+            round_meta: dict[str, Any] = {}
+            await stream_chat_with_retry({**opts, "toolSchemas": schemas, "protocolState": protocol_state, "roundMeta": round_meta}, bounded, chunks.append, thinking_chunks.append)
             raw = "".join(chunks)
 
-            if raw.startswith("[INVALID NATIVE TOOL CALL]") and malformed_tool_calls < 4:
+            if raw.startswith(("[INVALID NATIVE TOOL CALL]", "[INVALID STRUCTURED ACTION]")) and malformed_tool_calls < 4:
                 malformed_tool_calls += 1
                 history.append({"role": "assistant", "content": raw})
                 history.append({"role": "user", "content": "The tool call was invalid and did not run. Use an available tool with the required arguments, or answer the user."})
                 continue
 
-            tool_calls = extract_tool_calls(raw)
+            structured_final = bool(round_meta.get("structuredFinal"))
+            tool_calls = [] if structured_final else extract_tool_calls(raw)
             tool_call = tool_calls[0] if len(tool_calls) == 1 else None
 
             # Truncated-generation guard: a salvaged MUTATING call means the
@@ -4146,7 +4189,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                         _cb(opts, "onStage", "agent:working")
                         continue
 
-            looks_like_tool_attempt = not tool_calls and bool(
+            looks_like_tool_attempt = not structured_final and not tool_calls and bool(
                 re.search(r'\{\s*"tool"\s*:\s*"[a-z_]+"|\{\s*"?args"?\s*:', raw, re.I)
                 # OpenAI-style dialect — also a tool attempt
                 or re.search(r'\{\s*"name"\s*:\s*"[a-z_]+"|\{\s*"?arguments"?\s*:', raw, re.I)
@@ -4177,7 +4220,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 continue
 
             applied_note = ""
-            if not tool_calls and auto_apply and unrestricted:
+            if not tool_calls and auto_apply and unrestricted and not structured_final:
                 applied_note = await apply_code_block_files(root, raw, record_file_write)
                 if not applied_note and "```" in raw:
                     block_count = len(re.findall(r"```", raw)) // 2

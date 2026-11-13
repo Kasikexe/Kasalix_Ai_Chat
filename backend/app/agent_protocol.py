@@ -94,7 +94,7 @@ def normalize_native_calls(calls: list[dict[str, Any]], permitted: set[str]) -> 
         if not isinstance(function, dict):
             raise ValueError("Malformed native tool call")
         name, args = function.get("name"), function.get("arguments")
-        if name not in permitted or name not in TOOL_ARGUMENTS:
+        if not isinstance(name, str) or name not in permitted or name not in TOOL_ARGUMENTS:
             raise ValueError(f"Unknown or unavailable tool: {name}")
         if isinstance(args, str):
             try:
@@ -113,3 +113,30 @@ def normalize_native_calls(calls: list[dict[str, Any]], permitted: set[str]) -> 
             raise ValueError("git_commit needs explicit paths")
         result.append({"tool": name, "args": args})
     return result
+
+
+def structured_action_schema(permitted: set[str]) -> dict[str, Any]:
+    """A constrained envelope; tool-specific arguments are checked separately."""
+    return {"oneOf": [
+        {"type": "object", "properties": {"action": {"const": "tool"}, "tool": {"type": "string", "enum": sorted(permitted)}, "args": {"type": "object"}}, "required": ["action", "tool", "args"], "additionalProperties": False},
+        {"type": "object", "properties": {"action": {"const": "final"}, "message": {"type": "string"}}, "required": ["action", "message"], "additionalProperties": False},
+        {"type": "object", "properties": {"action": {"const": "question"}, "question": {"type": "string"}}, "required": ["action", "question"], "additionalProperties": False},
+    ]}
+
+
+def normalize_structured_action(raw: str, permitted: set[str]) -> dict[str, Any]:
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Response is not valid JSON") from exc
+    if not isinstance(data, dict):
+        raise ValueError("Response must be an object")
+    action = data.get("action")
+    if action == "tool" and set(data) == {"action", "tool", "args"}:
+        call = normalize_native_calls([{"function": {"name": data["tool"], "arguments": data["args"]}}], permitted)[0]
+        return {"action": "tool", "call": call}
+    if action == "final" and set(data) == {"action", "message"} and isinstance(data["message"], str) and data["message"].strip():
+        return data
+    if action == "question" and set(data) == {"action", "question"} and isinstance(data["question"], str) and data["question"].strip() and "ask_user" in permitted:
+        return {"action": "tool", "call": {"tool": "ask_user", "args": {"question": data["question"]}}}
+    raise ValueError("Invalid action or missing fields")

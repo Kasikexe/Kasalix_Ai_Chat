@@ -159,7 +159,7 @@ def convert_messages_for_ollama(messages: list[Message | ToolLoopMessage]) -> li
 class StreamOptions:
     __slots__ = (
         "signal", "temperature", "top_p", "max_tokens", "think",
-        "on_thinking", "base_url", "api_key", "on_metrics",
+        "on_thinking", "base_url", "api_key", "on_metrics", "output_format",
     )
 
     def __init__(
@@ -173,6 +173,7 @@ class StreamOptions:
         base_url: str | None = None,
         api_key: str | None = None,
         on_metrics: Callable[[dict[str, int]], None] | None = None,
+        output_format: dict[str, Any] | str | None = None,
     ) -> None:
         self.signal = signal
         self.temperature = temperature
@@ -183,6 +184,7 @@ class StreamOptions:
         self.base_url = base_url
         self.api_key = api_key
         self.on_metrics = on_metrics
+        self.output_format = output_format
 
 
 def _build_options(opts: StreamOptions, body: dict[str, Any]) -> None:
@@ -450,6 +452,8 @@ async def stream_chat(
         "messages": convert_messages_for_ollama(messages),
         "stream": True,
     }
+    if opts.output_format is not None:
+        body["format"] = opts.output_format
     _build_options(opts, body)
     num_ctx = await _get_default_num_ctx()
     if num_ctx and not body["options"].get("num_ctx"):
