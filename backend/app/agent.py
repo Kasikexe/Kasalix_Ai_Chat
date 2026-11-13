@@ -351,21 +351,20 @@ def prune_to_budget(msgs: list[dict[str, str]]) -> dict[str, Any]:
     if total > MAX_CONTEXT_TOKENS:
         for i, x in enumerate(rest):
             if x.get("role") == "user" and x["content"].startswith("[TOOL RESULT") and _tok(x) > 500:
-                truncated = x["content"][:800] + "\n...[pruned to save context]"
+                truncated = x["content"][:600] + "\n...[middle pruned to save context]...\n" + x["content"][-200:]
                 total -= _tok(x) - estimate_tokens(truncated)
                 rest[i] = {**x, "content": truncated}
                 did_compact = True
 
-    # Phase 2: Smart compaction — summarize oldest tool results before dropping
+    # Phase 2: Keep the beginning and end of large results rather than replacing
+    # evidence with a claim that it was "processed".
     if total > MAX_CONTEXT_TOKENS:
         for i, x in enumerate(rest):
             if total <= MAX_CONTEXT_TOKENS:
                 break
             if x.get("role") == "user" and x["content"].startswith("[TOOL RESULT") and _tok(x) > 200:
-                tool_match = re.search(r"\[TOOL RESULT — (\w+)\]", x["content"])
-                tool_name = tool_match.group(1) if tool_match else "tool"
                 orig = _tok(x)
-                summary = f"[TOOL RESULT — {tool_name}] (summarized from {orig} tokens) Output received and processed."
+                summary = x["content"][:500] + "\n...[middle omitted]...\n" + x["content"][-250:]
                 total -= orig - estimate_tokens(summary)
                 rest[i] = {**x, "content": summary}
                 did_compact = True
@@ -390,6 +389,28 @@ def prune_to_budget(msgs: list[dict[str, str]]) -> dict[str, Any]:
         "tokensSaved": original_tokens - total,
         "originalTokens": original_tokens,
     }
+
+
+def build_working_summary(history: list[dict[str, Any]], messages: list[dict[str, Any]], completed: list[str], plan: str) -> str:
+    """Preserve verifiable task context when older loop messages are dropped."""
+    user_messages = [_IMAGE_MARKER_RE.sub("[image omitted]", str(m.get("content") or "")) for m in messages if m.get("role") == "user"]
+    parts = ["WORKING CONTEXT (earlier history was compacted; excerpts may be incomplete):"]
+    if user_messages:
+        parts.append("Original request: " + user_messages[0][:1500])
+        if len(user_messages) > 1:
+            parts.append("Latest user instruction: " + user_messages[-1][:1000])
+    if plan:
+        parts.append("Plan: " + plan[:1200])
+    if completed:
+        parts.append("Recorded completed steps: " + "; ".join(completed[-12:])[:1200])
+    evidence = []
+    for message in history:
+        content = str(message.get("content") or "")
+        if message.get("role") == "user" and content.startswith(("[TOOL RESULT", "[VERIFICATION RESULT", "[FINAL VERIFICATION", "[USER ANSWER")):
+            evidence.append(content[:350])
+    if evidence:
+        parts.append("Recent tool and verification evidence (excerpts):\n" + "\n".join(evidence[-6:]))
+    return "\n".join(parts)
 
 
 # ─── ask_user (mid-task clarification) ──────────────────────────────────
@@ -3924,6 +3945,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 raise asyncio.CancelledError()
             pending_image: str | None = None  # raw screenshot for vision-capable models (this iteration)
 
+            needs_summary = len(history) > MAX_HISTORY or sum(estimate_tokens(_IMAGE_MARKER_RE.sub("", str(m.get("content") or ""))) for m in history) > MAX_CONTEXT_TOKENS
             bounded_base = [history[0], *history[-(MAX_HISTORY - 1):]] if len(history) > MAX_HISTORY else history
             plan_block = (
                 "\n\nYOUR PLAN (update as you complete steps):\n" + "\n".join(f"{i + 1}. [ ] {l}" for i, l in enumerate(plan_text.split("\n")))
@@ -3933,6 +3955,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
 
             compact_result = prune_to_budget([
                 {"role": "system", "content": ground_truth_block + plan_block},
+                *([{"role": "system", "content": build_working_summary(history, opts["messages"], completed_steps, plan_text or "")}] if needs_summary else []),
                 *bounded_base,
             ])
             bounded = compact_result["messages"]
