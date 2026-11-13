@@ -81,3 +81,4 @@ bun.lockb
 /frontend/android/app/src/main/res
 *.png
 /frontend/android/app/src/main/res/drawable-land-xhdpi
+/changelog

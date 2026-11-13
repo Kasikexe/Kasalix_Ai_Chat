@@ -182,6 +182,8 @@ def test_browser_reinspection_after_open_click_and_empty_reply_is_not_a_loop(tmp
         "I clicked the services link and inspected the resulting page.",
     ])
     calls = []
+    notices = []
+    chunks = []
 
     async def stream(_opts, _messages, on_chunk, _thinking, **_kwargs):
         reply = next(replies, "I clicked the services link and inspected the resulting page.")
@@ -196,9 +198,12 @@ def test_browser_reinspection_after_open_click_and_empty_reply_is_not_a_loop(tmp
 
     monkeypatch.setattr(agent, "stream_chat_with_retry", stream)
     answer = asyncio.run(agent.run_agent_loop({"model": "fake", "workspacePath": str(tmp_path), "autoApply": True,
-        "userId": "owner", "messages": [{"role": "user", "content": "Click the services link"}], "callbacks": {"onBrowserAction": browser}}))
+        "userId": "owner", "messages": [{"role": "user", "content": "Click the services link"}],
+        "callbacks": {"onBrowserAction": browser, "onNotice": notices.append, "onChunk": chunks.append}}))
     assert calls == ["inspect", "open", "inspect", "click", "inspect"]
     assert "clicked the services link" in answer.lower() and "looping" not in answer.lower()
+    assert len(notices) == 1 and "asking it to reply" in notices[0]
+    assert "asking it to reply" not in "".join(chunks)
 
 
 @pytest.mark.parametrize("changing", [True, False])

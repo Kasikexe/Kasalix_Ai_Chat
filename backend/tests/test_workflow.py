@@ -307,6 +307,25 @@ def test_streamed_file_changes_persist_first_snapshot(client, auth, tmp_path, mo
     assert path.read_text(encoding="utf-8") == "before"
 
 
+def test_agent_status_is_streamed_separately_from_answer(client, auth, tmp_path, monkeypatch):
+    import app.routes.chat as chat_route
+
+    async def fake_pipeline(opts):
+        opts["onNotice"]("The model sent no answer — asking it to reply.")
+        opts["onChunk"]("Finished.")
+        return "Finished."
+
+    monkeypatch.setattr(chat_route, "run_pipeline", fake_pipeline)
+    token, _ = auth
+    response = client.post("/api/chat", headers={"Authorization": f"Bearer {token}"}, json={
+        "model": "fake", "messages": [{"role": "user", "content": "inspect"}],
+        "mode": "agent", "workspacePath": str(tmp_path), "autoApply": True,
+    })
+    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+    assert any(event.get("type") == "agent_notice" and "asking it to reply" in event["content"] for event in events)
+    assert "".join(event["content"] for event in events if event.get("type") == "chunk") == "Finished."
+
+
 class TestAgentLoopWorkflow:
     """The multi-round loop: tools chain, run finishes, no false max-steps."""
 

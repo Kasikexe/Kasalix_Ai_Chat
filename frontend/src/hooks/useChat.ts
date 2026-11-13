@@ -277,6 +277,30 @@ export function useChat(
     const settings = loadSettings();
 
     try {
+      const appendTimelineText = (type: 'narration' | 'notice', text: string) => {
+        const msgs = e.messages;
+        let assistantIdx = -1;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === 'assistant') { assistantIdx = i; break; }
+        }
+        if (assistantIdx >= 0) {
+          const msg = msgs[assistantIdx];
+          const timeline = [...(msg.timeline || [])];
+          // Finish the current thinking event before adding the status.
+          if (e.thinkingBuffer.trim()) {
+            const last = timeline[timeline.length - 1];
+            if (last && last.type === 'thinking' && (last as any).live) {
+              timeline[timeline.length - 1] = { type: 'thinking', content: e.thinkingBuffer };
+            } else {
+              timeline.push({ type: 'thinking', content: e.thinkingBuffer });
+            }
+            e.thinkingBuffer = '';
+          }
+          timeline.push({ type, content: text });
+          e.messages = msgs.map((m, i) => i === assistantIdx ? { ...m, timeline } : m);
+        }
+        notify(e);
+      };
       await api.streamChat(
         model,
         messagesToSend,
@@ -327,34 +351,8 @@ export function useChat(
             }
             notify(e);
           },
-          onNarration: (text) => {
-            // The model's own words between tool calls ("Now let me write the
-            // movement function") — a narration timeline event, rendered as
-            // the model speaking. Also flush any live thinking, since the
-            // round that produced the narration is ending.
-            const msgs = e.messages;
-            let assistantIdx = -1;
-            for (let i = msgs.length - 1; i >= 0; i--) {
-              if (msgs[i].role === 'assistant') { assistantIdx = i; break; }
-            }
-            if (assistantIdx >= 0) {
-              const msg = msgs[assistantIdx];
-              const timeline = [...(msg.timeline || [])];
-              // Flush live thinking first so order stays: thinking → narration → tool
-              if (e.thinkingBuffer.trim()) {
-                const last = timeline[timeline.length - 1];
-                if (last && last.type === 'thinking' && (last as any).live) {
-                  timeline[timeline.length - 1] = { type: 'thinking', content: e.thinkingBuffer } as any;
-                } else {
-                  timeline.push({ type: 'thinking' as const, content: e.thinkingBuffer });
-                }
-                e.thinkingBuffer = '';
-              }
-              timeline.push({ type: 'narration' as const, content: text });
-              e.messages = msgs.map((m, i) => i === assistantIdx ? { ...m, timeline } : m);
-            }
-            notify(e);
-          },
+          onNarration: (text) => appendTimelineText('narration', text),
+          onNotice: (text) => appendTimelineText('notice', text),
           onConversationId: (id) => {
             const firstAssignment = !e.conversationId;
             e.conversationId = id;
@@ -553,7 +551,7 @@ export function useChat(
                 }
                 e.thinkingBuffer = '';
               }
-              timeline.push({ type: 'tool', tool: call.tool, args: argPreview, status: 'done' as const });
+              timeline.push({ type: 'tool', tool: call.tool, args: argPreview, status: 'running' as const });
               e.messages = e.messages.map((m, i) => i === assistantIdx ? { ...m, timeline } : m);
             } else {
               // Fallback: create activity message if no assistant message exists yet
@@ -562,7 +560,7 @@ export function useChat(
                 content: `${call.tool}${argPreview ? ': ' + argPreview : ''}`,
                 activityTool: call.tool,
                 activityArgs: argPreview,
-                activityStatus: 'done' as const,
+                activityStatus: 'running' as const,
                 activityMs: 0,
                 timestamp: Date.now(),
               }];
@@ -581,7 +579,7 @@ export function useChat(
               for (let j = timeline.length - 1; j >= 0; j--) {
                 const ev = timeline[j];
                 if (ev.type === 'tool' && ev.tool === r.tool && ev.result === undefined) {
-                  timeline[j] = { ...ev, result: r.output, ok: r.ok } as typeof ev;
+                  timeline[j] = { ...ev, result: r.output, ok: r.ok, status: r.ok ? 'done' : 'error' };
                   e.messages = e.messages.map((mm, k) => k === i ? { ...mm, timeline } : mm);
                   notify(e);
                   return;

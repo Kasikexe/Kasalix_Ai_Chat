@@ -5,6 +5,7 @@ export type ConversationMode = 'chat' | 'agent';
 export type TimelineEvent =
   | { type: 'thinking'; content: string }
   | { type: 'narration'; content: string }
+  | { type: 'notice'; content: string }
   | { type: 'tool'; tool: string; args: string; status?: 'running' | 'done' | 'error'; result?: string; ok?: boolean };
 
 /** A page a web search actually used, shown under the answer as a link. */

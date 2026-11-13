@@ -3244,12 +3244,12 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     malformed_tool_calls = 0
     action_failures = 0
 
-    async def action_failed(reason: str) -> str | None:
+    async def action_failed(reason: str, notice: str | None = None) -> str | None:
         nonlocal action_failures
         action_failures += 1
         if action_failures <= action_retry_limit:
             _cb(opts, "onStage", "agent:retry")
-            _cb(opts, "onNarration", f"{reason} Retrying action ({action_failures}/{action_retry_limit}).")
+            _cb(opts, "onNotice" if notice else "onNarration", f"{notice or reason} Retrying action ({action_failures}/{action_retry_limit}).")
             return None
         message = (f"I stopped because the model repeatedly failed to produce a usable tool action. {reason} "
                    "No unvalidated call was executed. Try a tool-capable coding model or simplify the request.")
@@ -3475,12 +3475,11 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             if not tool_calls and not raw.strip():
                 empty_response_retries += 1
                 if empty_response_retries <= 2:
-                    stopped = await action_failed("The model returned an empty response.")
+                    stopped = await action_failed("The model returned an empty response.", "The model sent no answer — asking it to reply.")
                     if stopped:
                         return stopped
                     fallback_after_invalid_action(protocol_state, opts, "The model returned no action")
                     log_info("[agent] Empty content with no tool call — nudging model to reply")
-                    _cb(opts, "onChunk", "\n\n_⚙️ The model reasoned but sent no answer — asking it to reply…_\n")
                     history.append({"role": "assistant", "content": raw or "(no answer)"})
                     history.append({"role": "user", "content": (
                         "[EMPTY REPLY] Your last response contained NO text and NO tool call — you reasoned but never answered. "

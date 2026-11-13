@@ -1136,6 +1136,7 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
                     "onFileWritten": opts.get("onFileWritten"),
                     "onThinking": on_thinking,
                     "onNarration": opts.get("onNarration"),
+                    "onNotice": opts.get("onNotice"),
                     "onAgentCommand": opts.get("onAgentCommand"),
                     "onQuestion": opts.get("onQuestion"),
                     "onResumeState": opts.get("onResumeState"),

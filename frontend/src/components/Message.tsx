@@ -525,6 +525,15 @@ function TimelineRow({ event, isStreaming, isLast }: { event: TimelineEvent; isS
    );
  }
 
+ if (event.type === 'notice') {
+   return (
+     <div className="flex items-start gap-2 rounded-md border border-blue-400/20 bg-blue-400/[0.07] px-3 py-2 text-xs leading-relaxed text-blue-100">
+       <Settings2 size={14} className="mt-0.5 flex-shrink-0 text-blue-300" />
+       <span><span className="font-semibold text-blue-200">Koding status: </span>{event.content}</span>
+     </div>
+   );
+ }
+
  if (event.type === 'narration') {
    // The model's own words between tool calls ("Now let me write the
    // movement function") — styled as the model speaking.
@@ -548,7 +557,6 @@ function TimelineRow({ event, isStreaming, isLast }: { event: TimelineEvent; isS
    read_image: Eye, find_references: Search, refactor_rename: PenLine, gen_image: ImageIcon, draw_image: Palette,
  };
  const ToolIcon = toolIcons[event.tool] || Wrench;
- const isRunning = isStreaming && isLast && event.status === 'done';
  const clickable = hasResult && event.type === 'tool';
  const Header = (
    <div
@@ -558,7 +566,7 @@ function TimelineRow({ event, isStreaming, isLast }: { event: TimelineEvent; isS
      <span className="text-gray-600 flex-shrink-0 flex"><ToolIcon size={10} /></span>
      <span className="text-[#4a9988] flex-shrink-0 font-medium">{event.tool}</span>
      {event.type === 'tool' && event.args && <span className="truncate text-gray-500 min-w-0">{event.args}</span>}
-     {event.type === 'tool' && event.status === 'error' && <span className="ml-auto text-[#c44] text-[10px] flex-shrink-0">failed</span>}
+     {!clickable && event.type === 'tool' && event.status === 'error' && <span className="ml-auto text-[#c44] text-[10px] flex-shrink-0">failed</span>}
      {clickable && (
        <span className="ml-auto flex items-center gap-1 text-[10px] text-gray-600 flex-shrink-0">
          {event.ok === false && <span className="text-[#c44]">failed</span>}
@@ -588,6 +596,50 @@ function TimelineRow({ event, isStreaming, isLast }: { event: TimelineEvent; isS
          </pre>
        </div>
      )}
+   </div>
+ );
+}
+
+/** Keep the agent's activity together while leaving its answer easy to find. */
+function ActivityTimeline({ events, isStreaming, stage, liveDuration }: { events: TimelineEvent[]; isStreaming?: boolean; stage?: string; liveDuration?: number }) {
+ const [open, setOpen] = useState(false);
+ const toolCount = events.filter((event) => event.type === 'tool').length;
+ // A protocol explanation can follow a notice immediately; keep the notice
+ // visible while collapsed until the next thinking or tool event starts.
+ const currentEvent = [...events].reverse().find((event) => event.type !== 'narration');
+ const activeTool = [...events].reverse().find((event) => event.type === 'tool' && event.status === 'running');
+ const waiting = stage === 'agent:waiting';
+ const label = !isStreaming ? 'Activity history'
+   : waiting ? 'Waiting for approval'
+   : activeTool?.type === 'tool' ? (activeTool.tool === 'run_command' ? 'Running command' : `Running ${activeTool.tool}`)
+   : stage === 'agent:working' || stage === 'agent:thinking' ? 'Thinking'
+   : getStageInfo(stage).label || 'Working';
+
+ return (
+   <div className="mb-3 rounded-lg border border-gray-800/80 bg-gray-950/30">
+     <button
+       type="button"
+       onClick={() => setOpen((value) => !value)}
+       aria-expanded={open}
+       className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-gray-300 transition-colors hover:bg-gray-800/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+     >
+       {isStreaming ? <Loader2 size={13} className="flex-shrink-0 animate-spin text-[#7b9fc6]" /> : <Wrench size={13} className="flex-shrink-0 text-[#7b9fc6]" />}
+       <span className="flex-shrink-0 font-medium">{label}</span>
+       {isStreaming && !waiting && activeTool?.type === 'tool' && activeTool.args && (
+         <span className="min-w-0 truncate text-gray-400" title={activeTool.args}>{activeTool.args}</span>
+       )}
+       {!isStreaming && toolCount > 0 && <span className="text-gray-400">{toolCount} tool call{toolCount === 1 ? '' : 's'}</span>}
+       {isStreaming && liveDuration !== undefined && <span className="flex-shrink-0 tabular-nums text-gray-500">{liveDuration < 1000 ? `${liveDuration}ms` : `${(liveDuration / 1000).toFixed(1)}s`}</span>}
+       <ChevronDown size={14} className={`ml-auto flex-shrink-0 text-gray-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+     </button>
+     {!open && isStreaming && currentEvent?.type === 'notice' && (
+       <div className="px-3 pb-2 text-xs leading-relaxed text-blue-200">{currentEvent.content}</div>
+     )}
+     <div hidden={!open} className="space-y-0.5 border-t border-gray-800/80 px-1 py-1">
+       {events.map((event, index) => (
+         <TimelineRow key={index} event={event} isStreaming={isStreaming} isLast={index === events.length - 1} />
+       ))}
+     </div>
    </div>
  );
 }
@@ -840,7 +892,7 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  )}
  </div>
 
- {isStreaming && stageLabel && !generatingImage && (
+ {isStreaming && stageLabel && !generatingImage && !(message.timeline && message.timeline.length > 0) && (
  <div className="mb-2 inline-flex items-center gap-2 text-xs text-gray-400">
  {StageIcon ? <StageIcon size={12} className="text-gray-500" /> : <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse"/>}
  <span>{stageLabel}</span>
@@ -861,19 +913,9 @@ export const Message = memo(function Message({ message, isStreaming, stage, live
  </div>
  )}
 
- {/* Interleaved timeline — thinking + tool events shown inline (Koding mode) */}
+ {/* Interleaved Koding activity, collapsed into one section. */}
  {!isUser && message.timeline && message.timeline.length > 0 && (
- <div className="mb-3 space-y-0.5">
- {message.timeline.map((event, ti) => (
- <TimelineRow key={ti} event={event} isStreaming={isStreaming} isLast={ti === message.timeline!.length - 1} />
- ))}
- {isStreaming && (
- <div className="flex items-center gap-2 px-2 py-1 text-[11px] text-gray-500">
- <span className="w-1 h-1 bg-[#7b9fc6] rounded-full animate-pulse"/>
- <span>working...</span>
- </div>
- )}
- </div>
+ <ActivityTimeline events={message.timeline} isStreaming={isStreaming} stage={stage} liveDuration={liveDuration} />
  )}
 
  {/* Images attached to this message — the pictures themselves, not a badge.

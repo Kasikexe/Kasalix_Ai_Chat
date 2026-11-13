@@ -277,6 +277,10 @@ async def chat_route(request: Request) -> Any:
                 # movement function") — timeline event, not chat content.
                 emit({"type": "narration", "content": text})
 
+            def on_notice(text: str) -> None:
+                if not signal.is_set():
+                    emit({"type": "agent_notice", "content": text})
+
             def on_sources(sources: list[dict[str, str]]) -> None:
                 # Pages the web search actually used. Kept in run state so they
                 # persist with the assistant message — without that they would
@@ -316,6 +320,7 @@ async def chat_route(request: Request) -> Any:
                             "onChunk": on_chunk,
                             "onThinking": on_thinking,
                             "onNarration": on_narration,
+                            "onNotice": on_notice,
                             "userId": owner_id,
                             "userName": user_name,
                             "planningEnabled": planning_enabled,
