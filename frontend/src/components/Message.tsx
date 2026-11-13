@@ -430,6 +430,7 @@ interface Props {
 const stageIcons: Record<string, LucideIcon> = {
  'agent:thinking': Bot, 'agent:plan': ClipboardList, 'agent:reading': FolderOpen, 'agent:tool': Wrench,
  'agent:verify': CheckCircle2, 'agent:working': Bot, 'agent:waiting': Hourglass, 'agent:done': Sparkles,
+ 'agent:preparing': Wrench, 'agent:retry': RefreshCw,
  'reading:workspace': FolderOpen, 'search:web': Globe, 'search:docs': BookOpen, 'tool:executing': Wrench,
  'chat:thinking': MessageSquare, 'vision:analyzing': Eye, 'planning:create': ClipboardList,
  'planning:evaluating': ClipboardList, 'image:generating': Palette, 'code:generating': Code2,
@@ -440,12 +441,14 @@ const stageIcons: Record<string, LucideIcon> = {
 
 const stageLabels: Record<string, string> = {
  // Agent loop (auto-apply mode)
- 'agent:thinking': 'Planning approach',
+ 'agent:thinking': 'Thinking',
  'agent:plan': 'Creating a plan',
  'agent:reading': 'Reading workspace files',
  'agent:tool': 'Using tools',
  'agent:verify': 'Verifying changes',
  'agent:working': 'Working through it',
+ 'agent:preparing': 'Preparing a tool call or answer',
+ 'agent:retry': 'Retrying tool call',
  'agent:waiting': 'Waiting for approval',
  'agent:done': 'Finishing up',
  // Regular pipeline stages (approval / chat / image modes)

@@ -229,6 +229,22 @@ MAX_HISTORY = 40                   # bounded tool-loop history
 GAME_VERIFY_CAP = 8                # automatic headless game replays per run
 
 
+def action_limits(root: str) -> tuple[float, int]:
+    """Per-workspace wall-clock deadline and number of action retries."""
+    timeout, retries = 180.0, 2
+    try:
+        config = json.loads((Path(root) / ".agent-config.json").read_text(encoding="utf-8"))
+        configured_timeout = config.get("actionTimeoutSeconds")
+        configured_retries = config.get("actionRetryLimit")
+        if isinstance(configured_timeout, (int, float)) and not isinstance(configured_timeout, bool):
+            timeout = max(5.0, min(float(configured_timeout), 1800.0))
+        if isinstance(configured_retries, int) and not isinstance(configured_retries, bool):
+            retries = max(0, min(configured_retries, 4))
+    except (OSError, ValueError, AttributeError):
+        pass
+    return timeout, retries
+
+
 # ─── Transient-error retry ──────────────────────────────────────────────
 def is_transient_error(e: BaseException) -> bool:
     if isinstance(e, asyncio.CancelledError):
@@ -265,9 +281,10 @@ def fallback_after_invalid_action(state: dict[str, Any], opts: dict[str, Any], r
     if mode == "native":
         switch_action_protocol(state, opts, "text" if opts.get("cloudEndpoint") else "structured", reason)
         state["invalidStructured"] = 0
+        state["invalidStructuredLimit"] = 1
     elif mode == "structured":
         state["invalidStructured"] = state.get("invalidStructured", 0) + 1
-        if state["invalidStructured"] >= 2:
+        if state["invalidStructured"] >= state.get("invalidStructuredLimit", 2):
             switch_action_protocol(state, opts, "text", reason)
 
 
@@ -277,7 +294,7 @@ async def stream_chat_with_retry(
     on_chunk: Callable[[str], None],
     on_thinking_chunk: Callable[[str], None],
 ) -> str:
-    max_attempts = 3
+    max_attempts = int(opts.get("actionRetryLimit", 2)) + 1
     last_err: BaseException | None = None
     signal: asyncio.Event | None = opts.get("signal")
     for attempt in range(1, max_attempts + 1):
@@ -288,6 +305,15 @@ async def stream_chat_with_retry(
         # the loop's own parsing), but the client no longer stares at silence
         # during multi-minute rounds on slow models.
         live_thinking = (opts.get("callbacks") or {}).get("onThinking")
+        preparing_shown = False
+
+        def content_tap(chunk: str) -> None:
+            nonlocal preparing_shown
+            if not preparing_shown:
+                preparing_shown = True
+                if opts.get("actionRound"):
+                    _cb(opts, "onStage", "agent:preparing")
+            buffered.append(chunk)
 
         def thinking_tap(t: str) -> None:
             buffered_thinking.append(t)
@@ -316,12 +342,13 @@ async def stream_chat_with_retry(
             protocol = opts.get("protocolState") or {"mode": "native" if schemas else "text"}
             mode = protocol.get("mode", "text")
             if schemas and mode == "native":
-                result = await stream_chat_with_tools(opts["model"], to_native_tool_history(messages), schemas, buffered.append, stream_options)
+                result = await stream_chat_with_tools(opts["model"], to_native_tool_history(messages), schemas, content_tap, stream_options)
                 if result.get("toolsEnabled") is False:
                     # The capability cache was optimistic and Ollama rejected
                     # tools. Never treat its tool-less reply as a native call.
                     buffered.clear()
                     switch_action_protocol(protocol, opts, "structured" if not opts.get("cloudEndpoint") else "text", "This model does not accept native tools")
+                    protocol["invalidStructuredLimit"] = 1
                     mode = protocol["mode"]
                 calls = result.get("toolCalls") or []
                 if calls:
@@ -341,7 +368,7 @@ async def stream_chat_with_retry(
                 stream_options.output_format = structured_action_schema({tool["function"]["name"] for tool in schemas})
                 structured_messages = [*messages, {"role": "system", "content": build_structured_system_prompt(opts.get("workspacePath") or "workspace", opts.get("userName") or "a user", schemas)}]
                 try:
-                    await stream_chat(opts["model"], structured_messages, buffered.append, stream_options)
+                    await stream_chat(opts["model"], structured_messages, content_tap, stream_options)
                 except OllamaError as exc:
                     message = str(exc).lower()
                     if not (re.search(r"\b(400|422|501)\b|unsupported|not support", message) and re.search(r"format|schema|structured|grammar|json", message)):
@@ -364,7 +391,7 @@ async def stream_chat_with_retry(
             if mode == "text":
                 stream_options.output_format = None
                 legacy_prompt = build_system_prompt(opts.get("workspacePath") or "workspace", opts.get("userName") or "a user", opts.get("autoApply") is True)
-                await stream_chat(opts["model"], [*messages, {"role": "system", "content": legacy_prompt}], buffered.append, stream_options)
+                await stream_chat(opts["model"], [*messages, {"role": "system", "content": legacy_prompt}], content_tap, stream_options)
             out = "".join(buffered)
             for c in buffered:
                 on_chunk(c)
@@ -3892,6 +3919,8 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     native_tools = native_tools or bool(opts.get("cloudEndpoint"))
     schemas = native_tool_schemas(available_tools(auto_apply))
     protocol_state = {"mode": "native" if native_tools else "structured" if not opts.get("cloudEndpoint") else "text"}
+    action_timeout, action_retry_limit = action_limits(root)
+    _cb(opts, "onNarration", f"Tool-call mode: {protocol_state['mode']}. Action timeout: {action_timeout:g}s.")
     if protocol_state["mode"] == "native":
         base_prompt = build_native_system_prompt(root, user_name or "a user")
     elif protocol_state["mode"] == "structured":
@@ -3984,7 +4013,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 {"role": "user", "content": last_user_msg + "\n\nCRITICAL: Output EXACTLY 2-5 numbered steps, each line like \"1. Short step description\" — nothing else. Example:\n1. Create the player class\n2. Add collision detection\n3. Write the game loop\nDo NOT write code, do NOT write prose, do NOT explain, do NOT repeat the numbers twice. ONLY output the numbered steps."},
             ]
             plan_chunks: list[str] = []
-            await stream_chat_with_retry(opts, plan_prompt, plan_chunks.append, lambda _t: None)
+            await asyncio.wait_for(stream_chat_with_retry(opts, plan_prompt, plan_chunks.append, lambda _t: None), timeout=action_timeout)
             plan_raw = "".join(plan_chunks)
             plan_lines = [l.strip() for l in plan_raw.split("\n") if re.match(r"^\s*(?:\d+\s*[.)\]]?\s+\S|[-*•]\s+\S)", l.strip()) and len(l.strip()) <= 160]
             if len(plan_lines) < 2:
@@ -3996,6 +4025,15 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 await session_log.log_plan(plan_text)
                 log_info(f"[agent] Plan: {plan_text[:200]}")
                 _cb(opts, "onPlan", plan_text)
+        except asyncio.TimeoutError:
+            if plan_mode == "on":
+                message = f"Planning timed out after {action_timeout:g} seconds. Try a faster model or increase actionTimeoutSeconds in .agent-config.json."
+                await session_log.log_message("assistant", message)
+                await session_log.end()
+                _cb(opts, "onStage", "agent:done")
+                _cb(opts, "onChunk", message)
+                return message
+            _cb(opts, "onNarration", "Planning timed out; continuing without a plan.")
         except Exception as e:  # noqa: BLE001
             log_info(f"[agent] Planning phase failed (non-fatal): {e}")
     elif not plan_text:
@@ -4037,6 +4075,22 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     false_success_challenged = False  # one-shot: challenged a false completion claim at the final-answer path
     user_wants_deletion = bool(re.search(r"\b(delet?e|remove|get rid of|clean up)\b", last_user_msg, re.I))
     malformed_tool_calls = 0
+    action_failures = 0
+
+    async def action_failed(reason: str) -> str | None:
+        nonlocal action_failures
+        action_failures += 1
+        if action_failures <= action_retry_limit:
+            _cb(opts, "onStage", "agent:retry")
+            _cb(opts, "onNarration", f"{reason} Retrying action ({action_failures}/{action_retry_limit}).")
+            return None
+        message = (f"I stopped because the model repeatedly failed to produce a usable tool action. {reason} "
+                   "No unvalidated call was executed. Try a tool-capable coding model or simplify the request.")
+        await session_log.log_message("assistant", message)
+        await session_log.end()
+        _cb(opts, "onStage", "agent:done")
+        _cb(opts, "onChunk", message)
+        return message
     # Separate budget for "the model replied with NOTHING but reasoning"
     # rounds (empty content, no tool call) — see the empty-response guard.
     empty_response_retries = 0
@@ -4121,11 +4175,24 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             chunks: list[str] = []
             thinking_chunks: list[str] = []
             round_meta: dict[str, Any] = {}
-            await stream_chat_with_retry({**opts, "toolSchemas": schemas, "protocolState": protocol_state, "roundMeta": round_meta}, bounded, chunks.append, thinking_chunks.append)
+            try:
+                await asyncio.wait_for(stream_chat_with_retry({**opts, "toolSchemas": schemas, "protocolState": protocol_state,
+                    "roundMeta": round_meta, "actionRetryLimit": action_retry_limit, "actionRound": True}, bounded, chunks.append, thinking_chunks.append), timeout=action_timeout)
+            except asyncio.TimeoutError:
+                message = (f"I stopped waiting after {action_timeout:g} seconds for the model to produce an action. "
+                    "No unfinished tool call was executed. Try a faster coding model or increase actionTimeoutSeconds in .agent-config.json.")
+                await session_log.log_message("assistant", message)
+                await session_log.end()
+                _cb(opts, "onStage", "agent:done")
+                _cb(opts, "onChunk", message)
+                return message
             raw = "".join(chunks)
 
-            if raw.startswith(("[INVALID NATIVE TOOL CALL]", "[INVALID STRUCTURED ACTION]")) and malformed_tool_calls < 4:
+            if raw.startswith(("[INVALID NATIVE TOOL CALL]", "[INVALID STRUCTURED ACTION]")):
                 malformed_tool_calls += 1
+                stopped = await action_failed("The model returned invalid arguments or response format.")
+                if stopped:
+                    return stopped
                 fallback_after_invalid_action(protocol_state, opts, "The model returned an invalid tool action")
                 history.append({"role": "assistant", "content": raw})
                 history.append({"role": "user", "content": "The tool call was invalid and did not run. Use an available tool with the required arguments, or answer the user."})
@@ -4145,6 +4212,9 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 if (tc.get("args") or {}).pop("_truncated", None) and tc["tool"] in MUTATING_TOOLS
             ]
             if truncated_calls:
+                stopped = await action_failed("The tool call was cut off.")
+                if stopped:
+                    return stopped
                 t_paths = ", ".join(str(tc["args"].get("path") or "unknown") for tc in truncated_calls)
                 log_info(f"[agent] Refusing truncated tool call(s): {[tc['tool'] for tc in truncated_calls]} → {t_paths}")
                 malformed_tool_calls += 1
@@ -4160,6 +4230,8 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 )})
                 _cb(opts, "onStage", "agent:working")
                 continue
+            if tool_calls:
+                action_failures = 0
             # Per-round mutation bookkeeping (drives the false-success guard):
             # paths a mutation was ATTEMPTED on vs paths where it actually
             # SUCCEEDED. A refused write_file must never count as "touched".
@@ -4176,6 +4248,9 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             if not tool_calls and not raw.strip():
                 empty_response_retries += 1
                 if empty_response_retries <= 2:
+                    stopped = await action_failed("The model returned an empty response.")
+                    if stopped:
+                        return stopped
                     fallback_after_invalid_action(protocol_state, opts, "The model returned no action")
                     log_info("[agent] Empty content with no tool call — nudging model to reply")
                     _cb(opts, "onChunk", "\n\n_⚙️ The model reasoned but sent no answer — asking it to reply…_\n")
@@ -4202,7 +4277,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             # responses count as malformed — a correct multi-call answer must
             # NOT burn a retry slot.
 
-            if not tool_calls and malformed_tool_calls < 4:
+            if not structured_final and not tool_calls and malformed_tool_calls < 4:
                 plain_tools = re.findall(r"\b(list_files|read_file|search_files|run_command|run_python|play_game|web_search|read_image|read_rules|update_memory|ask_user|git_status|git_diff|git_commit|edit_file|write_file|delete_file|delegate_to_subagent|rename_file|read_url|find_references|refactor_rename|create_directory|file_exists|read_url_image|diff_files|replace_in_file|count_lines|glob|multi_edit|gen_image|draw_image)\b", raw)
                 # An honest failure report naturally MENTIONS tool names ("my
                 # write_file was refused", "multi_edit needs an edits array")
@@ -4242,6 +4317,9 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 log_info("[agent] Tool-call retries exhausted but response contains code blocks — treating as final answer (auto-apply will process them)")
             elif looks_like_tool_attempt and malformed_format_retries < 4:
                 malformed_format_retries += 1
+                stopped = await action_failed("The model emitted an unparseable tool call.")
+                if stopped:
+                    return stopped
                 _cb(opts, "onChunk", "\n\n_⚙️ Tool call was malformed — retrying with format instructions…_\n")
                 retry_msg = (
                     "Your previous response looked like a tool call but was NOT valid JSON, so nothing was executed. "
@@ -4341,6 +4419,9 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             )
             if promised_work and malformed_tool_calls < 4:
                 malformed_tool_calls += 1
+                stopped = await action_failed("The model described work without calling a tool.")
+                if stopped:
+                    return stopped
                 fallback_after_invalid_action(protocol_state, opts, "The model described work without calling a tool")
                 retry_msg = (
                     "Do NOT describe what you will do — DO it now. "
@@ -4368,6 +4449,9 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             )
             if promised_action and malformed_tool_calls < 4:
                 malformed_tool_calls += 1
+                stopped = await action_failed("The model described an action without calling a tool.")
+                if stopped:
+                    return stopped
                 fallback_after_invalid_action(protocol_state, opts, "The model described an action without calling a tool")
                 log_info("[agent] Promised a read/test with no tool call — nudging to actually act")
                 history.append({"role": "assistant", "content": raw})

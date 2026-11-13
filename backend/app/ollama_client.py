@@ -380,8 +380,6 @@ async def _stream_response(
                                     raise GenerationRepetitionError("The model got stuck repeating itself in its thinking stream (degeneration). The run was aborted early — try rephrasing, lower the temperature, or switch to a stronger model.")
                             if opts.on_thinking:
                                 opts.on_thinking(thinking_text)
-                            continue
-
                         if msg.get("content"):
                             total_chunks += 1
                             content += msg["content"]
