@@ -3874,6 +3874,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     # always a confused rewrite loop, not a user request.
     files_touched_this_run: set[str] = set()
     dirty_verify_paths: set[str] = set()
+    verification_note = ""
 
     def record_file_write(write: dict[str, Any]) -> None:
         if write.get("path"):
@@ -4246,15 +4247,20 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     checks = await detect_verify_for_paths(root, dirty_verify_paths)
                     dirty_verify_paths.clear()
                     results = []
+                    failed_checks = []
                     for check in checks:
                         _cb(opts, "onStage", "agent:verify")
                         verify_out = await _run_verify(check["command"], check["cwd"], 3000, signal)
                         results.append(f"{check['label']} in {check['cwd']}:\n{verify_out}")
+                        if verify_out.startswith("FAILED"):
+                            failed_checks.append(check["label"])
                         await session_log.log_verify(check["command"], verify_out, not verify_out.startswith("FAILED"))
                         _cb(opts, "onAgentCommand", {"command": check["command"], "output": verify_out, "failed": verify_out.startswith("FAILED")})
-                    history.append({"role": "assistant", "content": raw})
-                    history.append({"role": "user", "content": "[FINAL VERIFICATION]\n" + ("\n\n".join(results) if results else "No verification command was detected for the changed files.") + "\nReport the actual results. If a check failed, fix it or explain the failure."})
-                    continue
+                    verification_note = ("\n\nVerification: " + ("failed: " + ", ".join(failed_checks) if failed_checks else "passed: " + ", ".join(check["label"] for check in checks))) if checks else "\n\nVerification: no check was detected for the changed files."
+                    if failed_checks:
+                        history.append({"role": "assistant", "content": raw})
+                        history.append({"role": "user", "content": "[FINAL VERIFICATION]\n" + "\n\n".join(results) + "\nThe check failed. Fix it or explain the failure."})
+                        continue
                 # Game-check guard: never let a run finish on a "fixed!" claim
                 # while the LAST automatic play test still failed. Bounded (2
                 # nudges) so an honest "it is still broken" reply can still ship.
@@ -4353,7 +4359,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     clean_chunks = result_chunks
                 for c in clean_chunks:
                     _cb(opts, "onChunk", c)
-                suffix = (("\n\n" + applied_note) if applied_note else "") + malformed_note
+                suffix = (("\n\n" + applied_note) if applied_note else "") + malformed_note + verification_note
                 if suffix:
                     _cb(opts, "onChunk", suffix)
                     return ("".join(clean_chunks) or clean_raw) + suffix
