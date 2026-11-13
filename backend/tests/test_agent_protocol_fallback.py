@@ -28,8 +28,8 @@ def test_native_narration_switches_to_structured_and_then_acts(tmp_path, monkeyp
         return {"tools": True, "vision": False}
 
     async def native(_model, _messages, _tools, on_chunk, _options):
-        on_chunk("I will create the file now.")
-        return {"content": "I will create the file now.", "toolCalls": []}
+        on_chunk("Let's now write the code.")
+        return {"content": "Let's now write the code.", "toolCalls": []}
 
     actions = iter([
         {"action": "tool", "tool": "write_file", "args": {"path": "a.txt", "content": "done"}},

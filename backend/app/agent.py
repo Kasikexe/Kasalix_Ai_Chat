@@ -4419,7 +4419,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             promised_work = (
                 not tool_calls and not applied_note and auto_apply
                 and not completed_steps
-                and bool(re.search(r"\b(?:i'?ll|i will|going to|let me|next,? i|now,? i'?ll)\b", raw, re.I))
+                and bool(re.search(r"\b(?:i'?ll|i will|going to|let me|let['’]?s|next,? i|now,? i'?ll)\b", raw, re.I))
                 and bool(re.search(r"\b(?:create|write|make|build|implement|add|generate)\b", raw, re.I))
                 and "```" not in raw
                 and len(raw) < 1500
@@ -4448,7 +4448,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             # and only before any work has been done, so it misses this.
             promised_action = (
                 not tool_calls and not applied_note and auto_apply
-                and bool(re.search(r"\b(?:i'?ll|i will|let me|i'?m going to|i am going to|now i'?ll)\b", raw, re.I))
+                and bool(re.search(r"\b(?:i'?ll|i will|let me|let['’]?s|i'?m going to|i am going to|now i'?ll)\b", raw, re.I))
                 and bool(re.search(r"\b(?:read|check|test|run|play|verify|inspect|examine|review|replay|try out)\b", raw, re.I))
                 and not re.search(r"\blet me know\b", raw, re.I)
                 and "```" not in raw
