@@ -29,7 +29,7 @@ from .game_harness import HARNESS_SOURCE
 from .imagegen import get_generated_images_dir, sanitize_svg, save_artwork
 from .logger import error as log_error, info as log_info, warn as log_warn
 from .model_assignments import get_resolved_model
-from .ollama_client import StreamOptions, stream_chat, stream_chat_with_tools
+from .ollama_client import OllamaError, StreamOptions, stream_chat, stream_chat_with_tools
 from .search import search_web
 from .services.project_rules import (
     append_agent_memory,
@@ -251,6 +251,26 @@ def is_transient_error(e: BaseException) -> bool:
     )
 
 
+def switch_action_protocol(state: dict[str, Any], opts: dict[str, Any], mode: str, reason: str) -> None:
+    if state.get("mode") == mode:
+        return
+    state["mode"] = mode
+    log_info(f"[agent] {reason}; using {mode} action format")
+    _cb(opts, "onStage", "agent:retry")
+    _cb(opts, "onNarration", f"{reason}. Trying {mode} tool-call format.")
+
+
+def fallback_after_invalid_action(state: dict[str, Any], opts: dict[str, Any], reason: str) -> None:
+    mode = state.get("mode")
+    if mode == "native":
+        switch_action_protocol(state, opts, "text" if opts.get("cloudEndpoint") else "structured", reason)
+        state["invalidStructured"] = 0
+    elif mode == "structured":
+        state["invalidStructured"] = state.get("invalidStructured", 0) + 1
+        if state["invalidStructured"] >= 2:
+            switch_action_protocol(state, opts, "text", reason)
+
+
 async def stream_chat_with_retry(
     opts: dict[str, Any],
     messages: list[dict[str, str]],
@@ -301,7 +321,7 @@ async def stream_chat_with_retry(
                     # The capability cache was optimistic and Ollama rejected
                     # tools. Never treat its tool-less reply as a native call.
                     buffered.clear()
-                    protocol["mode"] = "structured" if not opts.get("cloudEndpoint") else "text"
+                    switch_action_protocol(protocol, opts, "structured" if not opts.get("cloudEndpoint") else "text", "This model does not accept native tools")
                     mode = protocol["mode"]
                 calls = result.get("toolCalls") or []
                 if calls:
@@ -313,23 +333,38 @@ async def stream_chat_with_retry(
                         # Only execute the validated native calls. Model prose
                         # can itself contain JSON-looking examples.
                         buffered = ["\n".join(json.dumps(c, ensure_ascii=False) for c in normalized)]
+                elif mode == "native" and isinstance(opts.get("roundMeta"), dict):
+                    # Text returned by the native API is prose, not an
+                    # executable tool call, even if it contains JSON examples.
+                    opts["roundMeta"]["structuredFinal"] = True
             if mode == "structured":
                 stream_options.output_format = structured_action_schema({tool["function"]["name"] for tool in schemas})
                 structured_messages = [*messages, {"role": "system", "content": build_structured_system_prompt(opts.get("workspacePath") or "workspace", opts.get("userName") or "a user", schemas)}]
-                await stream_chat(opts["model"], structured_messages, buffered.append, stream_options)
                 try:
-                    action = normalize_structured_action("".join(buffered), {tool["function"]["name"] for tool in schemas})
-                except ValueError as exc:
-                    buffered = [f"[INVALID STRUCTURED ACTION] {exc}"]
-                else:
-                    if action["action"] == "tool":
-                        buffered = [json.dumps(action["call"], ensure_ascii=False)]
+                    await stream_chat(opts["model"], structured_messages, buffered.append, stream_options)
+                except OllamaError as exc:
+                    message = str(exc).lower()
+                    if not (re.search(r"\b(400|422|501)\b|unsupported|not support", message) and re.search(r"format|schema|structured|grammar|json", message)):
+                        raise
+                    buffered.clear()
+                    switch_action_protocol(protocol, opts, "text", "This endpoint rejected structured output")
+                    mode = "text"
+                if mode == "structured":
+                    try:
+                        action = normalize_structured_action("".join(buffered), {tool["function"]["name"] for tool in schemas})
+                    except ValueError as exc:
+                        buffered = [f"[INVALID STRUCTURED ACTION] {exc}"]
                     else:
-                        buffered = [action["message"]]
-                        if isinstance(opts.get("roundMeta"), dict):
-                            opts["roundMeta"]["structuredFinal"] = True
-            elif mode == "text":
-                await stream_chat(opts["model"], messages, buffered.append, stream_options)
+                        if action["action"] == "tool":
+                            buffered = [json.dumps(action["call"], ensure_ascii=False)]
+                        else:
+                            buffered = [action["message"]]
+                            if isinstance(opts.get("roundMeta"), dict):
+                                opts["roundMeta"]["structuredFinal"] = True
+            if mode == "text":
+                stream_options.output_format = None
+                legacy_prompt = build_system_prompt(opts.get("workspacePath") or "workspace", opts.get("userName") or "a user", opts.get("autoApply") is True)
+                await stream_chat(opts["model"], [*messages, {"role": "system", "content": legacy_prompt}], buffered.append, stream_options)
             out = "".join(buffered)
             for c in buffered:
                 on_chunk(c)
@@ -4091,6 +4126,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
 
             if raw.startswith(("[INVALID NATIVE TOOL CALL]", "[INVALID STRUCTURED ACTION]")) and malformed_tool_calls < 4:
                 malformed_tool_calls += 1
+                fallback_after_invalid_action(protocol_state, opts, "The model returned an invalid tool action")
                 history.append({"role": "assistant", "content": raw})
                 history.append({"role": "user", "content": "The tool call was invalid and did not run. Use an available tool with the required arguments, or answer the user."})
                 continue
@@ -4140,6 +4176,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             if not tool_calls and not raw.strip():
                 empty_response_retries += 1
                 if empty_response_retries <= 2:
+                    fallback_after_invalid_action(protocol_state, opts, "The model returned no action")
                     log_info("[agent] Empty content with no tool call — nudging model to reply")
                     _cb(opts, "onChunk", "\n\n_⚙️ The model reasoned but sent no answer — asking it to reply…_\n")
                     history.append({"role": "assistant", "content": raw or "(no answer)"})
@@ -4304,6 +4341,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             )
             if promised_work and malformed_tool_calls < 4:
                 malformed_tool_calls += 1
+                fallback_after_invalid_action(protocol_state, opts, "The model described work without calling a tool")
                 retry_msg = (
                     "Do NOT describe what you will do — DO it now. "
                     "Your task is not finished: no files have been written yet. "
@@ -4330,6 +4368,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             )
             if promised_action and malformed_tool_calls < 4:
                 malformed_tool_calls += 1
+                fallback_after_invalid_action(protocol_state, opts, "The model described an action without calling a tool")
                 log_info("[agent] Promised a read/test with no tool call — nudging to actually act")
                 history.append({"role": "assistant", "content": raw})
                 history.append({"role": "user", "content": (
