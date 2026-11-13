@@ -2949,6 +2949,8 @@ def build_native_system_prompt(workspace_path: str, user_name: str) -> str:
         "A statement that you will act is not a tool call. Call tools when needed, "
         "inspect their results, and verify changes before reporting success. "
         "Use run_command for relevant tests or checks and report their actual results. "
+        "For a static HTML page use browser open with path; do not guess a port or use a system browser. "
+        "Inspect the page before clicking or typing and inspect the result afterward. "
         "Use targeted edits, respect the user's rules and permissions, and never invent tool results. "
         "When no tool is needed, answer normally or ask a necessary question."
     )
@@ -2958,7 +2960,10 @@ def build_structured_system_prompt(workspace_path: str, user_name: str, schemas:
     tools = []
     for schema in schemas:
         function = schema["function"]
-        tools.append(f"- {function['name']}: {function['description'][:220]} Arguments: {json.dumps(function['parameters'], ensure_ascii=False)}")
+        limit = 800 if function["name"] in ("browser", "run_command") else 220
+        example = next((tool["args"] for tool in AGENT_TOOL_DEFS if tool["name"] == function["name"]), "")
+        examples = f" Examples: {example}" if function["name"] in ("browser", "run_command") else ""
+        tools.append(f"- {function['name']}: {function['description'][:limit]} Arguments: {json.dumps(function['parameters'], ensure_ascii=False)}{examples}")
     return (build_native_system_prompt(workspace_path, user_name)
         + '\nRespond with exactly one JSON object: {"action":"tool","tool":"name","args":{...}}, '
           '{"action":"final","message":"..."}, or {"action":"question","question":"..."}. '
@@ -3253,6 +3258,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     # code...), so a chatty run burned the format budget on behavior retries
     # and lost its chance to fix mere JSON formatting.
     malformed_format_retries = 0
+    tool_argument_retries = 0
     completed_steps: list[str] = []
     reading_stage_fired = False
 
@@ -3363,9 +3369,18 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 stopped = await action_failed("The model returned invalid arguments or response format.")
                 if stopped:
                     return stopped
-                fallback_after_invalid_action(protocol_state, opts, "The model returned an invalid tool action")
+                detail = raw.split("]", 1)[-1].strip()[:600]
+                correctable = bool(re.search(r"\b(?:browser|run_command)\b", detail, re.I))
+                if correctable and tool_argument_retries < 1:
+                    tool_argument_retries += 1
+                    _cb(opts, "onNarration", "The tool arguments were invalid; retrying with the specific error.")
+                else:
+                    fallback_after_invalid_action(protocol_state, opts, "The model returned an invalid tool action")
                 history.append({"role": "assistant", "content": raw})
-                history.append({"role": "user", "content": "The tool call was invalid and did not run. Use an available tool with the required arguments, or answer the user."})
+                history.append({"role": "user", "content": "[INVALID TOOL ARGUMENTS] The call did not run. " + detail
+                    + ' For a static page use browser {"operation":"open","path":"index.html"}; '
+                      'for page contents use {"operation":"inspect"}; for a click use {"operation":"click","selector":"<selector from inspect>"}. '
+                      'For a background command use {"command":"...","background":true}. Use only arguments for the chosen operation.'})
                 continue
 
             structured_final = bool(round_meta.get("structuredFinal"))
@@ -3402,6 +3417,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 continue
             if tool_calls:
                 action_failures = 0
+                tool_argument_retries = 0
             # Per-round mutation bookkeeping (drives the false-success guard):
             # paths a mutation was ATTEMPTED on vs paths where it actually
             # SUCCEEDED. A refused write_file must never count as "touched".

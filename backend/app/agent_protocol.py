@@ -89,8 +89,18 @@ def native_tool_schemas(definitions: list[dict[str, Any]]) -> list[dict[str, Any
         if name not in TOOL_ARGUMENTS:
             continue  # Never expose a tool without an explicit schema.
         required, optional = TOOL_ARGUMENTS[name]
+        properties = {**required, **optional}
+        if name == "browser":
+            properties = {
+                "operation": {"type": "string", "enum": ["open", "inspect", "click", "type", "screenshot", "console", "close"],
+                              "description": "Choose one browser action. Inspect before clicking or typing."},
+                "url": {"type": "string", "description": "Open only: the actual localhost HTTP(S) URL of an existing server."},
+                "path": {"type": "string", "description": "Open only: workspace HTML file to serve automatically. Omit for index.html."},
+                "selector": {"type": "string", "description": "Click or type only: a visible element selector from inspect."},
+                "text": {"type": "string", "description": "Type only: text to enter."},
+            }
         tools.append({"type": "function", "function": {"name": name, "description": definition["description"],
-            "parameters": {"type": "object", "properties": {**required, **optional}, "required": list(required)}}})
+            "parameters": {"type": "object", "properties": properties, "required": list(required)}}})
     return tools
 
 
@@ -135,8 +145,6 @@ def normalize_native_calls(calls: list[dict[str, Any]], permitted: set[str]) -> 
             raise ValueError(f"Invalid arguments for {name}")
         if name == "run_command" and validate_command_args(args):
             raise ValueError(validate_command_args(args))
-        if name == "browser" and validate_browser_args(args):
-            raise ValueError(validate_browser_args(args))
         result.append({"tool": name, "args": args})
     return result
 

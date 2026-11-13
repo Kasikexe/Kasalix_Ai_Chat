@@ -65,3 +65,71 @@ def test_invalid_structured_output_is_bounded_then_uses_text(tmp_path, monkeypat
         "messages": [{"role": "user", "content": "create file"}], "callbacks": {}}))
     assert seen == [True, True, False, False]
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "done"
+
+
+def test_invalid_native_browser_arguments_get_specific_retry_in_same_mode(tmp_path, monkeypatch):
+    async def caps(_model):
+        return {"tools": True, "vision": False}
+
+    responses = iter([
+        {"content": "", "toolCalls": [{"function": {"name": "browser", "arguments": {"operation": "inspect", "url": "http://localhost"}}}]},
+        {"content": "", "toolCalls": [{"function": {"name": "browser", "arguments": {"operation": "inspect"}}}]},
+        {"content": "The page contains a button.", "toolCalls": []},
+    ])
+    histories, actions = [], []
+
+    async def native(_model, messages, _tools, on_chunk, _options):
+        histories.append(messages)
+        response = next(responses)
+        if response["content"]:
+            on_chunk(response["content"])
+        return response
+
+    def browser(request):
+        actions.append(request["args"])
+        agent.resolve_browser_action(request["key"], "owner", {"ok": True, "output": "button found"})
+
+    monkeypatch.setattr(capabilities, "get_model_capabilities", caps)
+    monkeypatch.setattr(agent, "stream_chat_with_tools", native)
+    answer = asyncio.run(agent.run_agent_loop({"model": "fake", "workspacePath": str(tmp_path), "autoApply": True,
+        "userId": "owner", "messages": [{"role": "user", "content": "Inspect the page"}], "callbacks": {"onBrowserAction": browser}}))
+    assert actions == [{"operation": "inspect"}]
+    assert "does not accept url" in str(histories[1])
+    assert len(histories) == 3 and "button" in answer
+
+
+def test_invalid_structured_browser_arguments_can_self_correct(tmp_path, monkeypatch):
+    async def caps(_model):
+        return {"tools": False, "vision": False}
+
+    responses = iter([
+        {"action": "tool", "tool": "browser", "args": {"operation": "click"}},
+        {"action": "tool", "tool": "browser", "args": {"operation": "inspect"}},
+        {"action": "final", "message": "The page contains a button."},
+    ])
+    formats, histories = [], []
+
+    async def stream(_model, messages, on_chunk, options):
+        formats.append(bool(options.output_format))
+        histories.append(messages)
+        on_chunk(json.dumps(next(responses)))
+
+    def browser(request):
+        agent.resolve_browser_action(request["key"], "owner", {"ok": True, "output": "button found"})
+
+    monkeypatch.setattr(capabilities, "get_model_capabilities", caps)
+    monkeypatch.setattr(agent, "stream_chat", stream)
+    answer = asyncio.run(agent.run_agent_loop({"model": "fake", "workspacePath": str(tmp_path), "autoApply": True,
+        "userId": "owner", "messages": [{"role": "user", "content": "Inspect the page"}], "callbacks": {"onBrowserAction": browser}}))
+    assert formats == [True, True, True]
+    assert "requires a valid selector" in str(histories[1])
+    assert "button" in answer
+
+
+def test_browser_schema_and_structured_prompt_include_operation_guidance():
+    schemas = agent.native_tool_schemas(agent.AGENT_TOOL_DEFS)
+    browser = next(item["function"] for item in schemas if item["function"]["name"] == "browser")
+    assert "inspect" in browser["parameters"]["properties"]["operation"]["enum"]
+    assert "selector" in browser["parameters"]["properties"]["selector"]["description"]
+    prompt = agent.build_structured_system_prompt("/workspace", "user", schemas)
+    assert '"operation": "inspect"' in prompt and '"path": "index.html"' in prompt
