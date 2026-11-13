@@ -561,6 +561,14 @@ export const api = {
     })));
   },
 
+  async listAgentLogs(): Promise<{ logs: { runId: string; mtime: string }[] }> {
+    return handleResponse(await fetch(`${API_BASE}/session-logs`, authedFetch(`${API_BASE}/session-logs`)));
+  },
+
+  async deleteAgentLog(runId: string): Promise<void> {
+    await handleResponse(await fetch(`${API_BASE}/session-logs/${encodeURIComponent(runId)}`, authedFetch(`${API_BASE}/session-logs`, { method: 'DELETE' })));
+  },
+
   /** Delete a file — uses local IPC in Electron, backend API on web */
   async deleteFile(filePath: string, workspacePath?: string): Promise<{ success: boolean; path: string }> {
     if (isElectron) {

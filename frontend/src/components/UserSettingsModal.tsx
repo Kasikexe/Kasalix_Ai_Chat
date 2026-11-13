@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import type { UserProfile, MemoryData } from '../types';
 import { useToast } from '../hooks/useToast';
-import { getSavedServerUrl } from '../services/api';
+import { api, getSavedServerUrl } from '../services/api';
 
 const AUTO_UPDATE_KEY = 'ai-chat:autoUpdate';
 
@@ -119,6 +119,28 @@ export function UserSettingsModal({
 
  // Koding preview preference (window hidden vs shown)
  const [previewHidden, setPreviewHidden] = useState(false);
+ const [agentLogs, setAgentLogs] = useState<{ runId: string; mtime: string }[]>([]);
+ const [logsLoading, setLogsLoading] = useState(false);
+ const [pendingLogDelete, setPendingLogDelete] = useState<string | null>(null);
+ useEffect(() => {
+ if (!open || section !== 'koding') return;
+ let cancelled = false;
+ setLogsLoading(true);
+ api.listAgentLogs().then(result => { if (!cancelled) setAgentLogs(result.logs); })
+ .catch(() => { if (!cancelled) toast('error', 'Could not load Koding session logs'); })
+ .finally(() => { if (!cancelled) setLogsLoading(false); });
+ return () => { cancelled = true; };
+ }, [open, section, profile.id]);
+
+ const removeAgentLog = async (runId: string) => {
+ try {
+ await api.deleteAgentLog(runId);
+ setAgentLogs(logs => logs.filter(log => log.runId !== runId));
+ setPendingLogDelete(null);
+ } catch {
+ toast('error', 'Could not delete the session log');
+ }
+ };
  useEffect(() => {
  if (!open) return;
  const api = (window as any).electronAPI;
@@ -1239,6 +1261,25 @@ export function UserSettingsModal({
  <code className="text-gray-400 font-mono">.agent-memory.md</code>, which is lower priority than
  your rules.
  </p>
+ </div>
+
+ <div className="px-4 py-3 bg-gray-800/30 border border-gray-800 rounded-xl">
+ <p className="text-sm font-medium text-gray-200">Session logs</p>
+ <p className="text-xs text-gray-500 mt-1">Logs can contain prompts and project code. They remain on the server until you delete them.</p>
+ {logsLoading ? <p className="text-xs text-gray-500 mt-3">Loading logs…</p> : agentLogs.length === 0 ? (
+ <p className="text-xs text-gray-500 mt-3">No session logs.</p>
+ ) : (
+ <div className="mt-3 max-h-44 overflow-y-auto space-y-1">
+ {agentLogs.map(log => (
+ <div key={log.runId} className="flex items-center gap-2 text-xs text-gray-400 py-1">
+ <span className="flex-1 truncate" title={log.runId}>{new Date(log.mtime).toLocaleString()}</span>
+ {pendingLogDelete === log.runId ? (
+ <><button className="text-red-400 hover:text-red-300" onClick={() => removeAgentLog(log.runId)}>Confirm delete</button><button onClick={() => setPendingLogDelete(null)}>Cancel</button></>
+ ) : <button className="text-gray-400 hover:text-red-400" aria-label={`Delete log ${log.runId}`} onClick={() => setPendingLogDelete(log.runId)}><Trash2 size={14}/></button>}
+ </div>
+ ))}
+ </div>
+ )}
  </div>
 
  {/* Hide preview window (Electron only) */}
