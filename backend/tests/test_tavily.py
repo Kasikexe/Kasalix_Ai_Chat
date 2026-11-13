@@ -775,73 +775,10 @@ class TestEmptyResultRecovery:
         assert len(outcome.attempts) == 2
 
 
-class TestAgentWebSearchUsesTavily:
-    """End-to-end: the model asks to search, Tavily answers, the model sees it.
-
-    This is the wiring that matters in practice — the agent's web_search tool
-    goes through get_web_context, so this proves Tavily results actually reach
-    the model rather than just that the client returns data.
-    """
-
-    def test_model_receives_tavily_results(self, tmp_path, monkeypatch):
-        import app.agent as agent
-
-        rounds: list[list[dict]] = []
-
-        async def fake_model(opts, messages, on_chunk, on_thinking_chunk, **kw):
-            rounds.append(messages)
-            reply = (
-                '{"tool": "web_search", "args": {"query": "who is leo messi"}}'
-                if len(rounds) == 1
-                else "Lionel Messi is an Argentine footballer (verified)."
-            )
-            on_chunk(reply)
-            return reply
-
-        async def fake_summary(model, messages, on_chunk, options):
-            on_chunk("SUMMARY-MARKER: Messi spent most of his career at Barcelona.")
-            return None
-
-        async def fake_key():
-            return GOOD_KEY
-
-        async def ddg_must_not_run(query, max_results=5, *, days=None):
-            raise AssertionError("DuckDuckGo was used even though Tavily is configured")
-
-        monkeypatch.setattr(agent, "stream_chat_with_retry", fake_model)
-        monkeypatch.setattr(search, "stream_chat", fake_summary)
-        monkeypatch.setattr(search, "_duck_search", ddg_must_not_run)
-        monkeypatch.setattr("app.settings_store.get_tavily_api_key", fake_key)
-
-        with serve_tavily(_ok_responder) as (endpoint, seen):
-            monkeypatch.setattr(tavily, "TAVILY_SEARCH_URL", f"{endpoint}/search")
-            asyncio.run(
-                agent.run_agent_loop(
-                    {
-                        "model": "fake-model",
-                        "workspacePath": str(tmp_path),
-                        "autoApply": False,
-                        "messages": [
-                            {"role": "user", "content": "who is leo messi? search the web"}
-                        ],
-                        "callbacks": {"onChunk": lambda *_: None},
-                    }
-                )
-            )
-
-        assert seen, "the agent never reached Tavily"
-        assert seen[0]["body"]["query"] == "who is leo messi"
-        assert len(rounds) >= 2, "the search result was never fed back to the model"
-        fed_back = json.dumps(rounds[-1])
-        # The summarised Tavily context must be what the model now sees.
-        assert "SUMMARY-MARKER" in fed_back, fed_back[:2000]
-        assert "WEB SEARCH RESULTS" in fed_back
-
-
 # ─── Source reporting ───────────────────────────────────────────────────────
 # The clients show the pages a search actually used underneath the answer.
-# Searches start from several places (the pipeline's freshness heuristic, the
-# agent's web_search tool, the chat-mode tool registry), so they all report to
+# Searches start from several places (the pipeline's freshness heuristic and
+# the chat-mode tool registry), so they all report to
 # one per-run sink instead of each call site carrying the list itself.
 
 

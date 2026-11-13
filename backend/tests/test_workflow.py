@@ -315,7 +315,7 @@ class TestAgentLoopWorkflow:
         responses = [
             '{"tool": "read_file", "args": {"path": "notes.txt"}}',
             '{"tool": "write_file", "args": {"path": "out.txt", "content": "result"}}',
-            '{"tool": "run_command", "args": {"command": "echo workflow-ok"}}',
+            '{"tool": "read_file", "args": {"path": "out.txt"}}',
             "All steps finished successfully.",
         ]
         result, rounds = _run_loop(str(tmp_path), responses)
@@ -558,26 +558,6 @@ class TestAgentLoopWorkflow:
         assert "I got stuck" not in result, f"run got stuck instead of using edit_lines: {result!r}"
         assert rounds >= 3
 
-    def test_edit_section_rewrites_one_function_and_keeps_the_rest(self, tmp_path):
-        original = (
-            "def update(self):\n"
-            "    self.x += 1\n"
-            "    self.y += 1\n"
-            "\n"
-            "def draw(self):\n"
-            "    print(self.x)\n"
-        )
-        (tmp_path / "snake.py").write_text(original, encoding="utf-8")
-        responses = [
-            '{"tool": "read_file", "args": {"path": "snake.py"}}',
-            '{"tool": "edit_section", "args": {"path": "snake.py", "start_anchor": "def update(self):", "end_anchor": "def draw(self):", "content": "    self.x += 9\\n"}}',
-            "Rewrote update() and left draw() untouched.",
-        ]
-        result, rounds = _run_loop(str(tmp_path), responses)
-        content = (tmp_path / "snake.py").read_text(encoding="utf-8")
-        assert content == "def update(self):\n    self.x += 9\ndef draw(self):\n    print(self.x)\n", f"unexpected result: {content!r}"
-        assert "self.y += 1" not in content, "the old body should have been replaced"
-        assert rounds >= 3 and "I got stuck" not in result
 
     def test_workspace_tools_are_sandboxed(self, tmp_path):
         # write_file outside the workspace must be refused
@@ -591,7 +571,7 @@ class TestAgentLoopWorkflow:
 
     def test_false_success_after_all_writes_failed_is_challenged(self, tmp_path):
         """Replays the user's live transcript: write_file refused as a full
-        rewrite → read_file → multi_edit with a bad schema → the model claims
+        rewrite → read_file → edit_file with a stale snippet → the model claims
         'I have successfully added the menu system'. Nothing changed on disk,
         so the claim MUST be challenged, never emitted to the user."""
         # >50 lines so the rewrite guard refuses full rewrites
@@ -601,17 +581,17 @@ class TestAgentLoopWorkflow:
         responses = [
             '{"tool": "write_file", "args": {"path": "main.py", "content": ' + json.dumps(full_rewrite) + '}}',
             '{"tool": "read_file", "args": {"path": "main.py"}}',
-            # The malformed multi_edit the model actually sent (no "edits" key)
-            '{"tool": "multi_edit", "args": {"path": "main.py", "old_string": "line0 = 0", "new_string": "line0 = 9"}}',
+            # A stale snippet makes the edit fail.
+            '{"tool": "edit_file", "args": {"path": "main.py", "old_string": "not in file", "new_string": "line0 = 9"}}',
             "I have successfully added the menu system to your game.",
-            "You are right — my edits failed. The write_file was refused as a full rewrite and multi_edit needs an edits array, so nothing changed on disk.",
+            "You are right — my edits failed. The write_file was refused as a full rewrite and edit_file could not find the old text, so nothing changed on disk.",
         ]
         result, rounds = _run_loop(str(tmp_path), responses)
         assert "successfully added" not in result, f"false success reached the user: {result!r}"
         assert "my edits failed" in result, f"honest failure never surfaced: {result!r}"
         content = (tmp_path / "main.py").read_text(encoding="utf-8")
         assert "menu0" not in content, "refused rewrite landed on disk"
-        assert "line0 = 0" in content, "file was modified by the failed multi_edit"
+        assert "line0 = 0" in content, "file was modified by the failed edit_file"
 
     def test_root_file_with_asset_dirs_not_blocked(self, tmp_path):
         """The user's live failure: the agent created assets/ then tried to
@@ -646,30 +626,7 @@ class TestAgentLoopWorkflow:
         assert (tmp_path / "README.md").exists(), "force:true did not bypass the guard"
         assert rounds >= 3, f"loop ended early: {rounds}"
 
-    def test_multi_edit_changes_key_and_camelcase_accepted(self, tmp_path):
-        # multi_edit dialect drift: "changes" instead of "edits", camelCase keys
-        (tmp_path / "app.py").write_text("a = 1\nb = 2\n", encoding="utf-8")
-        responses = [
-            '{"tool": "multi_edit", "args": {"path": "app.py", "changes": [{"oldString": "a = 1", "newString": "a = 11"}, {"oldString": "b = 2", "newString": "b = 22"}]}}',
-            "Both edits applied.",
-        ]
-        _run_loop(str(tmp_path), responses)
-        content = (tmp_path / "app.py").read_text(encoding="utf-8")
-        assert "a = 11" in content and "b = 22" in content
 
-    def test_multi_edit_teaching_error_mentions_format(self, tmp_path):
-        # A bare/wrong multi_edit must return the FORMAT in its error so the
-        # model can self-correct next round instead of flailing.
-        (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
-        from app.agent import execute_tool
-
-        result = asyncio.run(execute_tool(
-            str(tmp_path),
-            {"tool": "multi_edit", "args": {"path": "app.py"}},
-            True,
-        ))
-        assert not result["ok"]
-        assert '"edits"' in result["output"] and "old_string" in result["output"]
 
     def test_budget_fallout_admits_total_write_failure(self, tmp_path):
         """Every mutation failed this run → the final 'max steps' message must
@@ -1090,119 +1047,10 @@ class TestConversationLifecycle:
 # ─────────────────────────────────────────────────────────────
 
 
-class TestPreviewWorkflow:
-    """preview_start through the REAL agent loop with a fake client bridge."""
+class TestWriteNoopRegression:
+    """Repeated no-op writes do not trip the failure guard."""
 
-    def test_preview_start_opens_window_via_bridge(self, tmp_path):
-        import app.agent as agent
-        import app.preview as pv
-        from app.agent import run_agent_loop
 
-        (tmp_path / "index.html").write_text("<html><body>game</body></html>", encoding="utf-8")
-        opened: list[str] = []
-        scripted = [
-            json.dumps({"tool": "preview_start", "args": {"entry": "index.html"}}),
-            "The preview is live and the game renders. Task complete.",
-        ]
-        original_stream = agent.stream_chat_with_retry
-        original_call = pv.client_call
-        counter = {"n": 0}
-
-        async def fake_stream(opts, messages, on_chunk, on_thinking_chunk, **kw):
-            counter["n"] += 1
-            resp = scripted[counter["n"] - 1] if counter["n"] <= len(scripted) else "Done."
-            on_chunk(resp)
-            return resp
-
-        async def fake_client_call(payload: dict, timeout: float = 12.0) -> dict:
-            if payload.get("type") == "open":
-                opened.append(payload.get("url") or "")
-                # Simulate the preview page registering itself
-                pv.get_preview_session().window_registered.set()
-                return {"ok": True}
-            return {"ok": True}
-
-        agent.stream_chat_with_retry = fake_stream
-        pv.client_call = fake_client_call
-        try:
-            result = asyncio.run(
-                run_agent_loop(
-                    {
-                        "model": "fake-model",
-                        "workspacePath": str(tmp_path),
-                        "autoApply": True,
-                        "messages": [{"role": "user", "content": "make a web game"}],
-                        "callbacks": {"onChunk": lambda *_: None},
-                    }
-                )
-            )
-        finally:
-            agent.stream_chat_with_retry = original_stream
-            pv.client_call = original_call
-            pv.stop_preview()
-        # The scripted model called preview_start; the bridge received the open
-        # request and the loop returned without error.
-        assert result, result
-        assert opened, "preview_start never reached the client bridge"
-        assert "__kxid=" in opened[0], opened[0]
-        assert "index.html" in opened[0], opened[0]
-        assert pv.get_preview_session() is None, "preview must be cleaned up after the run"
-
-    def test_preview_hidden_mode_reports_headless(self, tmp_path):
-        """When the user hides the preview window, the open call returns
-        hidden=True and the agent is told verification runs headless."""
-        import app.agent as agent
-        import app.preview as pv
-        from app.agent import run_agent_loop
-
-        (tmp_path / "index.html").write_text("<html><body>game</body></html>", encoding="utf-8")
-        scripted = [
-            json.dumps({"tool": "preview_start", "args": {"entry": "index.html"}}),
-            "Verified headless — the user can open the URL in a browser. Done.",
-        ]
-        captured = {"result": ""}
-
-        async def fake_client_call(payload: dict, timeout: float = 12.0) -> dict:
-            if payload.get("type") == "open":
-                pv.get_preview_session().window_registered.set()
-                return {"ok": True, "hidden": True}
-            return {"ok": True}
-
-        original_stream = agent.stream_chat_with_retry
-        original_call = pv.client_call
-        counter = {"n": 0}
-
-        async def fake_stream(opts, messages, on_chunk, on_thinking_chunk, **kw):
-            counter["n"] += 1
-            resp = scripted[counter["n"] - 1] if counter["n"] <= len(scripted) else "Done."
-            on_chunk(resp)
-            return resp
-
-        agent.stream_chat_with_retry = fake_stream
-        pv.client_call = fake_client_call
-
-        def on_tool_result(r: dict) -> None:
-            if r.get("tool") == "preview_start":
-                captured["result"] = str(r.get("output") or "")
-
-        try:
-            asyncio.run(
-                run_agent_loop(
-                    {
-                        "model": "fake-model",
-                        "workspacePath": str(tmp_path),
-                        "autoApply": True,
-                        "messages": [{"role": "user", "content": "make a web game"}],
-                        "callbacks": {"onChunk": lambda *_: None, "onToolResult": on_tool_result},
-                    }
-                )
-            )
-        finally:
-            agent.stream_chat_with_retry = original_stream
-            pv.client_call = original_call
-            pv.stop_preview()
-        assert "headless" in captured["result"], captured["result"]
-        assert "user can open" in captured["result"], captured["result"]
 
     def test_write_noop_then_repeat_does_not_trip_guard(self, tmp_path):
         """The exact false give-up from the user's log: write_file twice with
@@ -1245,55 +1093,3 @@ class TestPreviewWorkflow:
         assert "kept being refused" not in result, f"false give-up: {result!r}"
         assert (tmp_path / "game.py").read_text(encoding="utf-8") == content
         assert counter["n"] == 3, f"loop ended early after {counter['n']} rounds"
-
-
-class TestPreviewGiveUpRegression:
-    """The user's live failure: no client bridge → preview_start 'failed' 3×
-    → identical-call guard gave up with a misleading message. preview_start
-    retries must never trip the guard; after 3 attempts the model is
-    redirected to non-preview verification instead."""
-
-    def test_repeated_preview_start_redirects_instead_of_giving_up(self, tmp_path):
-        import app.agent as agent
-        import app.preview as pv
-        from app.agent import run_agent_loop
-
-        (tmp_path / "index.html").write_text("<html><body>game</body></html>", encoding="utf-8")
-        psc = json.dumps({"tool": "preview_start", "args": {"entry": "index.html"}})
-        wsc = json.dumps({"tool": "write_file", "args": {"path": "game.js", "content": "// game logic\n"}})
-        scripted = [wsc, psc, psc, psc, "Preview was unavailable here — I verified the code by reading it instead. Done."]
-
-        async def no_bridge(payload: dict, timeout: float = 12.0) -> dict:
-            raise pv.PreviewBridgeError("The desktop client's preview bridge is not connected.")
-
-        original_stream = agent.stream_chat_with_retry
-        original_call = pv.client_call
-        counter = {"n": 0}
-
-        async def fake_stream(opts, messages, on_chunk, on_thinking_chunk, **kw):
-            counter["n"] += 1
-            resp = scripted[counter["n"] - 1] if counter["n"] <= len(scripted) else "Done."
-            on_chunk(resp)
-            return resp
-
-        agent.stream_chat_with_retry = fake_stream
-        pv.client_call = no_bridge
-        try:
-            result = asyncio.run(
-                run_agent_loop(
-                    {
-                        "model": "fake-model",
-                        "workspacePath": str(tmp_path),
-                        "autoApply": True,
-                        "messages": [{"role": "user", "content": "make a web game and test it"}],
-                        "callbacks": {"onChunk": lambda *_: None},
-                    }
-                )
-            )
-        finally:
-            agent.stream_chat_with_retry = original_stream
-            pv.client_call = original_call
-            pv.stop_preview()
-        assert "stopped because my preview_start" not in result, f"false give-up: {result!r}"
-        assert counter["n"] == 5, f"loop gave up after {counter['n']} rounds instead of continuing"
-        assert "verified the code by reading it" in result

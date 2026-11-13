@@ -294,9 +294,9 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
                         : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700'
                     }`}
                     title={
-                      m === 'auto' ? 'Auto: run tools without asking (commits require approval). Commands have server user permissions and can access files outside the workspace.'
+                      m === 'auto' ? 'Auto: run available file tools without asking'
                       : m === 'ask-each' ? 'Ask: confirm each tool before executing'
-                      : 'Read-only: blocks file changes and code execution'
+                      : 'Read-only: blocks workspace file changes'
                     }
                   >
                     {m === 'auto' ? <><Zap size={11}/> Auto</> : m === 'ask-each' ? <><HelpCircle size={11}/> Ask</> : <><Lock size={11}/> Read-only</>}
@@ -308,7 +308,7 @@ export function InputBar({ onSend, onStop, isStreaming, disabled, planningEnable
         )}
 
         {onToolPermissionChange !== undefined && toolPermission === 'auto' && (
-          <p className="px-1 pb-1 text-[10px] text-gray-500">Commands run with the server user's permissions and can access files outside the workspace.</p>
+          <p className="px-1 pb-1 text-[10px] text-gray-500">Automatic project checks run with the server user's permissions.</p>
         )}
 
         {/* Input row */}

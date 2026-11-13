@@ -19,21 +19,16 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.parse
 from pathlib import Path
 from typing import Any, Callable
 
 from .ai_rules import with_ai_rules
 from .agent_protocol import native_tool_schemas, normalize_native_calls, normalize_structured_action, structured_action_schema
 from .game_harness import HARNESS_SOURCE
-from .imagegen import get_generated_images_dir, sanitize_svg, save_artwork
 from .logger import error as log_error, info as log_info, warn as log_warn
 from .model_assignments import get_resolved_model
 from .ollama_client import OllamaError, StreamOptions, stream_chat, stream_chat_with_tools
-from .search import search_web
 from .services.project_rules import (
-    append_agent_memory,
-    find_agent_memory_file,
     read_agent_memory,
     read_project_config,
     read_project_rules,
@@ -44,7 +39,6 @@ from .utils import (
     PROTECTED_DIRS,
     apply_line_range,
     apply_search_replace,
-    apply_section_replace,
     changed_line_count,
     diff_lines,
     is_path_inside,
@@ -523,35 +517,6 @@ def resolve_pending_question(key: str, answer: str) -> bool:
     return True
 
 
-async def ask_user_question(question: str, opts: dict[str, Any]) -> str:
-    import random
-
-    key = opts.get("askKey") or f"ask-{int(time.time() * 1000)}-{''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=6))}"
-    _cb(opts, "onQuestion", key, question)
-    future: asyncio.Future = asyncio.get_running_loop().create_future()
-    signal: asyncio.Event | None = opts.get("signal")
-    _pending_questions[key] = {"future": future}
-
-    signal_task: asyncio.Task | None = None
-    if signal is not None:
-        if signal.is_set():
-            _pending_questions.pop(key, None)
-            raise asyncio.CancelledError()
-        signal_task = asyncio.create_task(signal.wait())
-
-    try:
-        if signal_task is not None:
-            done, _ = await asyncio.wait({future, signal_task}, return_when=asyncio.FIRST_COMPLETED)
-            if signal_task in done:
-                _pending_questions.pop(key, None)
-                raise asyncio.CancelledError()
-            answer = await future
-        else:
-            answer = await future
-    finally:
-        if signal_task is not None:
-            signal_task.cancel()
-    return answer
 
 
 # ─── Tool approval ──────────────────────────────────────────────────────
@@ -646,43 +611,13 @@ def find_python_interpreter(root: str | None = None) -> list[str]:
 AGENT_TOOL_DEFS: list[dict[str, Any]] = [
     {"name": "list_files", "description": "List files and directories in the workspace (recursive, ignores node_modules/.git/dist etc). Use this to see what exists before editing.", "args": "{}", "mutating": False},
     {"name": "read_file", "description": "Read the contents of a file inside the workspace. Always read a file BEFORE editing it so you know exactly what is in it. Do NOT pass offset/length for normal files — read the whole file in one call; offset/length is ONLY for files larger than 200KB. Pass \"numbers\": true to get line numbers in front of each line (12| code) — needed for edit_lines; never copy those numbers into an edit's text.", "args": '{"path": "src/index.ts"} or {"path": "src/index.ts", "numbers": true} or {"path": "src/index.ts", "offset": 200000, "length": 100000}', "mutating": False},
-    {"name": "search_files", "description": "Search the workspace for a text pattern. Returns matching file paths + line numbers. Use to find where things are defined.", "args": '{"query": "function render"}', "mutating": False},
-    {"name": "run_command", "description": "Run a shell command with the workspace as its working directory. Commands execute with the server user's permissions and are not filesystem-sandboxed. Output is capped. For long-running commands, set background=true and poll with __bg_status:id.", "args": '{"command": "bun run build", "background": false}', "mutating": False},
-    {"name": "play_game", "description": "PLAY a game/interactive Python script headlessly to verify it WORKS — injects scripted keyboard input, steps the game loop for N frames, captures PNG frames, and MEASURES whether the picture actually changes between frames. Use this for pygame/SDL games instead of guessing: pass inputs to steer (e.g. hold right for 20 frames, then down), then read the captured frames with read_image to SEE the result. Reports frames run, any crash, and changed-pixels per frame — 'changedPixels: 0' between frames that should be animating is a REAL BUG (the actor is not moving or is drawn off-screen).", "args": '{"path": "snake.py", "frames": 120, "inputs": [{"frame": 0, "keys": ["right"]}, {"frame": 30, "keys": ["down"]}], "screenshotEvery": 10}', "mutating": False},
-    {"name": "run_python", "description": "RUN a Python program to VERIFY it actually works — the fastest way to check a script you wrote or changed instead of guessing. Pass path (a .py file in the workspace) or code (an inline snippet). Runs with a timeout (games/event loops cannot hang the run), captures stdout/stderr + exit code, and by default sets HEADLESS graphics (SDL_VIDEODRIVER=dummy, matplotlib Agg) so pygame/SDL programs run with no monitor. Use this after writing or fixing any Python script, BEFORE you tell the user it works.", "args": '{"path": "snake.py"} or {"code": "import snake; print(snake.__file__)", "timeout": 15}', "mutating": False},
-    {"name": "web_search", "description": "Search the live web and return current, real-time information (docs, APIs, syntax, news). Use when you need up-to-date knowledge that is not in your training data — search BEFORE you answer anything version-, API- or price-shaped, and cite the pages you used. If a search comes back empty, one retry with different words is worth it. Results are capped.", "args": '{"query": "python requests library latest API"}', "mutating": False},
-    {"name": "draw_image", "description": "Draw or generate an image when the user asks for a picture/logo/icon/illustration (no text-to-image model exists, so you are the artist). Pass svg: ONE complete standalone SVG that DRAWS the request — not a prompt. Declare width=\"1024\" height=\"1024\" viewBox=\"0 0 1024 1024\"; flat vector style with rect/circle/ellipse/polygon/path and gradients in <defs>; background first, foreground last; NEVER use <text> (no fonts); under ~60 elements. The SVG is rasterized to PNG and the tool result tells you the EXACT markdown to embed in your reply.", "args": '{"svg": "<svg xmlns=\\"http://www.w3.org/2000/svg\\" width=\\"1024\\" height=\\"1024\\" viewBox=\\"0 0 1024 1024\\"><rect width=\\"1024\\" height=\\"1024\\" fill=\\"#223\\"/></svg>"}', "mutating": False},
-    {"name": "gen_image", "description": "Generate an image file INSIDE the workspace (e.g. assets/icon.png, textures, mockups, sprites) that code in the project can reference. Same SVG-authoring rules as draw_image (one complete standalone SVG, 1024x1024, flat vector, no <text>). Pass path (destination inside the workspace, use an assets/ folder for media) and svg. The image is rasterized to PNG and written to that path — the tool result gives you the file path to reference in code.", "args": '{"path": "assets/car.png", "svg": "<svg xmlns=\\"http://www.w3.org/2000/svg\\" width=\\"1024\\" height=\\"1024\\" viewBox=\\"0 0 1024 1024\">...</svg>"}', "mutating": True},
-    {"name": "read_image", "description": "Describe an image file inside the workspace using the vision model (e.g. screenshots, mockups, diagrams). Returns a detailed plain-text description.", "args": '{"path": "screenshots/ui.png"}', "mutating": False},
-    {"name": "read_rules", "description": "Read BOTH the user rules file (.agent-rules.md) and the agent memory file (.agent-memory.md). USER RULES are authoritative — written by the user, follow them strictly, and you can NEVER edit them. AGENT MEMORY is your own notes from previous sessions — lower priority, and if your memory contradicts a user rule, the user rule wins. Read this when you start a task or whenever you are unsure about conventions.", "args": "{}", "mutating": False},
-    {"name": "update_memory", "description": "Append a durable lesson to YOUR OWN memory file (.agent-memory.md) so it is remembered across sessions (e.g. \"the test command is python -m unittest\", \"use snake_case\"). Duplicates are skipped. You can only write to your memory file — the USER RULES file (.agent-rules.md) is read-only for you and you can never edit it. Use sparingly — only durable, reusable project knowledge, not one-off task notes.", "args": '{"rule": "The test command is: python -m unittest"}', "mutating": True},
-    {"name": "ask_user", "description": "Ask the user a short clarifying question mid-task when you genuinely cannot proceed (ambiguous requirements, conflicting instructions, a destructive action you must not assume). The run pauses until the user answers. Use ONLY for questions you cannot answer yourself from the workspace, your rules, or memory — never ask about things you can check yourself.", "args": '{"question": "Should the new module be TypeScript or plain JavaScript?"}', "mutating": False},
-    {"name": "git_status", "description": "Show the current git repository state (branch, staged/unstaged changes, untracked files). Run this before committing so you know what changed. Returns an error if the workspace is not a git repo.", "args": "{}", "mutating": False},
-    {"name": "git_diff", "description": "Show the exact changes (diff) of files in the workspace. Use this to review your own work and to write an accurate commit message. Returns an error if the workspace is not a git repo.", "args": "{}", "mutating": False},
-    {"name": "git_commit", "description": "Create a LOCAL commit of explicitly selected files, after user approval. Review git status and diff first. Never include unrelated user changes. Existing staged changes in selected files are refused. This tool never pushes.", "args": '{"summary": "Fix retry handling", "paths": ["src/client.py"]}', "mutating": True},
+    {"name": "search_files", "description": "Search workspace file contents for literal text, returning paths and line numbers. Matching is case-insensitive by default; set case_sensitive to true for an exact-case search. Results may include comments and strings, not just code references.", "args": '{"query": "function render"} or {"query": "render", "case_sensitive": true}', "mutating": False},
     {"name": "edit_file", "description": "SURGICAL edit of an existing file: replace an exact snippet (old_string) with new content (new_string). Use this for SMALL changes to existing files instead of rewriting the whole file. old_string must appear exactly once in the file (or differ only in whitespace). ONLY available in auto-apply mode. After a successful edit the result includes a diff summary.", "args": '{"path": "src/app.ts", "old_string": "const x = 1;", "new_string": "const x = 2;"}', "mutating": True},
     {"name": "edit_lines", "description": "Edit an existing file BY LINE NUMBER — replaces lines start..end with content, so you NEVER copy the old text. This is the easiest way to change a few lines, a loop, or one statement inside a file you have read. start/end are 1-based line numbers (from read_file with \"numbers\": true); omit end to change one line; make end smaller than start to INSERT before start; negative counts from the end (-1 = last line); content \"\" deletes those lines. Pass expect (the first line being replaced, copied from the file) and the edit is refused if the numbers are stale. ONLY available in auto-apply mode.", "args": '{"path": "snake.py", "start": 42, "end": 48, "content": "    new_line_1\\n    new_line_2", "expect": "    def update(self):"}', "mutating": True},
-    {"name": "edit_section", "description": "Rewrite ONE REGION of an existing file identified by ANCHORS instead of by the old text. Everything BETWEEN start_anchor and end_anchor is replaced by content; the anchor lines themselves and everything outside them are kept exactly as they were. Use this to rewrite a whole function or block without reproducing its old body — e.g. start_anchor \"def update(self):\" (kept) and end_anchor \"def draw(self):\" (kept), content = the new body lines. Both anchors must be whole lines copied EXACTLY from the file and must each appear only once; omit start_anchor to start at the top of the file, omit end_anchor to go to the end. ONLY available in auto-apply mode.", "args": '{"path": "snake.py", "start_anchor": "def update(self):", "end_anchor": "def draw(self):", "content": "        # new body lines only"}', "mutating": True},
     {"name": "write_file", "description": "Create a NEW file. If the file already exists, only YOUR CHANGED LINES are applied and everything else in the file is preserved exactly (safe to pass the full new file content — a version that rewrites most of the file is refused). ONLY available in auto-apply mode — the file is written immediately and can be reverted by the user.", "args": '{"path": "src/app.ts", "content": "..."}', "mutating": True},
     {"name": "delete_file", "description": "Delete a file inside the workspace. ONLY available in auto-apply mode — the deletion happens immediately and can be reverted by the user.", "args": '{"path": "src/old.ts"}', "mutating": True},
-    {"name": "delegate_to_subagent", "description": "Delegate a focused sub-task to a sub-agent that runs independently. The sub-agent gets its own context and tool access. Use type to spawn specialized agents: \"explore\" (fast read-only search), \"plan\" (architecture planning), \"reviewer\" (code review). Returns the sub-agent's final answer.", "args": '{"task": "Run all tests and report which ones fail", "type": "explore|plan|reviewer|general", "model": "optional - use a different model"}', "mutating": True},
     {"name": "rename_file", "description": "Rename or move a file inside the workspace. The original file is deleted and the new path is created with the same content. Both paths must be inside the workspace. Can be reverted by the user.", "args": '{"from": "src/old.ts", "to": "src/new.ts"}', "mutating": True},
-    {"name": "read_url", "description": "Fetch a web page and return its readable text content. Use when you need to read specific documentation, API references, or tutorials. Returns extracted text (scripts/styles stripped). Max 20000 chars.", "args": '{"url": "https://docs.python.org/3/library/tkinter.html"}', "mutating": False},
-    {"name": "find_references", "description": "Find all usages of a name (function, class, variable, import) across the workspace. Returns file paths and line numbers. Use before renaming or refactoring to understand impact.", "args": '{"query": "functionName"}', "mutating": False},
-    {"name": "refactor_rename", "description": "Rename a symbol (function, class, variable, import) across ALL files in the workspace. Performs find-and-replace with word-boundary matching. Shows a summary of all changes. Revertable.", "args": '{"oldName": "oldFunction", "newName": "newFunction"}', "mutating": True},
-    {"name": "create_directory", "description": "Create a directory (and any missing parent directories) inside the workspace. Use before write_file when the target folder does not exist yet.", "args": '{"path": "src/components"}', "mutating": True},
-    {"name": "file_exists", "description": "Check if a file or directory exists inside the workspace. Returns true/false and the type (file or directory). Use before editing to confirm a file is there.", "args": '{"path": "src/app.ts"}', "mutating": False},
-    {"name": "read_url_image", "description": "Download an image from a URL and save it to the workspace. Returns the local path. Use for fetching logos, mockups, screenshots, etc.", "args": '{"url": "https://example.com/logo.png", "saveAs": "assets/logo.png"}', "mutating": True},
-    {"name": "diff_files", "description": "Compare two files and show the differences. Can compare two workspace files, or compare a file against a string. Returns a unified diff.", "args": '{"fileA": "src/old.ts", "fileB": "src/new.ts"} or {"fileA": "src/app.ts", "contentB": "new content..."}', "mutating": False},
-    {"name": "replace_in_file", "description": "Find and replace ALL occurrences of a string in a file. Simpler than edit_file when you want to replace every instance. Supports regex.", "args": '{"path": "src/app.ts", "find": "oldFunction", "replace": "newFunction"}', "mutating": True},
-    {"name": "count_lines", "description": "Count lines, words, and characters in a file or across multiple files. Use to understand codebase size before making changes.", "args": '{"path": "src/"} or {"path": "src/app.ts"}', "mutating": False},
     {"name": "glob", "description": "Fast file pattern matching. Find files by name/extension pattern (e.g. \"**/*.tsx\", \"src/**/*.ts\", \"*.json\"). Returns matching paths sorted by modification time. ALWAYS use this instead of list_files when searching for files by extension or name pattern — it is much faster.", "args": '{"pattern": "**/*.py"}', "mutating": False},
-    {"name": "multi_edit", "description": "Apply multiple surgical edits to a SINGLE file in one atomic operation. All edits are applied in order — if any fails, none are applied. Use this when you need to change several places in the same file. Each edit is the same as edit_file (old_string → new_string).", "args": '{"path": "src/app.ts", "edits": [{"old_string": "const x = 1;", "new_string": "const x = 2;"}, {"old_string": "foo();", "new_string": "bar();"}]}', "mutating": True},
-    {"name": "preview_start", "description": "Start a live local preview of the workspace (or a subfolder) so you can TEST your web work: it serves the files on http://127.0.0.1 and the client opens a real browser window showing the page. The page auto-reloads when files change. You can then use preview_screenshot / preview_eval / preview_console to verify the result. Use for HTML/CSS/JS apps, canvas games, SPAs, etc. Call preview_stop when done (or to restart after changing the entry file).", "args": '{"entry": "index.html"}', "mutating": False},
-    {"name": "preview_stop", "description": "Stop the live preview server and close the preview window. Call this when you are done testing or when the run ends.", "args": "{}", "mutating": False},
-    {"name": "preview_screenshot", "description": "Capture a PNG screenshot of the live preview window so you can SEE the page. If you support vision the image is placed directly into your context — judge layout, colors and content from it. Otherwise a detailed text description is returned. Requires the preview window to be open (preview_start).", "args": '{}', "mutating": False},
-    {"name": "preview_eval", "description": "Run JavaScript inside the live preview page and return the JSON value of the last expression (e.g. check a game variable, read DOM state, verify an element exists). Requires the preview window to be open (preview_start).", "args": '{"code": "document.querySelectorAll(\'.tile\').length"}', "mutating": False},
-    {"name": "preview_console", "description": "Read the live preview page's console output (log/warn/error, plus any uncaught errors). ALWAYS check this after preview_screenshot — it reveals JS errors invisible in a static screenshot. Requires the preview window to be open (preview_start).", "args": '{}', "mutating": False},
 ]
 
 TOOL_JSON_EXAMPLES = f"""Available tools — to use one, respond with ONLY a single JSON object, no markdown, no other text:
@@ -691,54 +626,25 @@ TOOL_JSON_EXAMPLES = f"""Available tools — to use one, respond with ONLY a sin
 {{"tool": "read_file", "args": {{"path": "src/index.ts"}}}}
 {{"tool": "read_file", "args": {{"path": "src/index.ts", "numbers": true}}}} — line numbers in front of each line (12| code) for use with edit_lines
 {{"tool": "search_files", "args": {{"query": "function render"}}}}
-{{"tool": "run_command", "args": {{"command": "bun run build"}}}}
-{{"tool": "run_command", "args": {{"command": "npm start", "background": true}}}} — long-running commands run async; poll with __bg_status:id
-{{"tool": "run_python", "args": {{"path": "snake.py", "timeout": 15}}}} — RUN a workspace Python script to verify it (headless by default); use {{"code": "..."}} for an inline snippet
-{{"tool": "play_game", "args": {{"path": "snake.py", "frames": 120, "screenshotEvery": 20}}}} — PLAY a game headlessly: inject input, capture frames, measure pixel motion (then read_image them)
-{{"tool": "web_search", "args": {{"query": "python requests library latest API"}}}} — search the LIVE WEB for a fact, version, API or error you cannot verify from the workspace; if it returns nothing, retry ONCE with different words, then cite the URL(s) you actually used
 {{"tool": "edit_file", "args": {{"path": "src/app.ts", "old_string": "const x = 1;", "new_string": "const x = 2;"}}}}
 {{"tool": "edit_lines", "args": {{"path": "snake.py", "start": 42, "end": 48, "content": "    new_line_1\\n    new_line_2"}}}} — change lines BY NUMBER (read_file with "numbers": true); no old text needed
-{{"tool": "edit_section", "args": {{"path": "snake.py", "start_anchor": "def update(self):", "end_anchor": "def draw(self):", "content": "        # the new body lines"}}}} — rewrite the region BETWEEN two anchors; the anchors themselves are kept
 {{"tool": "write_file", "args": {{"path": "src/app.ts", "content": "..."}}}} — for an EXISTING file only your changed lines are applied; the rest is preserved
 {{"tool": "delete_file", "args": {{"path": "src/old.ts"}}}}
-{{"tool": "gen_image", "args": {{"path": "assets/icon.png", "svg": "<svg ...>...</svg>"}}}} — write a project image asset (same SVG rules as draw_image)
-{{"tool": "draw_image", "args": {{"svg": "<svg ...>...</svg>"}}}} — DRAW the picture the user asked for straight into your reply (logo/icon/illustration); same SVG rules as gen_image, and the result tells you the exact markdown to include
-{{"tool": "read_image", "args": {{"path": "screenshots/ui.png"}}}} — have the vision model DESCRIBE a workspace image (screenshot, mockup, captured frame)
-{{"tool": "git_status", "args": {{}}}}
-{{"tool": "git_diff", "args": {{}}}}
-{{"tool": "git_commit", "args": {{"summary": "Raise max connections to 500", "paths": ["src/server.py"]}}}}
-{{"tool": "read_rules", "args": {{}}}}
-{{"tool": "update_memory", "args": {{"rule": "The test command is: python -m unittest"}}}}
-{{"tool": "ask_user", "args": {{"question": "TypeScript or JavaScript?"}}}}
-{{"tool": "delegate_to_subagent", "args": {{"task": "Run the test suite and report failures"}}}}
-{{"tool": "delegate_to_subagent", "args": {{"task": "Search for deprecated APIs in the codebase", "model": "qwen3:8b"}}}}
 {{"tool": "rename_file", "args": {{"from": "src/old.ts", "to": "src/new.ts"}}}}
-{{"tool": "read_url", "args": {{"url": "https://docs.python.org/3/library/tkinter.html"}}}}
-{{"tool": "find_references", "args": {{"query": "functionName"}}}}
-{{"tool": "refactor_rename", "args": {{"oldName": "oldFunction", "newName": "newFunction"}}}}
-{{"tool": "create_directory", "args": {{"path": "src/components"}}}}
-{{"tool": "file_exists", "args": {{"path": "src/app.ts"}}}}
-{{"tool": "read_url_image", "args": {{"url": "https://example.com/logo.png", "saveAs": "assets/logo.png"}}}}
-{{"tool": "diff_files", "args": {{"fileA": "src/old.ts", "fileB": "src/new.ts"}}}}
-{{"tool": "replace_in_file", "args": {{"path": "src/app.ts", "find": "oldFunction", "replace": "newFunction"}}}}
-{{"tool": "count_lines", "args": {{"path": "src/app.ts"}}}}
 {{"tool": "glob", "args": {{"pattern": "**/*.py"}}}}
 {{"tool": "glob", "args": {{"pattern": "src/**/*.tsx"}}}}
-{{"tool": "multi_edit", "args": {{"path": "src/app.ts", "edits": [{{"old_string": "const x = 1;", "new_string": "const x = 2;"}}, {{"old_string": "foo();", "new_string": "bar();"}}]}}}}
-{{"tool": "preview_start", "args": {{"entry": "index.html"}}}} — serve the workspace and open the live preview window so you can test web work
-{{"tool": "preview_screenshot", "args": {{}}}} — SEE the preview page (the image is attached to the result; judge what is actually visible)
-{{"tool": "preview_console", "args": {{}}}} — read the preview page's console log/warn/error output and uncaught JS errors
-{{"tool": "preview_eval", "args": {{"code": "document.querySelectorAll('.tile').length"}}}} — run JavaScript inside the preview page and get the value back
-{{"tool": "preview_stop", "args": {{}}}} — stop the preview server and close the window when you are done validating
 """
 
 
 # ─── Workspace listing ──────────────────────────────────────────────────
 async def list_workspace_tree(root: str) -> str:
     lines: list[str] = []
+    limited = False
 
     async def walk(dir: str, depth: int) -> None:
-        if depth > 3 or len(lines) > 400:
+        nonlocal limited
+        if depth > 3 or len(lines) >= 400:
+            limited = True
             return
         if is_protected_path(root, dir):
             return
@@ -748,10 +654,13 @@ async def list_workspace_tree(root: str) -> str:
             return
         entries.sort(key=lambda n: (not os.path.isdir(os.path.join(dir, n)), n.lower()))
         for name in entries:
+            if len(lines) >= 400:
+                limited = True
+                return
             if name.startswith(".") or name in IGNORE_DIRS:
                 continue
             full = os.path.join(dir, name)
-            if is_protected_path(root, full):
+            if is_protected_path(root, full) or os.path.islink(full):
                 continue
             rel = os.path.relpath(full, root).replace(os.sep, "/")
             if os.path.isdir(full):
@@ -767,7 +676,8 @@ async def list_workspace_tree(root: str) -> str:
                 lines.append("  " * depth + rel + size)
 
     await walk(root, 0)
-    return "\n".join(lines) if lines else "(empty workspace)"
+    result = "\n".join(lines) if lines else "(empty workspace)"
+    return result + ("\n[Listing may be incomplete: depth or 400-entry limit reached.]" if limited else "")
 
 
 # ─── Workspace profile ──────────────────────────────────────────────────
@@ -874,7 +784,7 @@ async def build_workspace_profile(
         f"- User rules: {project_rules if project_rules else 'none yet — the user can create .agent-rules.md for standing instructions'}"
     )
     lines.append(
-        f"- Agent memory: {agent_memory if agent_memory else 'none yet — use update_memory to save durable project knowledge'}"
+        f"- Agent memory: {agent_memory if agent_memory else 'none'}"
     )
     lines.append(f"- PROTECTED directories (never access): {protected_dirs_label(root)}")
     lines.append("- RULE: Match the project language above for ALL new or edited files. Do NOT create files in a different language than the project unless the user explicitly asks for that language.")
@@ -1061,46 +971,10 @@ async def find_main_script(root: str, extensions: list[str]) -> str | None:
 
 
 # ─── Vision description ─────────────────────────────────────────────────
-async def describe_image(target: str) -> str:
-    with open(target, "rb") as f:
-        b64 = f.read()
-    import base64
-
-    b64_str = base64.b64encode(b64).decode()
-    ext_match = re.search(r"\.(png|jpe?g|gif|webp|bmp)$", target, re.I)
-    ext = (ext_match.group(1) if ext_match else "png").lower()
-    mime = {
-        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-        "gif": "image/gif", "webp": "image/webp", "bmp": "image/bmp",
-    }.get(ext, "image/png")
-    resolved = await get_resolved_model("vision")
-    vision_model = resolved["model"]
-    vision_source = resolved["source"]
-    cloud_settings = await get_cloud_settings() if vision_source == "cloud" else None
-    log_info(f"[agent] Vision model: {vision_model} (source: {vision_source})")
-    description: list[str] = []
-
-    await stream_chat(
-        vision_model,
-        [
-            {"role": "system", "content": "You are a vision description assistant. Describe what you see in the image in plain text: layout, colors, text content, structure, UI elements. Be specific and technical. 2-4 paragraphs, no code blocks."},
-            {"role": "user", "content": f"Describe this image: [image:data:{mime};base64,{b64_str}]"},
-        ],
-        description.append,
-        StreamOptions(
-            think=False,
-            base_url=(cloud_settings or {}).get("cloudEndpoint") or None,
-            api_key=(cloud_settings or {}).get("cloudApiKey") or None,
-        ),
-    )
-    return "".join(description).strip() or "(vision model returned no description)"
 
 
 # ─── Git helpers ────────────────────────────────────────────────────────
 MUTATING_TOOLS = {tool["name"] for tool in AGENT_TOOL_DEFS if tool["mutating"]}
-# These tools run workspace or page code and therefore cannot be treated as
-# read-only merely because the tool itself does not explicitly write a file.
-EXECUTION_TOOLS = {"run_command", "run_python", "play_game", "preview_eval"}
 
 
 async def authorize_tool_calls(
@@ -1115,14 +989,12 @@ async def authorize_tool_calls(
     feedback: list[str] = []
     for call in calls:
         name = call["tool"]
-        unsafe = name in MUTATING_TOOLS or name in EXECUTION_TOOLS
-        # A delegated agent executes its own calls directly. Do not let one
-        # approval grant it unrestricted access in a restricted mode.
-        blocked = (mode == "read-only" and unsafe) or (mode != "auto" and name == "delegate_to_subagent")
+        unsafe = name in MUTATING_TOOLS
+        blocked = name not in {tool["name"] for tool in AGENT_TOOL_DEFS} or (mode == "read-only" and unsafe)
         if blocked:
             reason = "Blocked by the selected permission mode"
         else:
-            needs_approval = name == "git_commit" or mode in ("ask-each", "suggest") or (mode == "auto-edit" and name in EXECUTION_TOOLS)
+            needs_approval = mode in ("ask-each", "suggest")
             if needs_approval:
                 key = f"approval-{int(time.time() * 1000)}-{''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=6))}"
                 _cb(opts, "onApprovalRequest", key, name, call["args"])
@@ -1143,7 +1015,7 @@ async def authorize_tool_calls(
 # false give-up shipped to a user: two write_file calls, second returned
 # no-op, guard tripped with "kept failing the same way" for a call that
 # never failed).
-NOOP_OK_TOOLS = {"write_file", "edit_lines", "edit_section"}
+NOOP_OK_TOOLS = {"write_file", "edit_lines"}
 
 
 def process_group_options() -> dict[str, Any]:
@@ -1193,80 +1065,11 @@ async def communicate_with_stop(proc: asyncio.subprocess.Process, timeout: float
             stopped.cancel()
 
 
-def git_exclude_args(root: str) -> list[str]:
-    args = ["--", "."]
-    protected = set(PROTECTED_DIRS) | set(protected_dirs_label(root).split(", "))
-    for d in protected:
-        args.append(f":(exclude){d}")
-    return args
 
 
-async def run_git(root: str, args: list[str]) -> str:
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "git", *args,
-            cwd=root,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise RuntimeError("git command timed out")
-        out = (stdout or b"").decode("utf-8", "replace")
-        err = (stderr or b"").decode("utf-8", "replace")
-        if proc.returncode != 0:
-            raise RuntimeError((err or out).strip() or f"git exited with code {proc.returncode}")
-        return (out + (f"\n[stderr]\n{err}" if err else "")).strip()
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:  # noqa: BLE001
-        raise RuntimeError(str(e)) from e
 
 
 # ─── Sub-agent delegation ───────────────────────────────────────────────
-async def run_sub_agent(
-    root: str,
-    task: str,
-    model: str | None,
-    parent_opts: dict[str, Any],
-    auto_apply: bool,
-) -> str:
-    sub_system = f"You are a focused sub-agent. Your task: {task}\n\nYou have the same tools as the parent agent. Complete the task and respond with your findings/results. Be concise — the parent agent is waiting for your output."
-    file_tree = await list_workspace_tree(root)
-    ground_truth = "WORKSPACE FILES:\n" + file_tree
-
-    sub_messages = [
-        {"role": "system", "content": sub_system + "\n\n" + ground_truth},
-        {"role": "user", "content": task},
-    ]
-    sub_model = model or parent_opts.get("model")
-    output = ""
-    sub_history: list[dict[str, str]] = list(sub_messages)
-
-    for _iter in range(10):
-        bounded = prune_to_budget(sub_history)["messages"]
-        chunks: list[str] = []
-        try:
-            await stream_chat_with_retry(
-                {**parent_opts, "model": sub_model},
-                bounded,
-                chunks.append,
-                lambda _t: None,
-            )
-        except Exception as e:  # noqa: BLE001
-            output += f"\n[Sub-agent error: {e}]"
-            break
-        raw = "".join(chunks)
-        tool_call = extract_tool_call(raw)
-        if not tool_call:
-            output = raw
-            break
-        result = await execute_tool(root, tool_call, auto_apply)
-        sub_history.append({"role": "assistant", "content": raw})
-        sub_history.append({"role": "user", "content": f"[TOOL RESULT — {tool_call['tool']}]\n{result['output']}"})
-    return output or "(sub-agent completed with no output)"
 
 
 # ─── Tool execution ─────────────────────────────────────────────────────
@@ -1281,6 +1084,10 @@ async def execute_tool(
 
     async def deny_out(msg: str) -> dict[str, Any]:
         return {"ok": False, "output": msg}
+
+    # Game replay is an automatic verification path, not a model-facing tool.
+    if tool not in {item["name"] for item in AGENT_TOOL_DEFS} and not (tool == "play_game" and (extra or {}).get("game_auto") is True):
+        return await deny_out(f'Unknown or unavailable tool: "{tool}".')
 
     if tool == "list_files":
         tree = await list_workspace_tree(root)
@@ -1360,223 +1167,28 @@ async def execute_tool(
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"Could not read {p}: {e}")
 
-    if tool == "web_search":
-        q = args.get("query") if isinstance(args.get("query"), str) else ""
-        if not q:
-            return await deny_out('web_search requires a "query" string argument.')
-        try:
-            outcome = await search_web(q)
-            if not outcome.context:
-                attempts = [a for a in outcome.attempts if a]
-                tried = ", ".join(f'"{a}"' for a in attempts) or f'"{q}"'
-                already = " (a rewritten query was tried automatically)" if len(attempts) > 1 else ""
-                return {
-                    "ok": True,
-                    "output": (
-                        f"Web search found no results for {tried}{already}. "
-                        "Try ONE more query with completely different words (shorter, no \"how to\", "
-                        "no question form); if that also finds nothing, tell the user plainly that you "
-                        "could not find this rather than answering from memory."
-                    ),
-                }
-            ctx = outcome.context
-            capped = ctx[:MAX_OUTPUT_CHARS] + "\n...[truncated]" if len(ctx) > MAX_OUTPUT_CHARS else ctx
-            return {"ok": True, "output": f"[WEB SEARCH RESULTS — CURRENT AND LIVE]\n{capped}"}
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"Web search failed: {e}")
 
-    if tool == "draw_image":
-        svg = args.get("svg") if isinstance(args.get("svg"), str) else ""
-        svg = svg.strip()
-        if not svg:
-            return await deny_out('draw_image requires an "svg" string argument containing a complete standalone SVG document.')
-        check = sanitize_svg(svg)
-        if not check.get("ok"):
-            return await deny_out(f"Your SVG was rejected: {check.get('error')} Rewrite it to fix the problem, then call the tool again.")
-        try:
-            art = await save_artwork(svg)
-            return {
-                "ok": True,
-                "output": f'Image drawn and saved as "{art["filename"]}" ({"raster PNG" if art.get("png") else "SVG"}). In your next message to the user, include this EXACT markdown so the image displays: ![Generated image](/api/generated/{art["filename"]})',
-            }
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"Could not save the image: {e}")
 
-    if tool == "gen_image":
-        if not auto_apply:
-            return await deny_out("gen_image is disabled — auto-apply mode is OFF.")
-        p = args.get("path") if isinstance(args.get("path"), str) else ""
-        svg = (args.get("svg") if isinstance(args.get("svg"), str) else "").strip()
-        if not p or not svg:
-            return await deny_out('gen_image requires "path" (destination inside the workspace, e.g. assets/car.png) and "svg" arguments.')
-        if not re.search(r"\.(png|jpe?g|webp|svg)\s*$", p, re.I):
-            return await deny_out(f"gen_image path must end in an image extension (.png, .jpg, .webp, .svg) — got: {p}")
-        exact = await resolve_in_workspace(root, p)
-        if not exact:
-            return await deny_out(f"Access denied: {p} is outside the workspace.")
-        check = sanitize_svg(svg)
-        if not check.get("ok"):
-            return await deny_out(f"Your SVG was rejected: {check.get('error')} Rewrite it to fix the problem, then call the tool again.")
-        try:
-            art = await save_artwork(svg)
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"Could not generate the image: {e}")
-        # Locate the actual rendered file (PNG when rasterization succeeded)
-        source_name = str(art.get("filename") or "")
-        source_path = Path(get_generated_images_dir()) / source_name
-        try:
-            target_rel = os.path.relpath(exact, root).replace(os.sep, "/")
-            target_dir = os.path.dirname(exact)
-            if target_dir:
-                os.makedirs(target_dir, exist_ok=True)
-            if source_path.exists() and source_name.lower().endswith((".png", ".svg")):
-                if source_name.lower().endswith(".png") and p.lower().endswith((".jpg", ".jpeg")):
-                    target_rel = target_rel.rsplit(".", 1)[0] + ".png"
-                    exact = os.path.splitext(exact)[0] + ".png"
-                if os.path.exists(exact):
-                    return await deny_out(f"Refusing to overwrite existing image: {target_rel}")
-                shutil.copyfile(source_path, exact)
-                os.remove(source_path)
-                size_kb = os.path.getsize(exact) / 1024
-                return {
-                    "ok": True,
-                    "output": (
-                        f"Image generated and saved to {target_rel} ({size_kb:.1f} KB). "
-                        f"Reference it from code as '{target_rel}' — use a relative path exactly like that. "
-                        "A copy also appears in the chat gallery."
-                    ),
-                    "fileWrite": {"path": target_rel, "changeType": "created", "originalContent": None},
-                }
-            return await deny_out("Rasterization unavailable — the image could not be written to the workspace. Try a simpler SVG.")
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"Could not save the image to {p}: {e}")
 
-    if tool == "read_image":
-        p = args.get("path") if isinstance(args.get("path"), str) else ""
-        if not p:
-            return await deny_out('read_image requires a "path" string argument.')
-        target = await resolve_in_workspace(root, p)
-        if not target:
-            return await deny_out(f"Access denied: {p} is outside the workspace.")
-        try:
-            stat = os.stat(target)
-            if stat.st_size > 10 * 1024 * 1024:
-                return await deny_out(f"{p} is {stat.st_size / 1024 / 1024:.1f}MB — too large to describe (max 10MB).")
-            description = await describe_image(target)
-            return {"ok": True, "output": f"Vision description of {p}:\n{description}"}
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"Could not describe {p}: {e}")
 
-    if tool == "read_rules":
-        rules = await read_project_rules(root)
-        memory = await read_agent_memory(root)
-        parts: list[str] = []
-        if rules:
-            parts.append(f"[USER RULES — authoritative, written by the user. Follow them strictly. You can NEVER edit or override this file.]\n{rules}")
-        else:
-            parts.append("[USER RULES] No user rules file exists yet (.agent-rules.md). The user can create one to give you standing instructions.")
-        if memory:
-            memory_path = await find_agent_memory_file(root)
-            parts.append(f"[AGENT MEMORY — your own notes from previous sessions ({memory_path}). Lower priority than user rules: if this contradicts a user rule, the user rule wins.]\n{memory}")
-        else:
-            parts.append("[AGENT MEMORY] No memory saved yet — use update_memory when you learn something durable about the project.")
-        return {"ok": True, "output": "\n\n".join(parts)}
 
-    if tool == "update_memory":
-        rule = args.get("rule") if isinstance(args.get("rule"), str) else ""
-        if not rule.strip():
-            return await deny_out('update_memory requires a "rule" string argument.')
-        try:
-            file_path = await append_agent_memory(root, rule)
-            return {"ok": True, "output": f"Memory saved to {os.path.basename(file_path)} (your own notes — lower priority than user rules). It will apply from now on."}
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"Failed to update memory: {e}")
 
-    if tool == "git_status":
-        try:
-            out = await run_git(root, ["status", "--short", "--branch", *git_exclude_args(root)])
-            return {"ok": True, "output": out or "(clean working tree — nothing changed)"}
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"git status failed (is this a git repository?): {e}")
 
-    if tool == "git_diff":
-        try:
-            exclude = git_exclude_args(root)
-            staged = await run_git(root, ["diff", "--cached", "--stat", *exclude])
-            unstaged = await run_git(root, ["diff", "--stat", *exclude])
-            hunks = ""
-            try:
-                raw_hunks = await run_git(root, ["diff", "-U0", *exclude])
-                hunks = f"\n[CHANGED LINES]\n{raw_hunks[:2000]}" if raw_hunks.strip() else ""
-            except Exception:  # noqa: BLE001
-                pass
-            out = (f"[STAGED]\n{staged}\n" if staged else "") + (f"[UNSTAGED]\n{unstaged}\n" if unstaged else "") + hunks
-            if not out.strip():
-                status = ""
-                try:
-                    status = await run_git(root, ["status", "--short", *exclude])
-                except Exception:  # noqa: BLE001
-                    pass
-                out = (f"No tracked changes yet — new/untracked files present:\n{status}\n(use git_commit to stage and commit them)"
-                       if status.strip() else "(working tree is clean) — nothing to diff.")
-            capped = out[:MAX_OUTPUT_CHARS] + "\n...[truncated]" if len(out) > MAX_OUTPUT_CHARS else out
-            return {"ok": True, "output": capped}
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"git diff failed (is this a git repository?): {e}")
 
-    if tool == "git_commit":
-        summary = args.get("summary") if isinstance(args.get("summary"), str) else ""
-        summary = summary.strip()
-        if not summary:
-            return await deny_out('git_commit requires a "summary" string argument (what changed and why).')
-        paths = args.get("paths")
-        if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p.strip() for p in paths):
-            return await deny_out('git_commit requires a non-empty "paths" list of specific files to commit.')
-        for path in paths:
-            target = await resolve_in_workspace(root, path)
-            if not target or os.path.isdir(target) or path.startswith(":"):
-                return await deny_out(f"Invalid commit path: {path}. Select individual workspace files.")
-        staged_by_tool = False
-        try:
-            status = await run_git(root, ["status", "--short"])
-            if not status.strip():
-                return {"ok": True, "output": "Nothing to commit — the working tree is clean."}
-            author = args.get("name") if isinstance(args.get("name"), str) and args.get("name").strip() else "Koding"
-            email = "agent@kasalix.local"
-            staged = await run_git(root, ["diff", "--cached", "--name-only", "--", *paths])
-            if staged.strip():
-                return await deny_out("Selected files already have staged changes. Preserve the user's index and ask them to commit these files manually.")
-            await run_git(root, ["add", "-A", "--", *paths])
-            staged_by_tool = True
-            await run_git(root, [
-                "-c", f"user.name={author}",
-                "-c", f"user.email={email}",
-                "commit", "-m", summary.replace('"', "'"),
-                "--author", f"{author} <{email}>",
-                "--only", "--", *paths,
-            ])
-            log_text = ""
-            try:
-                log_text = await run_git(root, ["log", "-1", "--stat", "--oneline"])
-            except Exception:  # noqa: BLE001
-                pass
-            return {"ok": True, "output": f"Committed LOCALLY as {author} — this was NOT pushed to GitHub or any remote (this tool never pushes).\n{log_text[:MAX_OUTPUT_CHARS]}"}
-        except Exception as e:  # noqa: BLE001
-            if staged_by_tool:
-                try:
-                    await run_git(root, ["reset", "-q", "--", *paths])
-                except Exception:  # noqa: BLE001
-                    return await deny_out(f"git commit failed: {e}. The selected files may still be staged; inspect git status.")
-            return await deny_out(f"git commit failed (is this a git repository?): {e}")
 
     if tool == "search_files":
         q = args.get("query") if isinstance(args.get("query"), str) else ""
         if not q:
             return await deny_out('search_files requires a "query" string argument.')
         matches: list[str] = []
+        limited = False
+        case_sensitive = args.get("case_sensitive") is True
+        needle = q if case_sensitive else q.lower()
 
         async def walk(dir: str, depth: int) -> None:
-            if depth > 4 or len(matches) >= MAX_SEARCH_MATCHES:
+            nonlocal limited
+            if depth > 8 or len(matches) >= MAX_SEARCH_MATCHES:
+                limited = True
                 return
             if is_protected_path(root, dir):
                 return
@@ -1585,278 +1197,36 @@ async def execute_tool(
             except OSError:
                 return
             for name in entries:
+                if len(matches) >= MAX_SEARCH_MATCHES:
+                    limited = True
+                    return
                 if name.startswith(".") or name in IGNORE_DIRS:
                     continue
                 full = os.path.join(dir, name)
+                if os.path.islink(full) or is_protected_path(root, full):
+                    continue
                 if os.path.isdir(full):
                     await walk(full, depth + 1)
                 else:
                     try:
-                        if os.path.getsize(full) > MAX_READ_BYTES:
-                            continue
-                        content = open(full, "r", encoding="utf-8", errors="replace").read()
-                        lines = content.split("\n")
-                        for i, line in enumerate(lines):
-                            if q.lower() in line.lower():
-                                rel = os.path.relpath(full, root).replace(os.sep, "/")
-                                matches.append(f"{rel}:{i + 1}: {line.strip()[:160]}")
-                                if len(matches) >= MAX_SEARCH_MATCHES:
-                                    return
+                        with open(full, "r", encoding="utf-8", errors="replace") as stream:
+                            for i, line in enumerate(stream):
+                                if needle in (line if case_sensitive else line.lower()):
+                                    rel = os.path.relpath(full, root).replace(os.sep, "/")
+                                    matches.append(f"{rel}:{i + 1}: {line.strip()[:160]}")
+                                    if len(matches) >= MAX_SEARCH_MATCHES:
+                                        limited = True
+                                        return
                     except OSError:  # noqa: S110
                         pass
 
         await walk(root, 0)
+        note = "\n[Search may be incomplete: depth or 50-match limit reached.]" if limited else ""
         if not matches:
-            return {"ok": True, "output": f'No matches for "{q}" in the workspace.'}
-        return {"ok": True, "output": f'Matches for "{q}":\n' + "\n".join(matches)}
+            return {"ok": True, "output": f'No matches for "{q}" in the workspace.' + note}
+        return {"ok": True, "output": f'Matches for "{q}":\n' + "\n".join(matches) + note}
 
-    if tool == "run_command":
-        cmd = args.get("command") if isinstance(args.get("command"), str) else ""
-        if not cmd:
-            return await deny_out('run_command requires a "command" string argument.')
-        dangerous = re.compile(r"\b(rm\s+-[rf]\s+/|format\s+[c-z]:\s*/q|dd\s+if=|mkfs\.|fdisk|shutdown\s+-[rh]\s+-t\s+0|del\s+/f\s+/s)", re.I)
-        escapes_workspace = (
-            re.compile(r"(^|[;&|])\s*cd\s+(\.\.|~|/|\\\\|[A-Za-z]:[\\/])", re.I).search(cmd)
-            or re.compile(r"[A-Za-z]:[\\/][^\s\"']*").search(cmd)
-            or re.compile(r"\$HOME|%USERPROFILE%|%APPDATA%|%LOCALAPPDATA%|%TEMP%|%WINDIR%|%SYSTEM32%", re.I).search(cmd)
-        )
-        tokens = cmd.split()
-        touches_protected = any(
-            _token_touches_protected(tok) or (
-                os.path.exists(os.path.join(root, tok.strip('"\'')))
-                and is_protected_path(root, os.path.join(root, tok.strip('"\'')))
-            )
-            for tok in tokens
-        )
-        touches_rules = any(
-            _token_touches_rules(tok)
-            for tok in tokens
-        )
-        if dangerous.search(cmd) or escapes_workspace or touches_protected or touches_rules:
-            return await deny_out(f"Command matches a blocked command or protected path ({protected_dirs_label(root)}). Command filtering is not a filesystem sandbox.")
 
-        is_background = args.get("background") is True
-        if is_background:
-            bg_id = f"bg-{int(time.time() * 1000)}-{''.join(__import__('random').choices('abcdefghijklmnopqrstuvwxyz0123456789', k=4))}"
-            try:
-                child = await asyncio.create_subprocess_shell(
-                    cmd,
-                    cwd=root,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    **process_group_options(),
-                )
-            except Exception as e:  # noqa: BLE001
-                return await deny_out(f"Failed to start command: {e}")
-            bg_entry = {"child": child, "output": "", "exitCode": None, "done": False}
-            background_processes[bg_id] = bg_entry
-
-            async def _pump(proc: asyncio.subprocess.Process, entry: dict[str, Any]) -> None:
-                assert proc.stdout is not None and proc.stderr is not None
-                async def _read(stream: Any) -> None:
-                    while True:
-                        chunk = await stream.readline()
-                        if not chunk:
-                            break
-                        entry["output"] += chunk.decode("utf-8", "replace")
-                try:
-                    await asyncio.gather(_read(proc.stdout), _read(proc.stderr))
-                    entry["exitCode"] = await proc.wait()
-                except Exception:  # noqa: BLE001
-                    entry["exitCode"] = -1
-                finally:
-                    entry["done"] = True
-
-            pump_task = asyncio.create_task(_pump(child, bg_entry))
-            stop = (extra or {}).get("signal")
-            if stop is not None:
-                async def stop_background() -> None:
-                    stop_task = asyncio.create_task(stop.wait())
-                    try:
-                        done, _ = await asyncio.wait({stop_task, pump_task}, return_when=asyncio.FIRST_COMPLETED)
-                        if stop_task in done:
-                            await kill_process_tree(child)
-                    finally:
-                        stop_task.cancel()
-                asyncio.create_task(stop_background())
-            return {"ok": True, "output": f'Command started in background (ID: {bg_id}). Use run_command with {{"command": "__bg_status:{bg_id}"}} to check status/output.'}
-
-        if cmd.startswith("__bg_status:"):
-            bg_id = cmd.replace("__bg_status:", "")
-            bg = background_processes.get(bg_id)
-            if not bg:
-                return await deny_out(f"No background process found with ID: {bg_id}")
-            capped = bg["output"][-MAX_OUTPUT_CHARS:] + "\n...[truncated]" if len(bg["output"]) > MAX_OUTPUT_CHARS else bg["output"]
-            if bg["done"]:
-                background_processes.pop(bg_id, None)
-                return {"ok": bg.get("exitCode") == 0, "output": f"[Background process {bg_id} completed with exit code {bg.get('exitCode')}]\n{capped or '(no output)'}"}
-            return {"ok": True, "output": f"[Background process {bg_id} still running]\n{capped or '(no output yet)'}"}
-
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                cwd=root,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                **process_group_options(),
-            )
-            try:
-                stdout, stderr = await communicate_with_stop(proc, 600, (extra or {}).get("signal"))
-            except asyncio.TimeoutError:
-                return await deny_out("Command timed out after 10 minutes.")
-            out = (stdout or b"").decode("utf-8", "replace") + (f"\n[stderr]\n{(stderr or b'').decode('utf-8', 'replace')}" if stderr else "")
-            out = out.strip()
-            capped = out[-MAX_OUTPUT_CHARS:] + "\n...[output truncated]" if len(out) > MAX_OUTPUT_CHARS else out
-            exit_code = proc.returncode
-            if exit_code != 0:
-                return {"ok": False, "exitCode": exit_code, "output": f"Command exited with code {exit_code}:\n{capped or '(no output)'}"}
-            return {"ok": True, "exitCode": exit_code, "output": capped or "(command finished with no output)"}
-        except Exception as e:  # noqa: BLE001
-            msg = str(e)
-            capped = msg[-MAX_OUTPUT_CHARS:] + "\n...[output truncated]" if len(msg) > MAX_OUTPUT_CHARS else msg
-            return {"ok": False, "output": f"Command exited with code ?:\n{capped}"}
-
-    if tool == "run_python":
-        p = args.get("path") if isinstance(args.get("path"), str) else ""
-        code = args.get("code") if isinstance(args.get("code"), str) else ""
-        if not p and not code:
-            return await deny_out('run_python requires either "path" (a .py file in the workspace) or "code" (an inline snippet).')
-
-        interp = find_python_interpreter(root)
-        if not interp:
-            return await deny_out("No Python interpreter found. Check `python --version` with run_command, or set KASALIX_PYTHON to a python.exe path.")
-
-        timeout_raw = args.get("timeout")
-        try:
-            timeout = float(timeout_raw) if timeout_raw is not None else 20.0
-        except (TypeError, ValueError):
-            timeout = 20.0
-        timeout = max(2.0, min(timeout, 120.0))
-
-        # Headless is the DEFAULT — the whole point is running GUI/game scripts
-        # with no monitor attached. Pass headless:false to opt out.
-        headless = args.get("headless") is not False
-
-        extra_args: list[str] = []
-        raw_args = args.get("args")
-        if isinstance(raw_args, str) and raw_args.strip():
-            try:
-                extra_args = shlex.split(raw_args)
-            except ValueError:
-                extra_args = raw_args.split()
-
-        temp_file: str | None = None
-        if p:
-            res = await resolve_target_smart(root, p)
-            if res.get("error"):
-                return await deny_out(f"run_python: {res['error']}")
-            target = res["target"]
-            if not os.path.isfile(target):
-                return await deny_out(f"run_python: {p} is not a file inside the workspace. Use glob or list_files to find the script.")
-            cmd = [*interp, target, *extra_args]
-            label = os.path.relpath(target, root).replace(os.sep, "/")
-        else:
-            try:
-                fd, temp_file = tempfile.mkstemp(prefix=".kx_run_", suffix=".py", dir=root)
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(code)
-            except OSError as e:  # noqa: BLE001
-                return await deny_out(f"run_python: could not stage the snippet: {e}")
-            cmd = [*interp, temp_file, *extra_args]
-            label = "(inline snippet)"
-
-        env = dict(os.environ)
-        if headless:
-            env.setdefault("SDL_VIDEODRIVER", "dummy")
-            env.setdefault("SDL_AUDIODRIVER", "dummy")
-            env["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
-            env.setdefault("MPLBACKEND", "Agg")
-            env.pop("DISPLAY", None)
-
-        stdin_raw = args.get("stdin")
-        stdin_bytes = stdin_raw.encode("utf-8") if isinstance(stdin_raw, str) and stdin_raw else None
-
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                cwd=root,
-                stdin=asyncio.subprocess.PIPE if stdin_bytes else None,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-                **process_group_options(),
-            )
-        except Exception as e:  # noqa: BLE001
-            if temp_file:
-                try:
-                    os.remove(temp_file)
-                except OSError:  # noqa: S110
-                    pass
-            return await deny_out(f"run_python: failed to start Python: {e}")
-
-        timed_out = False
-        try:
-            stdout, stderr = await communicate_with_stop(proc, timeout, (extra or {}).get("signal"), input=stdin_bytes)
-            exit_code = proc.returncode
-        except asyncio.TimeoutError:
-            timed_out = True
-            stdout, stderr = b"", b""
-            exit_code = proc.returncode
-        except asyncio.CancelledError:
-            if temp_file:
-                try:
-                    os.remove(temp_file)
-                except OSError:
-                    pass
-            raise
-        except Exception as e:  # noqa: BLE001
-            if temp_file:
-                try:
-                    os.remove(temp_file)
-                except OSError:  # noqa: S110
-                    pass
-            return await deny_out(f"run_python: {label} could not run: {e}")
-
-        if temp_file:
-            try:
-                os.remove(temp_file)
-            except OSError:  # noqa: S110
-                pass
-
-        out_txt = (stdout or b"").decode("utf-8", "replace").strip()
-        err_txt = (stderr or b"").decode("utf-8", "replace").strip()
-        chunks: list[str] = []
-        if out_txt:
-            chunks.append(out_txt)
-        if err_txt:
-            chunks.append(f"[stderr]\n{err_txt}")
-        body = "\n".join(chunks) or "(no output)"
-        if len(body) > MAX_OUTPUT_CHARS:
-            if exit_code not in (0, None):
-                body = "...[earlier output truncated]\n" + body[-MAX_OUTPUT_CHARS:]
-            else:
-                body = body[:MAX_OUTPUT_CHARS] + "\n...[later output truncated]"
-
-        if timed_out:
-            return {
-                "ok": True,
-                "output": (
-                    f"run_python: {label} was STILL RUNNING after {timeout:.0f}s and was stopped (no crash). "
-                    "That is normal for a game/event loop — it started and kept going. "
-                    "To actually prove behaviour, write a small smoke test that runs a few frames/inputs and asserts state, then run that.\n"
-                    f"--- output so far ---\n{body}"
-                ),
-            }
-        if exit_code == 0:
-            return {"ok": True, "output": f"run_python: {label} exited 0 (ran successfully).\n--- output ---\n{body}"}
-        return {
-            "ok": False,
-            "output": (
-                f"run_python: {label} FAILED with exit code {exit_code}. "
-                "Read the traceback/output below, fix the CAUSE, then run it again to confirm.\n"
-                f"--- output ---\n{body}"
-            ),
-        }
 
     if tool == "play_game":
         p = args.get("path") if isinstance(args.get("path"), str) else ""
@@ -1871,7 +1241,7 @@ async def execute_tool(
 
         interp = find_python_interpreter(root)
         if not interp:
-            return await deny_out("play_game: no Python interpreter found. Set KASALIX_PYTHON, or run the game manually with run_command.")
+            return await deny_out("Automatic game check: no Python interpreter found. Set KASALIX_PYTHON or run the game manually.")
 
         def _clamp(value: Any, lo: int, hi: int, default: int) -> int:
             try:
@@ -2011,7 +1381,7 @@ async def execute_tool(
                 lines.append("MOTION CONFIRMED: the picture changes between captured frames, so the loop is actually rendering movement.")
             elif static:
                 lines.append("NO MOTION between the captured frames. If this scene should be animating, that is a REAL BUG — the actor is not moving, is not being drawn, or is drawn off-screen. Do not report this as fixed.")
-            lines.append("Open the frames with read_image to SEE what the game actually looks like.")
+            lines.append("Captured frames are saved in the workspace for review.")
 
         state = report.get("state") if isinstance(report.get("state"), dict) else {}
         if state:
@@ -2029,14 +1399,8 @@ async def execute_tool(
         if combined:
             lines.append(f"--- program output ---\n{combined[:MAX_OUTPUT_CHARS]}")
 
-        # Give the model EYES on the game it just played. When the CODE model
-        # itself is vision-capable the final frame rides along as a real image
-        # (same mechanism as preview_screenshot — much more accurate than a
-        # description). Otherwise the assigned vision model describes it — but
-        # only for a direct call: the automatic replays just need the verdict,
-        # and describing every one of them would be slow and wasteful.
+        # Attach the final automatic replay frame to vision-capable models.
         image_payload: dict[str, Any] = {}
-        auto_replay = bool((extra or {}).get("game_auto"))
         vision_capable = bool((extra or {}).get("use_vision_model"))
         last_shot = str(shots[-1].get("path") or "") if shots else ""
         if last_shot and os.path.isfile(last_shot):
@@ -2053,15 +1417,9 @@ async def execute_tool(
                             "what the user asked for."
                         )
                     else:
-                        lines.append(f"The final frame is too large to attach — open {rel_last} with read_image.")
+                        lines.append(f"The final frame is too large to attach: {rel_last}.")
                 except OSError:
-                    lines.append(f"Could not attach {rel_last} — open it with read_image.")
-            elif not auto_replay:
-                try:
-                    description = await describe_image(last_shot)
-                    lines.append(f"What the final frame looks like (vision model):\n{description}")
-                except Exception as e:  # noqa: BLE001
-                    lines.append(f"(Could not describe {rel_last}: {e} — open it with read_image.)")
+                    lines.append(f"Could not attach {rel_last}.")
 
         return {"ok": not crashed, "output": "\n".join(lines), **image_payload}
 
@@ -2079,7 +1437,7 @@ async def execute_tool(
         target = res["target"]
         resolved_note = f' (resolved from "{res["resolvedFrom"]}" — real path {os.path.relpath(target, root).replace(os.sep, "/")})' if res.get("resolvedFrom") else ""
         if is_user_rules_path(root, target):
-            return await deny_out(f"Access denied: {p} is the USER RULES file — it is read-only for you. The user edits it themselves. Save project knowledge to your own memory file (.agent-memory.md) with update_memory instead.")
+            return await deny_out(f"Access denied: {p} is the USER RULES file — it is read-only for you.")
         try:
             try:
                 with open(target, "r", encoding="utf-8", newline="") as f:
@@ -2094,7 +1452,8 @@ async def execute_tool(
             total = cc["total"]
             if changed > max(20, int(total * 0.4)):
                 return await deny_out(
-                    f"Refusing this edit of {p}: it changes {changed} of {total} lines — that replaces most of the file instead of a targeted change. Instead of copying a huge old_string, use one of these: (1) edit_lines {{\"path\": \"{p}\", \"start\": <first line>, \"end\": <last line>, \"content\": \"<new lines>\"}} — get the numbers from read_file with \"numbers\": true, no old text needed; (2) edit_section {{\"path\": \"{p}\", \"start_anchor\": \"<line to keep above>\", \"end_anchor\": \"<line to keep below>\", \"content\": \"<new region>\"}} to rewrite a whole block between two anchors. Or use a SMALLER old_string that matches only the lines you are changing. If the USER really asked to rewrite the whole file, describe the new version in your final message and let the user apply it, instead of rewriting it yourself."
+                    f"Refusing this edit of {p}: it changes {changed} of {total} lines. "
+                    "Use edit_lines with line numbers from read_file, or a smaller old_string with edit_file."
                 )
             final_content = result["newContent"].replace("\r\n", "\n").replace("\n", "\r\n") if "\r\n" in original_content else result["newContent"]
             with open(target, "w", encoding="utf-8", newline="") as f:
@@ -2104,12 +1463,7 @@ async def execute_tool(
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"Failed to edit {p}: {e}")
 
-    if tool in ("edit_lines", "edit_section"):
-        # Why these two exist: edit_file makes the model reproduce the OLD text
-        # byte-exactly, which is the hard half of editing for a small local
-        # model — so it dodges the wall by rewriting the whole file. These
-        # tools locate the region by LINE NUMBER or by ANCHOR, so a surgical
-        # change costs the model no more than a rewrite does.
+    if tool == "edit_lines":
         if not auto_apply:
             return await deny_out(
                 f"{tool} is disabled — auto-apply mode is OFF. Include the change in your final answer "
@@ -2129,7 +1483,7 @@ async def execute_tool(
         target = res["target"]
         resolved_note = f' (resolved from "{res["resolvedFrom"]}" — real path {os.path.relpath(target, root).replace(os.sep, "/")})' if res.get("resolvedFrom") else ""
         if is_user_rules_path(root, target):
-            return await deny_out(f"Access denied: {p} is the USER RULES file — it is read-only for you. The user edits it themselves. Save project knowledge to your own memory file (.agent-memory.md) with update_memory instead.")
+            return await deny_out(f"Access denied: {p} is the USER RULES file — it is read-only for you.")
         try:
             try:
                 with open(target, "r", encoding="utf-8", errors="replace", newline="") as f:
@@ -2137,29 +1491,17 @@ async def execute_tool(
             except OSError:
                 return await deny_out(f"Could not read {p} — the file may not exist. Use write_file to create it.")
 
-            if tool == "edit_lines":
-                start = first_present(args, "start", "start_line", "startLine", "startLineNumber", "first_line", "firstLine", "from_line", "line")
-                end = first_present(args, "end", "end_line", "endLine", "last_line", "lastLine", "to_line")
-                if start is None:
-                    return await deny_out(
-                        f'edit_lines requires "start" (the 1-based line number where the change begins). '
-                        'Get exact numbers from read_file with "numbers": true. Example: '
-                        f'{{"tool": "edit_lines", "args": {{"path": "{p}", "start": 42, "end": 48, "content": "<new lines>"}}}}'
-                    )
-                expect = _arg_str(args, "expect", "expected", "first_old_line", "firstLineText")
-                result = apply_line_range(original_content, start, end, content_arg, expect)
-                where = f"lines {start}" + (f"-{end}" if end is not None and end != start else "")
-            else:
-                start_anchor = _arg_str(args, "start_anchor", "startAnchor", "after", "start", "from", "first_anchor", "firstAnchor")
-                end_anchor = _arg_str(args, "end_anchor", "endAnchor", "before", "end", "to", "last_anchor", "lastAnchor")
-                if not (start_anchor or "").strip() and not (end_anchor or "").strip():
-                    return await deny_out(
-                        f'edit_section requires "start_anchor" and/or "end_anchor" — whole lines copied from the file '
-                        'between which the old text sits, e.g. {"tool": "edit_section", "args": '
-                        f'{{"path": "{p}", "start_anchor": "def update(self):", "end_anchor": "def draw(self):", "content": "        <new body lines>"}}}}'
-                    )
-                result = apply_section_replace(original_content, start_anchor, end_anchor, content_arg)
-                where = "the region between the anchors"
+            start = first_present(args, "start", "start_line", "startLine", "startLineNumber", "first_line", "firstLine", "from_line", "line")
+            end = first_present(args, "end", "end_line", "endLine", "last_line", "lastLine", "to_line")
+            if start is None:
+                return await deny_out(
+                    f'edit_lines requires "start" (the 1-based line number where the change begins). '
+                    'Get exact numbers from read_file with "numbers": true. Example: '
+                    f'{{"tool": "edit_lines", "args": {{"path": "{p}", "start": 42, "end": 48, "content": "<new lines>"}}}}'
+                )
+            expect = _arg_str(args, "expect", "expected", "first_old_line", "firstLineText")
+            result = apply_line_range(original_content, start, end, content_arg, expect)
+            where = f"lines {start}" + (f"-{end}" if end is not None and end != start else "")
 
             if not result.get("ok") or result.get("newContent") is None:
                 return await deny_out(f"Edit failed: {result.get('error') or 'unknown error'}")
@@ -2208,7 +1550,7 @@ async def execute_tool(
                 return await deny_out(f"{p} does not exist, and {len(candidates)} files share that name ({rels}). Specify the full subfolder path.")
         resolved_note = f' (resolved from "{resolved_from}" — real path {os.path.relpath(target, root).replace(os.sep, "/")})' if resolved_from else ""
         if is_user_rules_path(root, target):
-            return await deny_out(f"Access denied: {p} is the USER RULES file — it is read-only for you. The user edits it themselves. Save project knowledge to your own memory file (.agent-memory.md) with update_memory instead.")
+            return await deny_out(f"Access denied: {p} is the USER RULES file — it is read-only for you.")
         try:
             original_content: str | None = None
             change_type = "created"
@@ -2236,7 +1578,6 @@ async def execute_tool(
                         '({"tool": "read_file", "args": {"path": "' + p + '", "numbers": true}}) and then change ONLY the lines that are wrong, with ONE of these: '
                         '{"tool": "edit_lines", "args": {"path": "' + p + '", "start": <first line>, "end": <last line>, "content": "<new lines>"}} '
                         '(by line number — no old text to copy), '
-                        '{"tool": "edit_section", "args": {"path": "' + p + '", "start_anchor": "<line to keep above>", "end_anchor": "<line to keep below>", "content": "<new region>"}} '
                         'or {"tool": "edit_file", "args": {"path": "' + p + '", "old_string": "<the exact existing lines you want to change>", "new_string": "<the changed lines>"}}. '
                         "Only change the lines you intend to change."
                     )
@@ -2298,142 +1639,10 @@ async def execute_tool(
     # The agent can serve the workspace over a local HTTP server, have the
     # client open a real browser window, then screenshot it, evaluate JS in
     # it, and read its console — so it can TEST its own web work.
-    if tool == "preview_start":
-        root_real = os.path.realpath(root)
-        entry = str(args.get("entry") or "").strip()
-        entry_abs: str | None = None
-        if entry:
-            if re.search(r"^https?://", entry, re.I):
-                return await deny_out("preview_start: entry must be a file path inside the workspace, not a URL.")
-            entry_res = await resolve_in_workspace(root, entry)
-            if not entry_res or not await is_file(entry_res):
-                return await deny_out(f"preview_start: entry file not found: {entry}")
-            entry_abs = os.path.realpath(entry_res)
-            if os.path.commonpath([entry_abs, root_real]) != root_real:
-                return await deny_out(f"preview_start: entry is outside the workspace: {entry}")
-        # If the entry is a file, serve its containing directory (typical:
-        # the workspace root); if it is a folder, serve that folder.
-        serve_root = os.path.dirname(entry_abs) if entry_abs else root_real
-        if os.path.commonpath([serve_root, root_real]) != root_real:
-            serve_root = root_real
-        from .preview import client_call, ensure_watcher, start_preview, wait_for_window_registered
 
-        info = start_preview(serve_root)
-        ensure_watcher(serve_root)
-        if not info.get("ok"):
-            return await deny_out(f"preview_start failed: {info.get('error')}")
-        rel = os.path.relpath(serve_root, root_real).replace(os.sep, "/")
-        entry_name = os.path.basename(entry_abs) if entry_abs else "index.html"
-        base, _, query = info["url"].partition("?")
-        page_url = f"{base}{'' if rel == '.' else rel + '/'}{entry_name}" + (f"?{query}" if query else "")
-        try:
-            open_result = await client_call({"type": "open", "url": page_url})
-        except Exception as e:  # noqa: BLE001
-            return {"ok": True, "output": (
-                f"Preview server running at {page_url} (serving {'the workspace root' if rel == '.' else rel}). "
-                f"No desktop client preview bridge responded ({e}) — the user can open that URL in a browser, "
-                "but screenshot/eval/console verification needs the Kasalix client's preview window. "
-                "Ask the user to open the Kasalix client, then call preview_start again."
-            )}
-        if not await wait_for_window_registered(8):
-            return {"ok": True, "output": (
-                f"Preview server running at {page_url} — the window was requested but the page has not connected yet. "
-                "Wait a moment and use preview_screenshot / preview_console; if they fail, call preview_start again."
-            )}
-        if open_result.get("hidden"):
-            return {"ok": True, "output": (
-                f"Preview is LIVE (headless): {page_url}\n"
-                "The user has hidden the preview window, so your verification runs invisibly — screenshot/eval/console all work "
-                "normally, nothing appears on their screen. Mention in your final answer that the user can open "
-                f"{page_url} in a browser to see the result. Call preview_stop when you are done."
-            )}
-        return {"ok": True, "output": (
-            f"Preview is LIVE: {page_url}\n"
-            "A preview window is open on the user's screen showing your work (it auto-reloads on file changes). "
-            "Verify it with preview_screenshot and preview_console, interact via preview_eval. "
-            "Call preview_stop when you are done."
-        )}
 
-    if tool == "preview_stop":
-        from .preview import get_preview_session, stop_preview
 
-        had = get_preview_session() is not None
-        stop_preview()
-        return {"ok": True, "output": "Preview stopped and window closed." if had else "No preview was running."}
 
-    if tool == "preview_screenshot":
-        from .preview import client_call, get_preview_session
-
-        session = get_preview_session()
-        if session is None:
-            return await deny_out("No preview is running. Call preview_start first.")
-        if not session.window_registered.is_set():
-            return await deny_out("The preview window is not connected. Call preview_start again to open it.")
-        try:
-            data = await client_call({"type": "capture"}, timeout=15)
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"Screenshot capture failed: {e} — the preview window may be closed; call preview_start to reopen it.")
-        img_path = str(data.get("path") or "")
-        if not img_path or not os.path.isfile(img_path):
-            return await deny_out("Screenshot capture returned no image — the preview window may be closed. Call preview_start to reopen it.")
-        # Raw image path: when the CODE model is vision-capable, feed the
-        # screenshot straight into its context (much more accurate than a
-        # vision model's text description). Otherwise fall back to the
-        # assigned vision model describing it.
-        use_vision_model = bool((extra or {}).get("use_vision_model"))
-        if use_vision_model:
-            try:
-                with open(img_path, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode()
-                size_kb = len(b64) * 3 // 4 // 1024
-                if size_kb <= 3000:
-                    return {
-                        "ok": True,
-                        "output": (
-                            f"Screenshot captured ({size_kb} KB) — the image is attached to this tool result. "
-                            "Look at it: verify layout, colors, and that the UI matches what was asked. "
-                            "Then use preview_console to check for JS errors and preview_eval for state checks."
-                        ),
-                        "imageData": f"data:image/png;base64,{b64}",
-                    }
-                log_info(f"[agent] Screenshot too large for raw image ({size_kb} KB) — using vision-model description")
-            except Exception as e:  # noqa: BLE001
-                log_info(f"[agent] Raw screenshot read failed ({e}) — using vision-model description")
-        desc = await describe_image(img_path)
-        return {"ok": True, "output": f"Screenshot captured ({img_path}). What the page looks like:\n\n{desc}"}
-
-    if tool == "preview_eval":
-        from .preview import client_call, get_preview_session
-
-        session = get_preview_session()
-        if session is None:
-            return await deny_out("No preview is running. Call preview_start first.")
-        if not session.window_registered.is_set():
-            return await deny_out("The preview window is not connected. Call preview_start again to open it.")
-        code = args.get("code") if isinstance(args.get("code"), str) else ""
-        if not code.strip():
-            return await deny_out('preview_eval requires a "code" string (JavaScript to run in the preview page).')
-        if len(code) > 10000:
-            return await deny_out("preview_eval code too long (max 10000 chars).")
-        try:
-            data = await client_call({"type": "eval", "code": code}, timeout=10)
-        except asyncio.TimeoutError:
-            return await deny_out("preview_eval timed out (10s) — the expression may loop forever or the window was closed.")
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"preview_eval failed: {e}")
-        return {"ok": True, "output": f"Eval result: {data.get('value')}"}
-
-    if tool == "preview_console":
-        from .preview import get_preview_session
-
-        session = get_preview_session()
-        if session is None:
-            return await deny_out("No preview is running. Call preview_start first.")
-        if not session.console:
-            return {"ok": True, "output": "Console is empty — no console output or errors captured so far. (If the page just loaded, interact first or check preview_screenshot.)"}
-        lines = [f"[{m['level']}] {m['text']}" for m in session.console[-80:]]
-        errors = sum(1 for m in session.console if m["level"] == "error")
-        return {"ok": True, "output": (f"Console ({len(session.console)} entries, {errors} error(s)):\n" + "\n".join(lines))}
 
     if tool == "delete_file":
         if not auto_apply:
@@ -2446,7 +1655,7 @@ async def execute_tool(
             return await deny_out(res["error"])
         target = res["target"]
         if is_user_rules_path(root, target):
-            return await deny_out(f"Access denied: {p} is the USER RULES file — it is read-only for you. The user edits it themselves. Save project knowledge to your own memory file (.agent-memory.md) with update_memory instead.")
+            return await deny_out(f"Access denied: {p} is the USER RULES file — it is read-only for you.")
         try:
             original_content: str | None = None
             try:
@@ -2459,33 +1668,6 @@ async def execute_tool(
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"Failed to delete {p}: {e}")
 
-    if tool == "delegate_to_subagent":
-        if not auto_apply:
-            return await deny_out("delegate_to_subagent is disabled — auto-apply mode is OFF.")
-        task = args.get("task") if isinstance(args.get("task"), str) else ""
-        if not task.strip():
-            return await deny_out('delegate_to_subagent requires a "task" string argument describing the sub-task.')
-        sub_model = args.get("model") if isinstance(args.get("model"), str) and args.get("model").strip() else None
-        sub_type = args.get("type") if isinstance(args.get("type"), str) else "general"
-        file_tree = await list_workspace_tree(root)
-        ground_truth = "WORKSPACE FILES:\n" + file_tree
-        if sub_type == "explore":
-            sub_system = f"You are an EXPLORE sub-agent — fast read-only codebase search. Your task: {task}\n\nYou can ONLY read files and search. You CANNOT write, edit, or delete anything.\nSearch thoroughly: use glob, grep, read_file, list_files. Report all findings concisely.\n\n{ground_truth}"
-        elif sub_type == "plan":
-            sub_system = f"You are a PLAN sub-agent — architecture planning. Your task: {task}\n\nExplore the codebase and produce a detailed implementation plan. You CANNOT write code — only read files and output a plan.\nFormat your plan as numbered steps with file paths.\n\n{ground_truth}"
-        elif sub_type == "reviewer":
-            sub_system = f"You are a CODE REVIEW sub-agent. Your task: {task}\n\nRead the specified files, review the code for bugs, style issues, and improvements. You CANNOT write code — only read and report.\nBe specific: reference file paths and line numbers.\n\n{ground_truth}"
-        else:
-            sub_system = f"You are a focused sub-agent. Your task: {task}\n\nYou have the same tools as the parent agent. Complete the task and respond with your findings/results. Be concise — the parent agent is waiting for your output.\n\n{ground_truth}"
-        try:
-            sub_result = await run_sub_agent(
-                root, task, sub_model,
-                {"model": sub_model or "default", "messages": [{"role": "system", "content": sub_system}], "autoApply": auto_apply, "callbacks": {"onStage": lambda _s: None, "onChunk": lambda _c: None}},
-                auto_apply,
-            )
-            return {"ok": True, "output": f"[SUB-AGENT ({sub_type}) RESULT]\n{sub_result}"}
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"Sub-agent failed: {e}")
 
     if tool == "rename_file":
         if not auto_apply:
@@ -2522,300 +1704,14 @@ async def execute_tool(
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"Failed to rename {from_path} → {to_path}: {e}")
 
-    if tool == "read_url":
-        url = args.get("url") if isinstance(args.get("url"), str) else ""
-        if not url:
-            return await deny_out('read_url requires a "url" string argument.')
-        if not re.match(r"^https?://", url, re.I):
-            return await deny_out("URL must start with http:// or https://")
-        try:
-            import httpx
 
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-                res = await client.get(url, headers={"User-Agent": "Koding/1.0 (agent read_url)"})
-            if res.status_code >= 400:
-                return await deny_out(f"HTTP {res.status_code}: {res.reason_phrase}")
-            html = res.text
-            text = re.sub(r"<script[\s\S]*?</script>", " ", html, flags=re.I)
-            text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.I)
-            text = re.sub(r"<nav[\s\S]*?</nav>", " ", text, flags=re.I)
-            text = re.sub(r"<header[\s\S]*?</header>", " ", text, flags=re.I)
-            text = re.sub(r"<footer[\s\S]*?</footer>", " ", text, flags=re.I)
-            text = re.sub(r"<[^>]+>", " ", text)
-            text = re.sub(r"\s+", " ", text).strip()
-            capped = text[:MAX_OUTPUT_CHARS] + "\n...[truncated]" if len(text) > MAX_OUTPUT_CHARS else text
-            return {"ok": True, "output": f"[URL: {url}]\n{capped or '(page returned empty content)'}"}
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"Failed to fetch {url}: {e}")
 
-    if tool == "find_references":
-        query = args.get("query") if isinstance(args.get("query"), str) else ""
-        if not query.strip():
-            return await deny_out('find_references requires a "query" string argument.')
-        try:
-            results: list[str] = []
-            ignored = {"node_modules", ".git", "dist", "build", ".cache", "__pycache__", "vendor", ".venv", "venv"}
 
-            async def walk(dir: str, depth: int) -> None:
-                if depth > 6 or len(results) > MAX_SEARCH_MATCHES:
-                    return
-                if is_protected_path(root, dir):
-                    return
-                try:
-                    entries = os.listdir(dir)
-                except OSError:
-                    return
-                for name in entries:
-                    if name.startswith(".") or name in ignored:
-                        continue
-                    full = os.path.join(dir, name)
-                    if os.path.isdir(full):
-                        await walk(full, depth + 1)
-                    else:
-                        try:
-                            content = open(full, "r", encoding="utf-8", errors="replace").read()
-                            lines = content.split("\n")
-                            for i, line in enumerate(lines):
-                                if query in line:
-                                    rel = os.path.relpath(full, root).replace(os.sep, "/")
-                                    results.append(f"{rel}:{i + 1}: {line.strip()[:120]}")
-                                    if len(results) >= MAX_SEARCH_MATCHES:
-                                        return
-                        except OSError:  # noqa: S110
-                            pass
 
-            await walk(root, 0)
-            if not results:
-                return {"ok": True, "output": f'No references to "{query}" found in the workspace.'}
-            return {"ok": True, "output": f'Found {len(results)} reference(s) to "{query}":\n' + "\n".join(results)}
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"find_references failed: {e}")
 
-    if tool == "refactor_rename":
-        if not auto_apply:
-            return await deny_out("refactor_rename is disabled — auto-apply mode is OFF.")
-        old_name = args.get("oldName") if isinstance(args.get("oldName"), str) else ""
-        new_name = args.get("newName") if isinstance(args.get("newName"), str) else ""
-        if not old_name or not new_name:
-            return await deny_out('refactor_rename requires "oldName" and "newName" string arguments.')
-        if old_name == new_name:
-            return await deny_out("oldName and newName are the same — nothing to do.")
-        try:
-            changed: list[str] = []
-            file_writes: list[dict[str, Any]] = []
-            ignored = {"node_modules", ".git", "dist", "build", ".cache", "__pycache__", "vendor", ".venv", "venv"}
-            pattern = re.compile(r"\b" + re.escape(old_name) + r"\b")
 
-            async def walk(dir: str, depth: int) -> None:
-                if depth > 6:
-                    return
-                if is_protected_path(root, dir):
-                    return
-                try:
-                    entries = os.listdir(dir)
-                except OSError:
-                    return
-                for name in entries:
-                    if name.startswith(".") or name in ignored:
-                        continue
-                    full = os.path.join(dir, name)
-                    if os.path.isdir(full):
-                        await walk(full, depth + 1)
-                    else:
-                        try:
-                            if is_user_rules_path(root, full) or not await is_path_inside(root, full):
-                                continue
-                            with open(full, "r", encoding="utf-8", newline="") as stream:
-                                content = stream.read()
-                            if not pattern.search(content):
-                                continue
-                            new_content = pattern.sub(new_name, content)
-                            with open(full, "w", encoding="utf-8", newline="") as f:
-                                f.write(new_content)
-                            rel = os.path.relpath(full, root).replace(os.sep, "/")
-                            count = len(pattern.findall(content))
-                            changed.append(f"{rel} ({count} occurrence{'s' if count != 1 else ''})")
-                            file_writes.append({"path": full, "changeType": "edited", "originalContent": content})
-                        except (OSError, UnicodeError):  # noqa: S110
-                            pass
 
-            await walk(root, 0)
-            if not changed:
-                return {"ok": True, "output": f'No occurrences of "{old_name}" found — nothing renamed.'}
-            return {"ok": True, "output": f'Renamed "{old_name}" → "{new_name}" in {len(changed)} file(s):\n' + "\n".join(changed), "fileWrites": file_writes}
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"refactor_rename failed: {e}")
 
-    if tool == "create_directory":
-        if not auto_apply:
-            return await deny_out("create_directory is disabled — auto-apply mode is OFF.")
-        p = args.get("path") if isinstance(args.get("path"), str) else ""
-        if not p:
-            return await deny_out('create_directory requires a "path" string argument.')
-        target = os.path.abspath(os.path.join(root, p))
-        if not (await is_path_inside(root, target)):
-            return await deny_out(f"Access denied: {p} is outside the workspace.")
-        if is_protected_path(root, target):
-            return await deny_out(f"Access denied: {p} is a protected directory.")
-        try:
-            os.makedirs(target, exist_ok=True)
-            return {"ok": True, "output": f"Created directory {p}"}
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"Failed to create {p}: {e}")
-
-    if tool == "file_exists":
-        p = args.get("path") if isinstance(args.get("path"), str) else ""
-        if not p:
-            return await deny_out('file_exists requires a "path" string argument.')
-        target = os.path.abspath(os.path.join(root, p))
-        if not (await is_path_inside(root, target)):
-            return await deny_out(f"Access denied: {p} is outside the workspace.")
-        try:
-            stat = os.stat(target)
-            kind = "directory" if os.path.isdir(target) else "file"
-            size = "" if os.path.isdir(target) else f" ({os.path.getsize(target) / 1024:.1f}KB)"
-            return {"ok": True, "output": f"{p} exists — {kind}{size}"}
-        except OSError:
-            return {"ok": True, "output": f"{p} does not exist"}
-
-    if tool == "read_url_image":
-        if not auto_apply:
-            return await deny_out("read_url_image is disabled — auto-apply mode is OFF.")
-        url = args.get("url") if isinstance(args.get("url"), str) else ""
-        save_as = args.get("saveAs") if isinstance(args.get("saveAs"), str) else ""
-        if not url:
-            return await deny_out('read_url_image requires a "url" string argument.')
-        if not save_as:
-            return await deny_out('read_url_image requires a "saveAs" string argument (local path to save to).')
-        if not re.match(r"^https?://", url, re.I):
-            return await deny_out("URL must start with http:// or https://")
-        save_target = os.path.abspath(os.path.join(root, save_as))
-        if is_protected_path(root, save_target) or not (await is_path_inside(root, save_target)):
-            return await deny_out(f"Access denied: {save_as} is outside the workspace.")
-        if os.path.exists(save_target):
-            return await deny_out(f"Refusing to overwrite existing image: {save_as}")
-        try:
-            import httpx
-
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-                res = await client.get(url)
-            if res.status_code >= 400:
-                return await deny_out(f"HTTP {res.status_code}: {res.reason_phrase}")
-            content_type = res.headers.get("content-type", "")
-            if "image" not in content_type:
-                return await deny_out(f"URL is not an image (content-type: {content_type})")
-            data = res.content
-            os.makedirs(os.path.dirname(save_target), exist_ok=True)
-            with open(save_target, "wb") as f:
-                f.write(data)
-            return {"ok": True, "output": f"Downloaded {url} → {save_as} ({len(data) / 1024:.1f}KB)", "fileWrite": {"path": save_as, "changeType": "created"}}
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"Failed to download {url}: {e}")
-
-    if tool == "diff_files":
-        file_a = args.get("fileA") if isinstance(args.get("fileA"), str) else ""
-        file_b = args.get("fileB") if isinstance(args.get("fileB"), str) else ""
-        content_b = args.get("contentB") if isinstance(args.get("contentB"), str) else ""
-        if not file_a:
-            return await deny_out('diff_files requires a "fileA" argument.')
-        target_a = await resolve_in_workspace(root, file_a)
-        if not target_a:
-            return await deny_out(f"Access denied: {file_a} is outside the workspace.")
-        try:
-            with open(target_a, "r", encoding="utf-8") as f:
-                content_a = f.read()
-            if content_b:
-                b_content = content_b
-            elif file_b:
-                target_b = await resolve_in_workspace(root, file_b)
-                if not target_b:
-                    return await deny_out(f"Access denied: {file_b} is outside the workspace.")
-                with open(target_b, "r", encoding="utf-8") as f:
-                    b_content = f.read()
-            else:
-                return await deny_out('diff_files requires either "fileB" or "contentB" argument.')
-            return {"ok": True, "output": summarize_diff(file_a, content_a, b_content)}
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"diff_files failed: {e}")
-
-    if tool == "replace_in_file":
-        if not auto_apply:
-            return await deny_out("replace_in_file is disabled — auto-apply mode is OFF.")
-        p = args.get("path") if isinstance(args.get("path"), str) else ""
-        find = args.get("find") if isinstance(args.get("find"), str) else ""
-        replace = args.get("replace") if isinstance(args.get("replace"), str) else ""
-        if not p or not find:
-            return await deny_out('replace_in_file requires "path" and "find" arguments.')
-        target = await resolve_in_workspace(root, p)
-        if not target:
-            return await deny_out(f"Access denied: {p} is outside the workspace.")
-        if is_user_rules_path(root, target):
-            return await deny_out(f"Access denied: {p} is the USER RULES file — read-only.")
-        try:
-            with open(target, "r", encoding="utf-8", newline="") as f:
-                original_content = f.read()
-            use_regex = args.get("regex") is True
-            if use_regex:
-                pattern = re.compile(find)
-                count = len(pattern.findall(original_content))
-                new_content = pattern.sub(replace, original_content)
-            else:
-                count = original_content.count(find)
-                new_content = original_content.replace(find, replace)
-            if count == 0:
-                return {"ok": True, "output": f'No occurrences of "{find}" found in {p} — nothing replaced.'}
-            with open(target, "w", encoding="utf-8", newline="") as f:
-                f.write(new_content)
-            return {"ok": True, "output": f'Replaced {count} occurrence(s) of "{find}" → "{replace}" in {p}', "fileWrite": {"path": target, "changeType": "edited", "originalContent": original_content}}
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"replace_in_file failed: {e}")
-
-    if tool == "count_lines":
-        p = args.get("path") if isinstance(args.get("path"), str) else ""
-        if not p:
-            return await deny_out('count_lines requires a "path" argument.')
-        target = os.path.abspath(os.path.join(root, p))
-        if not (await is_path_inside(root, target)):
-            return await deny_out(f"Access denied: {p} is outside the workspace.")
-        try:
-            if os.path.isfile(target):
-                with open(target, "r", encoding="utf-8", errors="replace") as f:
-                    content = f.read()
-                lines = content.count("\n") + 1
-                words = len(content.split())
-                return {"ok": True, "output": f"{p}: {lines} lines, {words} words, {len(content)} chars"}
-            total_lines = total_words = total_files = 0
-            ignored = {"node_modules", ".git", "dist", "build", ".cache", "__pycache__", "vendor", ".venv"}
-
-            async def walk(dir: str, depth: int) -> None:
-                nonlocal total_lines, total_words, total_files
-                if depth > 4:
-                    return
-                if is_protected_path(root, dir):
-                    return
-                try:
-                    entries = os.listdir(dir)
-                except OSError:
-                    return
-                for name in entries:
-                    if name.startswith(".") or name in ignored:
-                        continue
-                    full = os.path.join(dir, name)
-                    if os.path.isdir(full):
-                        await walk(full, depth + 1)
-                    else:
-                        try:
-                            content = open(full, "r", encoding="utf-8", errors="replace").read()
-                            total_lines += content.count("\n") + 1
-                            total_words += len(content.split())
-                            total_files += 1
-                        except OSError:  # noqa: S110
-                            pass
-
-            await walk(target, 0)
-            return {"ok": True, "output": f"{p}: {total_files} files, {total_lines} lines, {total_words} words"}
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"count_lines failed: {e}")
 
     if tool == "glob":
         pattern = args.get("pattern") if isinstance(args.get("pattern"), str) else ""
@@ -2823,25 +1719,26 @@ async def execute_tool(
             return await deny_out('glob requires a "pattern" string argument (e.g. "**/*.py").')
         try:
             matches: list[str] = []
-            ignore = {"node_modules", ".git", "dist", "build", ".cache", "__pycache__", "vendor", ".venv", ".next", ".output", "coverage"}
+            limited = False
 
             def _glob_to_regex(p: str) -> re.Pattern:
                 s = re.escape(p)
+                s = s.replace(r"\*\*/", "{{GLOBSTAR_DIRS}}")
                 s = s.replace(r"\*\*", "{{GLOBSTAR}}")
                 s = s.replace(r"\*", "[^/]*")
                 s = s.replace(r"\?", "[^/]")
                 s = re.sub(r"\\\{([^}]+)\\\}", lambda m: "(" + "|".join(x.strip() for x in m.group(1).split(",")) + ")", s)
+                s = s.replace("{{GLOBSTAR_DIRS}}", "(?:.*/)?")
                 s = s.replace("{{GLOBSTAR}}", ".*")
                 return re.compile("^" + s + "$")
 
-            parts = pattern.split("/")
-            has_dir_prefix = len(parts) > 1 and "*" not in parts[0]
-            search_root = os.path.join(root, parts[0]) if has_dir_prefix else root
-            file_pattern = "/".join(parts[1:]) if has_dir_prefix else pattern
-            file_regex = _glob_to_regex(file_pattern)
+            file_regex = _glob_to_regex(pattern.replace("\\", "/"))
+            match_basename = "/" not in pattern.replace("\\", "/")
 
             async def walk(dir: str, depth: int) -> None:
+                nonlocal limited
                 if depth > 8 or len(matches) >= 200:
+                    limited = True
                     return
                 if is_protected_path(root, dir):
                     return
@@ -2850,21 +1747,21 @@ async def execute_tool(
                 except OSError:
                     return
                 for name in entries:
-                    if name in ignore:
+                    if len(matches) >= 200:
+                        limited = True
+                        return
+                    if name in IGNORE_DIRS:
                         continue
                     full = os.path.join(dir, name)
+                    if os.path.islink(full) or is_protected_path(root, full):
+                        continue
                     rel = os.path.relpath(full, root).replace(os.sep, "/")
                     if os.path.isdir(full):
                         await walk(full, depth + 1)
-                    elif file_regex.search(name) or file_regex.search(rel):
+                    elif file_regex.fullmatch(rel) or (match_basename and file_regex.fullmatch(name)):
                         matches.append(rel)
 
-            if has_dir_prefix:
-                if not os.path.isdir(search_root):
-                    return {"ok": True, "output": f'No matches for "{pattern}" — directory does not exist.'}
-                await walk(search_root, 0)
-            else:
-                await walk(root, 0)
+            await walk(root, 0)
 
             with_mtime: list[tuple[str, float]] = []
             for m in matches:
@@ -2874,102 +1771,20 @@ async def execute_tool(
                     with_mtime.append((m, 0))
             with_mtime.sort(key=lambda x: -x[1])
             sorted_matches = [m for m, _ in with_mtime]
+            note = "\n[Results may be incomplete: depth or 200-file limit reached.]" if limited else ""
             if not sorted_matches:
-                return {"ok": True, "output": f'No files match pattern "{pattern}".'}
-            return {"ok": True, "output": f'Found {len(sorted_matches)} file(s) matching "{pattern}":\n' + "\n".join(sorted_matches)}
+                return {"ok": True, "output": f'No files match pattern "{pattern}".' + note}
+            return {"ok": True, "output": f'Found {len(sorted_matches)} file(s) matching "{pattern}":\n' + "\n".join(sorted_matches) + note}
         except Exception as e:  # noqa: BLE001
             return await deny_out(f"glob failed: {e}")
 
-    if tool == "multi_edit":
-        if not auto_apply:
-            return await deny_out("multi_edit is disabled — auto-apply mode is OFF.")
-        p = args.get("path") if isinstance(args.get("path"), str) else ""
-        edits = args.get("edits") if isinstance(args.get("edits"), list) else []
-        if not edits and isinstance(args.get("changes"), list):
-            edits = args["changes"]  # common dialect drift: "changes" instead of "edits"
-        if not edits and isinstance(args.get("replacements"), list):
-            edits = args["replacements"]
-        if not p and isinstance(args.get("file"), str):
-            p = args["file"]  # dialect drift: "file" instead of "path"
-        if not p or not edits:
-            return await deny_out(
-                'multi_edit requires "path" and "edits" (array of {"old_string", "new_string"}). '
-                'Example: {"tool": "multi_edit", "args": {"path": "main.py", "edits": [{"old_string": "x = 1", "new_string": "x = 2"}]}} '
-                "— each edit needs BOTH old_string and new_string as strings."
-            )
-        res = await resolve_target_smart(root, p)
-        if res.get("error"):
-            return await deny_out(res["error"])
-        target = res["target"]
-        if is_user_rules_path(root, target):
-            return await deny_out(f"Access denied: {p} is the USER RULES file — it is read-only for you.")
-        try:
-            with open(target, "r", encoding="utf-8", newline="") as f:
-                content = f.read()
-            original_content = content
-            applied_count = 0
-            for i, edit in enumerate(edits):
-                if not isinstance(edit, dict):
-                    return await deny_out(f"Edit #{applied_count + 1}: invalid edit object — must be {{\"old_string\": ..., \"new_string\": ...}}.")
-                # Accept the camelCase / snake_case drift models emit.
-                old_string = edit.get("old_string") if isinstance(edit.get("old_string"), str) else (edit.get("oldString") if isinstance(edit.get("oldString"), str) else "")
-                new_string = edit.get("new_string") if isinstance(edit.get("new_string"), str) else (edit.get("newString") if isinstance(edit.get("newString"), str) else "")
-                if not old_string:
-                    return await deny_out(f"Edit #{applied_count + 1}: old_string is empty.")
-                if old_string == new_string:
-                    return await deny_out(f"Edit #{applied_count + 1}: old_string and new_string are identical.")
-                result = search_replace_with_number_fallback(content, old_string, new_string)
-                if not result.get("ok") or result.get("newContent") is None:
-                    return await deny_out(f"Edit #{applied_count + 1} failed: {result.get('error') or 'old_string not found'}. All {applied_count} previous edits were rolled back.")
-                content = result["newContent"]
-                applied_count += 1
-            final_content = content.replace("\r\n", "\n").replace("\n", "\r\n") if "\r\n" in original_content else content
-            with open(target, "w", encoding="utf-8", newline="") as f:
-                f.write(final_content)
-            cc = changed_line_count(original_content.replace("\r\n", "\n"), final_content.replace("\r\n", "\n"))
-            changed = cc["count"]
-            return {"ok": True, "output": f"Applied {applied_count} edit(s) to {p} — changed {changed} line(s).", "fileWrite": {"path": target, "changeType": "edited", "originalContent": original_content}}
-        except Exception as e:  # noqa: BLE001
-            return await deny_out(f"multi_edit failed: {e}")
 
     names = ", ".join(t["name"] for t in AGENT_TOOL_DEFS)
     return await deny_out(f'Unknown tool "{tool}". Available: {names}')
 
 
-def _token_touches_protected(tok: str) -> bool:
-    t = re.sub(r'^["\'(`]+|["\')]`]+$', "", tok)
-    if not t:
-        return False
-    lower = t.lower()
-    for d in PROTECTED_DIRS:
-        dl = d.lower()
-        if (
-            lower == dl
-            or lower.startswith(dl + "/")
-            or lower.startswith(dl + "\\")
-            or lower.startswith("./" + dl + "/")
-            or lower.startswith("./" + dl + "\\")
-            or lower.startswith("../" + dl + "/")
-            or lower.startswith("../" + dl + "\\")
-            or lower.startswith("..\\" + dl + "/")
-            or lower.startswith("..\\" + dl + "\\")
-            or lower == "../" + dl
-            or lower == "..\\" + dl
-        ):
-            return True
-    return False
 
 
-def _token_touches_rules(tok: str) -> bool:
-    t = re.sub(r'^["\'(`]+|["\')]`]+$', "", tok)
-    if not t:
-        return False
-    lower = t.lower().replace("\\", "/")
-    for f in USER_RULES_FILENAMES:
-        fl = f.lower()
-        if lower == fl or lower.endswith("/" + fl) or lower.startswith("./" + fl):
-            return True
-    return False
 
 
 # ─── Code-block file convention (auto-apply fallback) ────────────────────
@@ -3708,137 +2523,18 @@ def available_tools(auto_apply: bool) -> list[dict[str, Any]]:
 
 def build_system_prompt(workspace_path: str, user_name: str, auto_apply: bool) -> str:
     tools = available_tools(auto_apply)
-    tool_list = "\n".join(f"- {t['name']}: {t['description']}\n  Example: {t['args']}" for t in tools)
-    # Per-tool JSON examples were defined but never included — models produced
-    # far more malformed calls without them (no worked examples to copy).
-    examples = TOOL_JSON_EXAMPLES
-    availability = (
-        "FULL — you CAN and SHOULD execute real commands (python, py -3.11, pip, node, npm, git, dir/ls) "
-        "with the run_command tool, and RUN Python scripts you wrote with the run_python tool. "
-        "If the user asks you to run, test, or install something, call the tool — "
-        "NEVER claim you cannot run commands or execute code. Results come back to you as tool output."
-        if auto_apply
-        else "read-only (no run_command)"
-    )
-    return f"""## YOU ARE KODING — A CODING AGENT ##
-Workspace: {workspace_path}
-
-You have {len(tools)} tools. Use them — respond with ONLY a single JSON object.
-{tool_list}
-
-TOOL CALL FORMAT (the ONLY accepted one):
-{{"tool": "<tool_name>", "args": {{...}} }}
-Example: {{"tool": "read_file", "args": {{"path": "src/main.py"}}}}
-NEVER use other key names like "name" or "arguments" — only "tool" and "args".
-Respond with ONLY the JSON object — no markdown fences, no explanation before or after.
-NEVER write a call as [read_file, {{"path": "x.py"}}] or read_file(path="x.py") or <read_file> —
-those are NOT valid JSON and execute NOTHING. You would only be TALKING about reading or
-testing the file while the user sees no tool run. Always use {{"tool": "...", "args": {{...}}}}.
-JSON rules: NO trailing commas, ALL keys in double quotes, newlines inside strings MUST be escaped as \\n.
-HOW THE CONVERSATION WORKS: your tool calls and their results appear in the history as
-[TOOL RESULT] user-messages — those are YOUR actions coming back to you, not the user
-speaking. Only real user messages (without the [TOOL RESULT]/[SYSTEM] prefix) are from
-the human.
-
-{examples}
-
-AVAILABILITY: {availability}
-
-WHEN YOU DO NOT KNOW SOMETHING — call web_search instead of guessing. Library versions,
-APIs, error messages, current best practice, anything the workspace cannot answer: one
-short query is cheap, and the results arrive as [WEB SEARCH RESULTS] with the pages
-cited under your reply. NEVER invent a version number or an API signature you have not
-seen in the workspace or in search results.
-SEARCH FIRST, NOT LAST — if the task turns on a version number, an API signature, a config
-format, a release date or a price, call web_search BEFORE you write the code that depends
-on it, not after the user corrects you. If a search comes back empty, rewrite the query
-once (shorter, plainer, drop "how to" and the question form) and try again; if that also
-finds nothing, say plainly what you could not find instead of filling the gap from memory.
-When search results inform your answer, CITE the pages you actually used as markdown
-links next to the claims they support — only URLs that appeared in [WEB SEARCH RESULTS],
-never a URL you did not see there.
-
-YOU ARE THE AGENT, NOT THE USER. In your private thinking, refer to YOURSELF as the one
-acting: "I'll check the file", "my edit failed", "let me fix the old_string". The user
-requested the task — everything in the tool history (tool calls, results, edits, commands)
-was done BY YOU. NEVER write "the user tried to edit" or "they encountered an error" —
-you made those tool calls and you hit those errors. The user only sends plain messages.
-
-EDITING AN EXISTING FILE — choose the tool that fits, and NEVER rewrite a whole file to change a few lines:
-1. edit_lines — change lines BY NUMBER when you know which lines are wrong and the region is more than a
-   line or two. Read the file with {{"tool": "read_file", "args": {{"path": "snake.py", "numbers": true}}}}
-   (each line comes back as `    42| code`), then call
-   {{"tool": "edit_lines", "args": {{"path": "snake.py", "start": 42, "end": 46, "content": "<the new lines>", "expect": "<the first line being replaced>"}}}}
-   You never copy the old text. Omit end to change one line; make end smaller than start to INSERT before start;
-   content "" deletes those lines. Include expect so a stale line number is refused instead of hitting the wrong place.
-2. edit_section — rewrite ONE REGION between two anchors, without reproducing the old body:
-   {{"tool": "edit_section", "args": {{"path": "snake.py", "start_anchor": "def update(self):", "end_anchor": "def draw(self):", "content": "<the lines that go between those two>"}}}}
-   Everything between the anchors is replaced; the anchor lines themselves and everything outside them are kept
-   exactly. Use this when a whole function or block is wrong and copying its old body would be the hard part.
-   The anchors must be real lines copied from the file and each must appear only once.
-3. edit_file — old_string → new_string, for a tiny change when the existing text is short.
-write_file on an existing file applies just your changed lines and REFUSES a near-full rewrite; do not fight it.
-A rewrite is only right when the user actually asked for one — then say so in one line and pass "force": true.
-After any edit, look at the diff in the tool result: only the lines you meant to change should have changed.
-
-TESTING YOUR WEB WORK (HTML/CSS/JS): you CAN see and verify what you build — you are not
-limited to writing code blind. For any web page or browser app: after writing the files,
-call preview_start {{"entry": "index.html"}} to open a live preview window of the page,
-then preview_screenshot to SEE it (the screenshot is attached to the tool result as an
-image — analyze what is ACTUALLY visible in it, never assume the page rendered as
-code intended), preview_console to check for JS errors, and
-preview_eval to inspect or interact with the page (e.g. read game state, click buttons by
-dispatching events, query DOM). Fix what you see until it works, then preview_stop. Do
-this BEFORE telling the user you are done. Preview needs the desktop client running; if
-it is unavailable, fall back to run_command checks or carefully reviewing the code.
-
-VERIFYING PYTHON / DESKTOP / CLI PROGRAMS: you can RUN what you build — never guess whether
-a fix worked. After writing or changing a Python script (or any program you can execute),
-verify it with run_python BEFORE you report success:
-- {{"tool": "run_python", "args": {{"path": "snake.py"}}}} runs the script HEADLESS (SDL video
-  + audio set to dummy, matplotlib Agg) with a timeout, and returns the exit code plus
-  stdout/stderr. Use "code" for a one-off inline snippet.
-- exit code 0 = it ran. A traceback or nonzero exit = it is STILL BROKEN — read the traceback,
-  fix the CAUSE, then run it again. Do not report a fix you have not run.
-- "STILL RUNNING after Ns (no crash)" means it started and looped without crashing — normal
-  for a game. To prove BEHAVIOUR, write a tiny smoke test (e.g. tests/smoke.py) that imports
-  the module, steps the update/event loop a few frames, feeds synthetic input, and asserts
-  state (assert player.x > 0, assert len(enemies) == 3) — then run THAT with run_python.
-  That turns "I think it's fixed" into "I ran it and it works".
-- If a needed package is missing, check with run_command (python --version, pip show pygame)
-  and report honestly — never claim you tested something you could not run. run_python
-  automatically prefers a virtualenv inside the workspace (venv/.venv), so the project's
-  own packages are used when present.
-
-PLAYING GAMES AND INTERACTIVE APPS (pygame/SDL): when the user reports a game BEHAVIOUR
-bug ("the snake isn't moving", "the player won't jump"), you must reproduce it by actually
-PLAYING the game — reading the code again will not settle it. Use play_game:
-{{"tool": "play_game", "args": {{"path": "snake.py", "frames": 120,
- "inputs": [{{"frame": 0, "keys": ["right"]}}, {{"frame": 40, "keys": ["down"]}}],
- "screenshotEvery": 20}}}}
-- It runs the game headless with a deterministic clock, HOLDS the keys you specify from each
-  frame onward (input changes replace the held set), auto-quits at the frame limit, and
-  captures PNG frames.
-- It reports changedPixels per captured frame — how many pixels differ from the previous
-  capture. If frames that should be animating show changedPixels=0, the thing the user
-  complained about IS still broken; fix it and play again.
-- To SEE the game: if your model can view images, the FINAL frame is attached to the
-  play_game result directly — look at it and judge sprite position, score/UI and rendering.
-  Otherwise call read_image on the captured .kx_frames/*.png paths.
-- It also dumps the game's module-level variables at exit (score, lives, game_over,
-  player position...) so you can check game LOGIC, not just pixels. If the value you need
-  is local to main(), ask the game to print it (its stdout is shown to you) — or keep the
-  state in a module-level name.
-- A headless game check ALSO runs AUTOMATICALLY after you edit a .py file, and its result
-  arrives as a [GAME CHECK ...] message. Treat [GAME CHECK FAILED] as a real bug: fix the
-  cause and the game is replayed for you. Never claim the behaviour is fixed while the last
-  check failed, and never write "it should be fixed now".
-- Only claim a behaviour is fixed after play_game shows motion AND the frames look right.
-  If the game cannot run here (no pygame), say so honestly instead of guessing.
-STOP WHEN IT IS FIXED: once your verification passes you are DONE. Do not keep rewriting a
-working fix just because you cannot see the window, and NEVER write "it should be fixed now"
-as a substitute for running it. If you changed code and your run succeeds, say exactly what
-you ran and what it proved, then stop."""
+    tool_list = "\n".join(f"- {t['name']}: {t['description']}\n  Example arguments: {t['args']}" for t in tools)
+    availability = "File edits are available." if auto_apply else "Read-only: file changes are unavailable."
+    edit_guidance = ("EDITING AN EXISTING FILE: read it first, then use edit_file or edit_lines for focused changes. "
+                     if auto_apply else "Read files to understand the project; do not change them. ")
+    return (f"You are Koding, a coding agent helping {user_name} in {workspace_path}.\n"
+        f"Available workspace tools:\n{tool_list}\n\n{availability}\n"
+        'When using a tool, respond with one JSON object like {"tool":"read_file","args":{"path":"src/main.py"}}. '
+        f"{edit_guidance}"
+        "Respect workspace rules. "
+        "If no tool is needed, answer normally or ask the user a question in your final response. "
+        "Command execution, Git, web search, images, subagents, and live preview tools are unavailable. "
+        "Automatic verification may report results separately; never claim a check ran without such a result.")
 
 
 async def run_agent_loop(opts: dict[str, Any]) -> str:
@@ -4062,8 +2758,6 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     # call was NOT a failure — exclude it from the identical-call guard so a
     # no-op can never be misreported as "kept failing".
     noop_ok_calls: set[str] = set()
-    preview_start_count = 0
-    preview_redirect_injected = False
     # Self-sabotage guard state: files the model itself created/edited this run.
     # Deleting your own fresh work (write → delete → write churn) is almost
     # always a confused rewrite loop, not a user request.
@@ -4106,6 +2800,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
     # with the behavioral guards (false-success, promised-work, thinking-has-
     # code...), so a chatty run burned the format budget on behavior retries
     # and lost its chance to fix mere JSON formatting.
+    malformed_format_retries = 0
     completed_steps: list[str] = []
     reading_stage_fired = False
 
@@ -4285,9 +2980,10 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             # NOT burn a retry slot.
 
             if not structured_final and not tool_calls and malformed_tool_calls < 4:
-                plain_tools = re.findall(r"\b(list_files|read_file|search_files|run_command|run_python|play_game|web_search|read_image|read_rules|update_memory|ask_user|git_status|git_diff|git_commit|edit_file|write_file|delete_file|delegate_to_subagent|rename_file|read_url|find_references|refactor_rename|create_directory|file_exists|read_url_image|diff_files|replace_in_file|count_lines|glob|multi_edit|gen_image|draw_image)\b", raw)
+                names = "|".join(re.escape(tool["name"]) for tool in available_tools(auto_apply))
+                plain_tools = re.findall(r"\b(" + names + r")\b", raw)
                 # An honest failure report naturally MENTIONS tool names ("my
-                # write_file was refused", "multi_edit needs an edits array")
+                # write_file was refused")
                 # — that is exactly what we asked the model to say, so never
                 # punish it as "plain-text tool attempt".
                 honest_failure_report = (
@@ -4362,7 +3058,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
 
             # False-success guard, part 1: claiming done while EVERY mutation
             # this run failed. The classic transcript: write refused → read_file
-            # → multi_edit schema error → "I have successfully added the menu
+            # → another failed edit → "I have successfully added the menu
             # system" — with nothing on disk. files_touched_this_run is
             # success-based now, so refused writes no longer disarm this; and
             # the condition is ever-based, so an interleaved read-only round
@@ -4382,14 +3078,13 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     retry_msg = (
                         "Your write/edit attempts FAILED (see the tool results above) — NO file was changed this run. "
                         "Do NOT claim success. Either fix the problem with a tool call (edit_lines by line number, "
-                        'edit_section between two anchors, edit_file with a small old_string taken from the current file, '
-                        'or multi_edit with {"path": ..., "edits": [{"old_string": ..., "new_string": ...}]}), '
+                        'or edit_file with a small old_string taken from the current file), '
                         "or if you genuinely cannot proceed, tell the user honestly what failed and stop."
                     )
                 else:
                     retry_msg = (
                         "You said you were done but you did NOT actually call any tools. "
-                        "You must use the actual tools (write_file, edit_file, git_commit, etc.) to make changes — do NOT just describe what you did. "
+                        "You must use the available file tools to make changes — do NOT just describe what you did. "
                         'Respond with a JSON tool call like: {"tool": "write_file", "args": {"path": "filename.py", "content": "..."}}'
                     )
                 history.append({"role": "assistant", "content": raw})
@@ -4712,12 +3407,6 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 k = f"{tc['tool']}:{json.dumps(tc['args'], sort_keys=True)}"
                 if k in noop_ok_calls:
                     continue  # successful no-op — repeating it is not a failure
-                if tc["tool"] == "preview_start":
-                    # Never punish preview_start repeats: the tool result itself
-                    # tells the model to retry once the client is connected —
-                    # obeying that must not be misread as "kept failing".
-                    preview_start_count += 1
-                    continue
                 seen_calls[k] = seen_calls.get(k, 0) + 1
                 if seen_calls[k] >= 3:
                     # Give up with an ACTIONABLE, HONEST message — never dump
@@ -4749,18 +3438,6 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     _cb(opts, "onChunk", msg)
                     return msg
 
-            ask_user_call = next((tc for tc in calls_to_run if tc["tool"] == "ask_user"), None)
-            if ask_user_call:
-                question = ask_user_call["args"].get("question") if isinstance(ask_user_call["args"].get("question"), str) else ""
-                if not question.strip():
-                    history.append({"role": "assistant", "content": raw})
-                    history.append({"role": "user", "content": "[ask_user] No question provided — re-read the task and continue."})
-                    continue
-                _cb(opts, "onStage", "agent:waiting")
-                answer = await ask_user_question(question, opts)
-                history.append({"role": "assistant", "content": raw})
-                history.append({"role": "user", "content": f"[USER ANSWER to your question]\n{answer}"})
-                continue
 
             calls_to_run, permission_feedback = await authorize_tool_calls(calls_to_run, opts, signal, session_log)
             if permission_feedback:
@@ -4805,15 +3482,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                 history.append({"role": "user", "content": combined})
                 await session_log.log_message("user", "\n\n".join(result_parts))
                 for tc, result in results:
-                    if tc["tool"] in ("run_command", "run_python", "play_game"):
-                        if tc["tool"] == "run_command":
-                            cmd = tc["args"].get("command") if isinstance(tc["args"].get("command"), str) else ""
-                        elif tc["tool"] == "run_python":
-                            cmd = "python " + str(tc["args"].get("path") or "(inline snippet)")
-                        else:
-                            cmd = "python " + str(tc["args"].get("path") or "(game)")
-                        _cb(opts, "onAgentCommand", {"command": cmd, "output": result["output"], "failed": not result["ok"]})
-                    if tc["tool"] in ("list_files", "read_file", "search_files", "read_rules"):
+                    if tc["tool"] in ("list_files", "read_file", "search_files"):
                         maybe_fire_reading()
                     for write in result.get("fileWrites", [result["fileWrite"]] if result.get("fileWrite") else []):
                         record_file_write(write)
@@ -4842,7 +3511,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                             noop_ok_calls.add(f"{tc['tool']}:{json.dumps(tc['args'], sort_keys=True)}")
                     # Success-based mutation tracking: only a tool result that
                     # actually changed (or correctly no-op'd) the file counts.
-                    if tc["tool"] in MUTATING_TOOLS or tc["tool"] == "multi_edit":
+                    if tc["tool"] in MUTATING_TOOLS:
                         mp = str(tc["args"].get("path") or tc["args"].get("file") or "").replace("\\", "/").lower()
                         if mp:
                             mutated_attempted.add(mp)
@@ -4868,7 +3537,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                     # churn breaker trips it on healthy runs and produced the
                     # "read_file kept failing" give-up. Only mutations and
                     # commands count as churn.
-                    churn_capable = tc["tool"] in MUTATING_TOOLS or tc["tool"] in ("multi_edit", "run_command")
+                    churn_capable = tc["tool"] in MUTATING_TOOLS
                     if not result["ok"] and churn_capable:
                         fail_streak += 1
                         last_fail_note = str(result["output"]).split("\n")[0][:200]
@@ -4881,7 +3550,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                         # rewrite refusals: the model has no ground truth, so
                         # it keeps re-rolling full-file rewrites that get
                         # refused; seeing the real content flips it to edit_file.
-                        wants_recovery = tc["tool"] in ("edit_file", "edit_lines", "edit_section", "multi_edit", "replace_in_file") or (
+                        wants_recovery = tc["tool"] in ("edit_file", "edit_lines") or (
                             tc["tool"] == "write_file" and "Refusing to overwrite" in str(result["output"])
                         )
                         # Count failures PER PATH across the run (a read_file
@@ -4889,7 +3558,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                         # streak, which used to hide the pattern and starve
                         # auto-recovery). Requires ≥2 failures of mutation
                         # tools on the SAME path.
-                        if tc["tool"] in ("edit_file", "edit_lines", "edit_section", "multi_edit", "replace_in_file", "write_file"):
+                        if tc["tool"] in ("edit_file", "edit_lines", "write_file"):
                             fp = str(tc["args"].get("path") or "").replace("\\", "/").lower()
                             if fp:
                                 mut_fail_counts[fp] = mut_fail_counts.get(fp, 0) + 1
@@ -4924,15 +3593,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                             return msg
                     else:
                         fail_streak = 0
-                    if tc["tool"] in ("run_command", "run_python", "play_game"):
-                        if tc["tool"] == "run_command":
-                            cmd = tc["args"].get("command") if isinstance(tc["args"].get("command"), str) else ""
-                        elif tc["tool"] == "run_python":
-                            cmd = "python " + str(tc["args"].get("path") or "(inline snippet)")
-                        else:
-                            cmd = "python " + str(tc["args"].get("path") or "(game)")
-                        _cb(opts, "onAgentCommand", {"command": cmd, "output": result["output"], "failed": not result["ok"]})
-                    if tc["tool"] in ("list_files", "read_file", "search_files", "read_rules"):
+                    if tc["tool"] in ("list_files", "read_file", "search_files"):
                         maybe_fire_reading()
                     for write in result.get("fileWrites", [result["fileWrite"]] if result.get("fileWrite") else []):
                         record_file_write(write)
@@ -4952,11 +3613,11 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             if mutation_failed_ever and mutated_ok:
                 mut_recovered_last = True
             for tc in calls_to_run:
-                if tc["tool"] in ("write_file", "edit_file", "edit_lines", "edit_section", "delete_file", "multi_edit"):
+                if tc["tool"] in ("write_file", "edit_file", "edit_lines", "delete_file"):
                     touched = str(tc["args"].get("path") or "").replace("\\", "/").lower()
                     if touched and touched in mutated_ok:
                         files_touched_this_run.add(touched)
-                if tc["tool"] in ("write_file", "edit_file", "edit_lines", "edit_section", "delete_file", "multi_edit"):
+                if tc["tool"] in ("write_file", "edit_file", "edit_lines", "delete_file"):
                     touched_path = str(tc["args"].get("path") or "").replace("\\", "/").lower()
                     if touched_path in mutated_ok:
                         step = f"{tc['tool']}: {tc['args'].get('path') or tc['args'].get('from') or 'unknown'}"
@@ -4964,19 +3625,6 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
                             completed_steps.append(step)
                             await session_log.log_plan_update(f"Completed: {step}")
 
-            if preview_start_count >= 3 and not preview_redirect_injected:
-                # The client bridge never connected after several tries — stop
-                # the model from burning rounds on preview tools and redirect
-                # it to verification it CAN do. The run continues.
-                preview_redirect_injected = True
-                log_info("[agent] Preview bridge unavailable after 3 preview_start attempts — redirecting to non-preview verification")
-                history.append({"role": "user", "content": (
-                    "[SYSTEM] preview_start failed 3 times — the desktop client's preview bridge is NOT connected "
-                    "(client not running, or an older client version without preview support). "
-                    "Do NOT call preview_start, preview_screenshot, preview_eval, or preview_console again this run. "
-                    "Continue the task WITHOUT the preview: verify your work with read_file and run_command, "
-                    "and in your final answer tell the user that live preview verification was unavailable."
-                )})
 
             # ── Automatic game replay after a Python edit ───────────────
             # Same idea as the verify command above, but for GAMES: a static
@@ -4986,7 +3634,7 @@ async def run_agent_loop(opts: dict[str, Any]) -> str:
             game_edit = next(
                 (
                     tc for tc in calls_to_run
-                    if tc["tool"] in ("write_file", "edit_file", "edit_lines", "edit_section", "multi_edit", "replace_in_file", "rename_file")
+                    if tc["tool"] in ("write_file", "edit_file", "edit_lines", "rename_file")
                     and str(tc["args"].get("path") or tc["args"].get("from") or "").lower().endswith(".py")
                 ),
                 None,

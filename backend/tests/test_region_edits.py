@@ -156,12 +156,12 @@ class TestApplySectionReplace:
 class TestRegionEditTools:
     def test_registered_and_mutating(self):
         names = {t["name"] for t in AGENT_TOOL_DEFS}
-        assert "edit_lines" in names and "edit_section" in names
-        assert "edit_lines" in MUTATING_TOOLS and "edit_section" in MUTATING_TOOLS
+        assert "edit_lines" in names and "edit_section" not in names
+        assert "edit_lines" in MUTATING_TOOLS and "edit_section" not in MUTATING_TOOLS
 
     def test_in_system_prompt(self):
         prompt = build_system_prompt("/ws", "u", True)
-        assert "edit_lines" in prompt and "edit_section" in prompt
+        assert "edit_lines" in prompt and "edit_section" not in prompt
         assert "EDITING AN EXISTING FILE" in prompt
 
     def test_hidden_without_auto_apply(self):
@@ -191,18 +191,7 @@ class TestRegionEditTools:
         res = _run(tmp_path, {"tool": "edit_lines", "args": {"path": "snake.py", "content": "x"}})
         assert res["ok"] is False and "start" in res["output"]
 
-    def test_edit_section_tool_rewrites_a_region(self, tmp_path):
-        (tmp_path / "snake.py").write_text(SOURCE, encoding="utf-8")
-        res = _run(tmp_path, {"tool": "edit_section", "args": {"path": "snake.py", "start_anchor": "def update(self):", "end_anchor": "def draw(self):", "content": "    self.x += 7\n"}})
-        assert res["ok"] is True, res["output"]
-        body = (tmp_path / "snake.py").read_text(encoding="utf-8")
-        assert body == "def update(self):\n    self.x += 7\ndef draw(self):\n    print(self.x)\n"
-        assert "def draw(self):" in body
 
-    def test_edit_section_requires_anchors(self, tmp_path):
-        (tmp_path / "snake.py").write_text(SOURCE, encoding="utf-8")
-        res = _run(tmp_path, {"tool": "edit_section", "args": {"path": "snake.py", "content": "x"}})
-        assert res["ok"] is False and "anchor" in res["output"]
 
     def test_both_tools_disabled_without_auto_apply(self, tmp_path):
         (tmp_path / "snake.py").write_text(SOURCE, encoding="utf-8")
@@ -269,4 +258,4 @@ class TestRewriteRefusalPointsAtEasierTools:
         rewrite = "".join(f"other{i} = {i}\n" for i in range(60))
         res = _run(tmp_path, {"tool": "write_file", "args": {"path": "app.py", "content": rewrite}})
         assert res["ok"] is False
-        assert "edit_lines" in res["output"] and "edit_section" in res["output"]
+        assert "edit_lines" in res["output"] and "edit_file" in res["output"]

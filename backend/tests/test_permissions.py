@@ -14,8 +14,8 @@ def call(name):
     return {"tool": name, "args": {}}
 
 
-def test_read_only_blocks_every_mutation_and_code_execution():
-    calls = [call(name) for name in sorted(agent.MUTATING_TOOLS | agent.EXECUTION_TOOLS)]
+def test_read_only_blocks_every_mutation():
+    calls = [call(name) for name in sorted(agent.MUTATING_TOOLS)]
     calls.append(call("read_file"))
     allowed, feedback = asyncio.run(agent.authorize_tool_calls(calls, {"toolPermission": "read-only"}, None, Log()))
     assert allowed == [call("read_file")]
@@ -23,7 +23,7 @@ def test_read_only_blocks_every_mutation_and_code_execution():
 
 
 def test_ask_each_executes_only_approved_calls(monkeypatch):
-    answers = iter([False, True, False])
+    answers = iter([False, True])
 
     async def approve(*args):
         return next(answers)
@@ -35,7 +35,7 @@ def test_ask_each_executes_only_approved_calls(monkeypatch):
     assert len(feedback) == 2
 
 
-def test_auto_edit_requires_approval_for_commands(monkeypatch):
+def test_auto_edit_allows_edits_but_blocks_removed_tools(monkeypatch):
     async def deny(*args):
         return False
 
@@ -46,7 +46,7 @@ def test_auto_edit_requires_approval_for_commands(monkeypatch):
     assert len(feedback) == 2
 
 
-def test_auto_mode_requires_commit_approval(monkeypatch):
+def test_auto_mode_blocks_removed_commit_tool(monkeypatch):
     async def deny(*args):
         return False
 

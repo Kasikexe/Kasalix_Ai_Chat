@@ -830,8 +830,7 @@ async def ensure_image_drawn(base_text: str, o: dict[str, Any]) -> str:
 
 
 async def run_draw_image_chat(o: dict[str, Any]) -> str:
-    """Shared 'the user asked for a picture' path for BOTH plain chat and
-    agent (Koding) mode — tool nudge + guaranteed SVG fallback."""
+    """Plain chat image-request path: tool nudge + guaranteed SVG fallback."""
     nudge = (
         "\n\nThe user asked for an image. Call the draw_image tool, passing your complete SVG "
         "(read its description for the scene rules), then include the exact markdown image it returns in your reply."
@@ -1091,35 +1090,6 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
     except Exception:  # noqa: BLE001
         pass
 
-    # ─── IMAGE REQUESTS IN AGENT (KODING) MODE ────────────
-    if mode == "agent" and not intent["hasImage"]:
-        agent_user_text = re.sub(r"\[image:[^\]]+\]", "", last_user_for_think.get("content", "") if last_user_for_think else "").strip()
-        if agent_user_text and detect_image_request(agent_user_text):
-            log_info("[pipeline] Image request in agent mode — using draw pipeline instead of agent loop")
-            code_model = (await get_resolved_model("code"))["model"]
-            draw_model = code_model or model
-            draw_system = await with_ai_rules(
-                "You are a friendly assistant generating an image for the user.\n"
-                "Warm and brief. If your draw_image tool call succeeded, include the markdown image it returned in your reply — it is important the user sees it.",
-                "chat",
-            )
-            return await run_draw_image_chat(
-                {
-                    "model": draw_model,
-                    "systemMessages": [{"role": "system", "content": draw_system}],
-                    "messages": messages,
-                    "requestText": agent_user_text,
-                    "think": False,
-                    "signal": signal,
-                    "temperature": temperature,
-                    "top_p": top_p,
-                    "max_tokens": max_tokens,
-                    "on_chunk": on_chunk,
-                    "on_thinking": on_thinking,
-                    "on_stage": on_stage,
-                }
-            )
-
     # ─── AGENT LOOP (auto-apply mode) ─────────────────────
     if mode == "agent" and opts.get("autoApply") is True and not intent["hasImage"]:
         log_info("[pipeline] Koding mode with auto-apply — running autonomous loop")
@@ -1201,6 +1171,8 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
 
     async def _search_task() -> dict[str, Any]:
         """Decide, then search — alongside the other context work, not after it."""
+        if mode == "agent":
+            return _no_search("web search is unavailable in Koding", "skip")
         if intent["hasImage"]:
             return _no_search("the turn has an image", "skip")
         try:

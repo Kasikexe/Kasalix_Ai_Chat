@@ -1,5 +1,16 @@
 # KODING action limits
 
+KODING exposes nine workspace tools: `list_files`, `glob`, `read_file`,
+`search_files`, `edit_file`, `edit_lines`, `write_file`, `rename_file`, and
+`delete_file`. Search is literal text matching, not semantic symbol lookup.
+Search and listing outputs report when their limits may hide results. Shell,
+Git, web, image, subagent, and live-preview tools are not available to the
+model. It can still ask a question as a normal final response.
+
+Automatic project verification and game checks remain separate from the tool
+catalog. In Auto mode those checks may execute project code with the server
+user's permissions; restricted permission modes do not run them automatically.
+
 KODING selects native tool calls when available, tries structured actions for
 local models, and falls back to text calls when necessary. The timeline shows
 the selected mode and when a retry occurs. Each model action has a 180-second

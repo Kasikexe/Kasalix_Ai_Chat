@@ -17,9 +17,6 @@ def test_commands_and_verification_use_exit_code(monkeypatch, exit_code):
         return Process()
 
     monkeypatch.setattr(asyncio, "create_subprocess_shell", spawn)
-    result = asyncio.run(agent.execute_tool(".", {"tool": "run_command", "args": {"command": "echo test"}}, True))
-    assert result["ok"] is (exit_code == 0)
-    assert result["exitCode"] == exit_code
     verify = asyncio.run(agent._run_verify("test", ".", 3000))
     assert verify.startswith("FAILED") is (exit_code != 0)
     if exit_code:

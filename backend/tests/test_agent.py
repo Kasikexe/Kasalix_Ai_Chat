@@ -280,31 +280,16 @@ class TestAgentPromptGuards:
     def test_system_prompt_availability_full(self):
         from app.agent import build_system_prompt
         p = build_system_prompt("/ws", "user", True)
-        assert "NEVER claim you cannot run commands" in p
-        assert "py -3.11" in p
+        assert "File edits are available" in p
+        assert "run_command" not in p
 
     def test_system_prompt_availability_readonly(self):
         from app.agent import build_system_prompt
         p = build_system_prompt("/ws", "user", False)
-        assert "read-only (no run_command)" in p
+        assert "Read-only: file changes are unavailable" in p
+        assert "- write_file:" not in p
 
-    def test_web_search_is_offered_with_a_worked_example(self):
-        """Koding search only happens when the model chooses the tool, so the
-        prompt must both advertise it and show a copyable JSON call."""
-        from app.agent import build_system_prompt
-        p = build_system_prompt("/ws", "user", True)
-        assert '"tool": "web_search", "args": {"query"' in p
-        assert "call web_search instead of guessing" in p
 
-    def test_web_search_guidance_covers_search_first_retry_and_citation(self):
-        """The three ways the tool falls short when the prompt only says the
-        agent MAY search: it searches too late, gives up after one empty result,
-        and never says which pages it used."""
-        from app.agent import build_system_prompt
-        p = build_system_prompt("/ws", "user", True)
-        assert "SEARCH FIRST, NOT LAST" in p
-        assert "rewrite the query" in p
-        assert "CITE the pages you actually used" in p
 
     def test_every_tool_has_a_worked_example(self):
         """The examples block is what the model copies — a tool with no example
@@ -320,39 +305,6 @@ class TestAgentPromptGuards:
         assert not re.search(r"\b(delet?e|remove|get rid of|clean up)\b", "run the game with python 3.11", re.I)
 
 
-class TestGenImageTool:
-    """gen_image — agent writes real image assets into the workspace."""
-
-    SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" fill="#123"/></svg>'
-
-    def test_registered_and_mutating(self):
-        from app.agent import AGENT_TOOL_DEFS, MUTATING_TOOLS
-        gen = [t for t in AGENT_TOOL_DEFS if t["name"] == "gen_image"]
-        assert len(gen) == 1 and gen[0]["mutating"] is True
-        assert "gen_image" in MUTATING_TOOLS
-
-    def test_in_examples_and_prompt(self):
-        from app.agent import build_system_prompt
-        p = build_system_prompt("/ws", "u", True)
-        assert "gen_image" in p and "assets/" in p
-
-    def test_rejects_non_image_extension(self):
-        import asyncio
-        from app.agent import execute_tool
-        r = asyncio.run(execute_tool("/nonexistent-ws", {"tool": "gen_image", "args": {"path": "x.txt", "svg": self.SVG}}, True))
-        assert not r["ok"] and "image extension" in r["output"]
-
-    def test_rejects_path_outside_workspace(self):
-        import asyncio
-        from app.agent import execute_tool
-        r = asyncio.run(execute_tool("/nonexistent-ws", {"tool": "gen_image", "args": {"path": "../x.png", "svg": self.SVG}}, True))
-        assert not r["ok"] and "outside" in r["output"]
-
-    def test_disabled_without_auto_apply(self):
-        import asyncio
-        from app.agent import execute_tool
-        r = asyncio.run(execute_tool("/nonexistent-ws", {"tool": "gen_image", "args": {"path": "a.png", "svg": self.SVG}}, False))
-        assert not r["ok"] and "auto-apply" in r["output"]
 
 
 class TestChurnBreaker:
@@ -463,7 +415,7 @@ class TestPseudoToolCallSyntax:
         assert calls == [{"tool": "read_file", "args": {"path": "snake_game.py"}}]
 
     def test_bare_bracket_tool_with_no_args_is_parsed(self):
-        assert extract_tool_calls("[git_status]") == [{"tool": "git_status", "args": {}}]
+        assert extract_tool_calls("[list_files]") == [{"tool": "list_files", "args": {}}]
 
     def test_nested_openai_function_dialect_is_parsed(self):
         raw = '{"function": {"name": "read_file", "arguments": {"path": "f.py"}}}'

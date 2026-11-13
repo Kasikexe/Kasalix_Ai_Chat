@@ -8,9 +8,9 @@ from app.agent_protocol import normalize_structured_action, structured_action_sc
 
 
 def test_structured_actions_are_validated():
-    permitted = {"read_file", "ask_user"}
+    permitted = {"read_file"}
     assert normalize_structured_action('{"action":"tool","tool":"read_file","args":{"path":"x"}}', permitted)["call"]["tool"] == "read_file"
-    assert normalize_structured_action('{"action":"question","question":"Which file?"}', permitted)["call"]["tool"] == "ask_user"
+    assert normalize_structured_action('{"action":"question","question":"Which file?"}', permitted) == {"action": "final", "message": "Which file?"}
     assert normalize_structured_action('{"action":"final","message":"Hello"}', permitted)["message"] == "Hello"
     assert len(structured_action_schema(permitted)["oneOf"]) == 3
     assert "path" in structured_action_schema(permitted)["oneOf"][0]["properties"]["args"]["properties"]

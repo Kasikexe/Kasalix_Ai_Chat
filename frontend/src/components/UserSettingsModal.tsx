@@ -4,7 +4,7 @@ import {
  LogOut, Pencil, CheckCircle, Shield, Sun, Moon,
  Database, Plus, Trash2, Edit3, BookOpen, RefreshCw, Quote,
  Thermometer, Gauge, AlignLeft, Sparkles, Sliders,
- ArrowUpCircle, Download, Package, Settings2, MonitorOff,
+ ArrowUpCircle, Download, Package, Settings2,
 } from 'lucide-react';
 import type { UserProfile, MemoryData } from '../types';
 import { useToast } from '../hooks/useToast';
@@ -117,8 +117,6 @@ export function UserSettingsModal({
  // Auto-update state
  const [autoUpdate, setAutoUpdate] = useState(() => localStorage.getItem(AUTO_UPDATE_KEY) !== 'false');
 
- // Koding preview preference (window hidden vs shown)
- const [previewHidden, setPreviewHidden] = useState(false);
  const [agentLogs, setAgentLogs] = useState<{ runId: string; mtime: string }[]>([]);
  const [logsLoading, setLogsLoading] = useState(false);
  const [pendingLogDelete, setPendingLogDelete] = useState<string | null>(null);
@@ -161,22 +159,6 @@ export function UserSettingsModal({
  } catch {
  toast('error', 'Could not delete the session log');
  }
- };
- useEffect(() => {
- if (!open) return;
- const api = (window as any).electronAPI;
- if (api?.getPreviewPreference) {
- api.getPreviewPreference().then((r: any) => setPreviewHidden(!!(r && r.hidden))).catch(() => {});
- }
- }, [open]);
- const togglePreviewHidden = async () => {
- const next = !previewHidden;
- setPreviewHidden(next);
- try {
- localStorage.setItem('ai-chat:previewHidden', String(next));
- const api = (window as any).electronAPI;
- if (api?.setPreviewPreference) await api.setPreviewPreference(next);
- } catch {}
  };
 
  // System prompt state
@@ -1278,9 +1260,9 @@ export function UserSettingsModal({
  <p className="text-xs text-gray-500 leading-relaxed">
  <span className="text-gray-300 font-medium">Good to know:</span> your rules in{' '}
  <code className="text-gray-400 font-mono">.agent-rules.md</code> are read-only for the AI — it
- can never change them. The AI's own notes are saved to{' '}
- <code className="text-gray-400 font-mono">.agent-memory.md</code>, which is lower priority than
- your rules.
+ can never change them. Existing notes in{' '}
+ <code className="text-gray-400 font-mono">.agent-memory.md</code> can still be read automatically
+ and are lower priority than your rules.
  </p>
  </div>
 
@@ -1319,32 +1301,6 @@ export function UserSettingsModal({
  )}
  </div>
 
- {/* Hide preview window (Electron only) */}
- {typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron && (
- <div
- className={`flex items-center justify-between px-4 py-3 rounded-xl cursor-pointer transition-all duration-200 ${
- previewHidden
- ? 'bg-emerald-900/20 border border-emerald-800/40'
- : 'bg-gray-800/50 border border-gray-800 hover:bg-gray-800'
- }`}
- onClick={togglePreviewHidden}
- >
- <div className="flex items-center gap-3">
- <div className={`p-1.5 rounded-lg ${previewHidden ? 'bg-emerald-700/30' : 'bg-gray-700/50'}`}>
- <MonitorOff size={16} className={previewHidden ? 'text-[#4a9988]' : 'text-gray-400'} />
- </div>
- <div>
- <p className="text-sm font-medium text-gray-200">Hide preview window</p>
- <p className="text-xs text-gray-500 mt-0.5">
- Agent still verifies its web work (screenshots, console, JS checks) — nothing pops up on your screen
- </p>
- </div>
- </div>
- <div className={`w-10 h-6 rounded-full p-1 transition-colors duration-200 ${previewHidden ? 'bg-emerald-600' : 'bg-gray-700'}`}>
- <div className={`w-4 h-4 rounded-full bg-white transition-transform duration-200 ${previewHidden ? 'translate-x-4' : 'translate-x-0'}`} />
- </div>
- </div>
- )}
  </div>
  )}
  </div>

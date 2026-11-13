@@ -102,7 +102,7 @@ def _use_pygame_interpreter(monkeypatch):
 
 
 def _play(root, args):
-    return asyncio.run(execute_tool(str(root), {"tool": "play_game", "args": args}, True))
+    return asyncio.run(execute_tool(str(root), {"tool": "play_game", "args": args}, True, extra={"game_auto": True}))
 
 
 def test_reports_motion_when_the_sprite_actually_moves(tmp_path):
@@ -364,7 +364,7 @@ def test_final_frame_is_attached_for_a_vision_capable_model(tmp_path):
             str(tmp_path),
             {"tool": "play_game", "args": {"path": "game.py", "frames": 30, "screenshotEvery": 10}},
             True,
-            extra={"use_vision_model": True},
+            extra={"use_vision_model": True, "game_auto": True},
         )
     )
     assert result["ok"] is True, result["output"]
