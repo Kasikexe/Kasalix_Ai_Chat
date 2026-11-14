@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ipaddress
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -10,7 +12,9 @@ from ..logger import error as log_error, warn as log_warn
 from ..services.plugins.catalog import CATALOG_REPO, fetch_plugin_catalog, is_catalog_source
 from ..services.plugins.manager import (
     install_plugin,
+    install_local_ui,
     list_plugins,
+    list_plugin_modes,
     set_plugin_enabled,
     uninstall_plugin,
     update_plugin,
@@ -20,8 +24,20 @@ from ..tools import get_all_tools
 router = APIRouter()
 
 
+def _is_local(request: Request) -> bool:
+    try:
+        return bool(request.client and ipaddress.ip_address(request.client.host).is_loopback)
+    except ValueError:
+        return False
+
+
+@router.get("/modes")
+async def modes() -> dict:
+    return {"modes": await list_plugin_modes()}
+
+
 @router.get("")
-async def list_installed() -> dict:
+async def list_installed(request: Request) -> dict:
     try:
         installed = await list_plugins()
         tools = get_all_tools()
@@ -29,7 +45,10 @@ async def list_installed() -> dict:
         result = []
         for p in installed:
             registered = [t for t in by_plugin if t.pluginId == p["id"]]
-            result.append({**p, "registeredTools": registered})
+            public_plugin = dict(p)
+            if not _is_local(request):
+                public_plugin.pop("localPath", None)
+            result.append({**public_plugin, "registeredTools": registered})
         return {"plugins": result}
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"error": str(e) or "Failed to list plugins"}, status_code=500)
@@ -82,6 +101,21 @@ async def install(request: Request) -> dict:
         msg = str(e) or "Install failed"
         log_error("[plugins] Install error:", msg)
         return JSONResponse({"error": msg}, status_code=400)
+
+
+@router.post("/install-local-ui")
+async def install_local(request: Request) -> dict:
+    # Settings authentication is currently disabled, so a local filesystem
+    # path must never be accepted from another computer on the network.
+    if not _is_local(request):
+        return JSONResponse({"error": "Local plugins can only be loaded from the server computer"}, status_code=403)
+    try:
+        body = await request.json()
+        folder = body.get("path") if isinstance(body, dict) else None
+        plugin = await install_local_ui(folder)
+        return {"success": True, "plugin": plugin}
+    except (ValueError, OSError, UnicodeError) as error:
+        return JSONResponse({"error": str(error)}, status_code=400)
 
 
 @router.post("/{plugin_id}/uninstall")

@@ -23,6 +23,7 @@ from ..pipeline import run_pipeline
 from ..settings_store import get_cloud_settings
 from ..storage import add_message, create_conversation, get_conversation, update_conversation
 from ..models import make_message
+from ..services.plugins.manager import list_plugin_modes
 
 router = APIRouter()
 
@@ -124,7 +125,12 @@ async def chat_route(request: Request) -> Any:
             # "'NoneType' object has no attribute 'get'" and killed the request
             # with a 500 before any SSE byte was sent.
         else:
-            new_conv = await create_conversation(model, owner_id, None, mode, req_workspace_path)
+            plugin_mode_id = body.get("pluginModeId")
+            if plugin_mode_id is not None:
+                plugin_mode = next((item for item in await list_plugin_modes() if item["id"] == plugin_mode_id), None)
+                if not plugin_mode or plugin_mode["baseMode"] != mode:
+                    return JSONResponse({"error": "Plugin mode is unavailable or does not match the conversation mode"}, status_code=400)
+            new_conv = await create_conversation(model, owner_id, None, mode, req_workspace_path, plugin_mode_id)
             conv_id = new_conv["id"]
             conv_mode = mode
             conv_workspace_path = new_conv.get("workspacePath") or req_workspace_path

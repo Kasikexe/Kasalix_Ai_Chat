@@ -95,6 +95,7 @@ contextBridge.exposeInMainWorld('serverAPI', {
   getPlugins: () => ipcRenderer.invoke('plugins-list'),
   getPluginCatalog: () => ipcRenderer.invoke('plugins-catalog'),
   installPlugin: (repo) => ipcRenderer.invoke('plugins-install', repo),
+  installLocalUiPlugin: (folder) => ipcRenderer.invoke('plugins-install-local-ui', folder),
   uninstallPlugin: (id) => ipcRenderer.invoke('plugins-uninstall', id),
   togglePlugin: (id, enabled) => ipcRenderer.invoke('plugins-toggle', id, enabled),
   updatePlugin: (id) => ipcRenderer.invoke('plugins-update', id),

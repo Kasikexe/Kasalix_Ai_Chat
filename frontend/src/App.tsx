@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bot } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -26,7 +26,7 @@ import {
  clearSessionToken,
  isLoggedIn,
 } from './services/api';
-import type { ConversationMode, UserProfile } from './types';
+import type { ConversationMode, UserProfile, PluginMode } from './types';
 
 const THINKING_KEY = 'ai-chat:thinkingEnabled';
 
@@ -192,6 +192,11 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  const [sidebarOpen, setSidebarOpen] = useState(false);
  const [userSettingsOpen, setUserSettingsOpen] = useState(false);
  const [mode, setMode] = useState<ConversationMode>('chat');  const [viewTab, setViewTab] = useState<'chat' | 'agent'>('chat');
+ const [pluginModes, setPluginModes] = useState<PluginMode[]>([]);
+ const [selectedPluginModeId, setSelectedPluginModeId] = useState<string | null>(null);
+ const selectedPluginMode = pluginModes.find((item) => item.id === selectedPluginModeId) || null;
+ const currentViewRef = useRef(selectedPluginModeId || mode);
+ currentViewRef.current = selectedPluginModeId || mode;
  const [offlineWorkspace, setOfflineWorkspace] = useState<string | null>(null);
  const [searchQuery, setSearchQuery] = useState('');
  const [searchActive, setSearchActive] = useState(false);
@@ -262,12 +267,21 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  [activeId, conversations]
  );
 
+ const refreshPluginModes = useCallback(async () => {
+ try {
+ const modes = await api.getPluginModes();
+ setPluginModes(modes);
+ setSelectedPluginModeId((id) => id && !modes.some((item) => item.id === id) ? null : id);
+ } catch (error) { console.warn('[App] Could not load plugin modes:', error); }
+ }, []);
+ useEffect(() => { void refreshPluginModes(); }, [refreshPluginModes]);
+
  // Refresh conversations when the window regains focus (helps Electron on startup)
  useEffect(() => {
- const onFocus = () => refresh();
+ const onFocus = () => { refresh(); void refreshPluginModes(); };
  window.addEventListener('focus', onFocus);
  return () => window.removeEventListener('focus', onFocus);
- }, [refresh]);
+ }, [refresh, refreshPluginModes]);
 
  // On mount in Electron: auto-detect the backend server on the network
  useEffect(() => {
@@ -296,7 +310,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
 
  const handleNewChat = async () => {
  try {
- const conv = await create(model, undefined, mode);
+ const conv = await create(model, undefined, mode, undefined, selectedPluginModeId || undefined);
  setActiveId(conv.id);
  setSidebarOpen(false);
  } catch (e) {
@@ -331,21 +345,30 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  api.getConversation(id).then((conv) => update(conv)).catch(() => {});
  // If we're still on the fresh (unsaved) chat, adopt the real id so the
  // view re-attaches to the live stream instead of losing it.
- setActiveId((cur) => cur ?? id);
- }, [update]);
+ if (currentViewRef.current === (selectedPluginModeId || mode)) setActiveId((cur) => cur ?? id);
+ }, [update, selectedPluginModeId, mode]);
 
  // Never yank the user back to a conversation whose stream finished while
  // they were browsing another chat — only adopt the id if they're still on
  // the fresh view.
  const handleConversationCreated = useCallback((id: string) => {
- setActiveId((cur) => cur ?? id);
- }, []);
+ if (currentViewRef.current === (selectedPluginModeId || mode)) setActiveId((cur) => cur ?? id);
+ }, [selectedPluginModeId, mode]);
 
  const handleModeChange = (newMode: ConversationMode) => {
  // Agent modes are only available in the desktop app
  const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;  if (!isElectron && newMode === 'agent') return;
  setMode(newMode);
+ setSelectedPluginModeId(null);
  setViewTab(newMode);
+ setActiveId(null);
+ };
+
+ const handlePluginModeChange = (pluginMode: PluginMode) => {
+ if (pluginMode.baseMode === 'agent' && !(window as any).electronAPI?.isElectron) return;
+ setMode(pluginMode.baseMode);
+ setViewTab(pluginMode.baseMode);
+ setSelectedPluginModeId(pluginMode.id);
  setActiveId(null);
  };
 
@@ -382,10 +405,16 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  };
  document.addEventListener('keydown', handleKeyDown);
  return () => document.removeEventListener('keydown', handleKeyDown);
- }, [activeId, searchActive, mode]);
+ }, [activeId, searchActive, mode, selectedPluginModeId]);
 
  return (
- <div className="h-screen-dynamic flex bg-gray-950 text-white overflow-hidden">
+ <div className={`h-screen-dynamic flex bg-gray-950 text-white overflow-hidden ${selectedPluginMode ? 'plugin-mode' : ''}`}
+ style={selectedPluginMode ? {
+ '--plugin-accent': selectedPluginMode.theme.accent || '#7b9fc6',
+ '--plugin-background': selectedPluginMode.theme.background || '#030712',
+ '--plugin-surface': selectedPluginMode.theme.surface || '#111827',
+ '--plugin-text': selectedPluginMode.theme.text || '#f9fafb',
+ } as React.CSSProperties : undefined}>
  <Sidebar
  conversations={conversations}
  activeId={activeId}
@@ -400,6 +429,9 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  onUserSettings={() => setUserSettingsOpen(true)}
  mode={mode}
  onModeChange={handleModeChange}
+ pluginModes={pluginModes}
+ selectedPluginModeId={selectedPluginModeId}
+ onPluginModeChange={handlePluginModeChange}
  loading={conversationsLoading}
  />
  <div className="flex-1 flex flex-col min-w-0">
@@ -414,10 +446,11 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
  {/* Smooth mode transition wrapper */}
  <div
- key={viewTab}
+ key={selectedPluginModeId || viewTab}
  className="flex-1 flex flex-col min-h-0 animate-mode-fade-in"
  >  {mode === 'agent' ? (
  <AgentWorkspace
+ pluginMode={selectedPluginMode}
  key={activeConv?.id || 'new'}
  conversation={activeConv}
  offlineWorkspace={offlineWorkspace}
@@ -428,7 +461,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  onConversationStarted={handleConversationStarted}
  onForkConversation={async (forkMessages) => {
  try {
- const conv = await create(model, undefined, 'agent');
+ const conv = await create(model, undefined, 'agent', activeConv?.workspacePath, selectedPluginModeId || undefined);
  for (const msg of forkMessages) {
  await api.addConversationMessage(conv.id, msg.role as 'user' | 'assistant', msg.content);
  }
@@ -449,6 +482,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  />
  ) : (
  <ChatView
+ pluginMode={selectedPluginMode}
  key={activeConv?.id || 'new'}
  initialMessages={activeConv?.messages || []}
  conversationId={activeConv?.id}
@@ -465,7 +499,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  }}
  onForkConversation={async (forkMessages) => {
  try {
- const conv = await create(model, undefined, 'chat');
+ const conv = await create(model, undefined, 'chat', undefined, selectedPluginModeId || undefined);
  // Add the forked messages to the new conversation
  for (const msg of forkMessages) {
  await api.addConversationMessage(conv.id, msg.role as 'user' | 'assistant', msg.content);

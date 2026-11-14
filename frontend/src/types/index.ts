@@ -1,6 +1,15 @@
 export type Role = 'user' | 'assistant' | 'system' | 'activity';
 export type ConversationMode = 'chat' | 'agent';
 
+export interface PluginMode {
+  id: string;
+  pluginId: string;
+  name: string;
+  baseMode: ConversationMode;
+  theme: { accent?: string; background?: string; surface?: string; text?: string };
+  welcome: { type: 'card-list'; title: string; description: string; items: { id: string; label: string; description: string; message: string }[] };
+}
+
 /** A single event in the agent's execution timeline (thinking, tool call, etc.) */
 export type TimelineEvent =
   | { type: 'thinking'; content: string }
@@ -50,6 +59,7 @@ export interface Conversation {
   messages: Message[];
   model: string;
   mode: ConversationMode;
+  pluginModeId?: string;
   workspacePath?: string;
   ownerId: string;
   createdAt: number;

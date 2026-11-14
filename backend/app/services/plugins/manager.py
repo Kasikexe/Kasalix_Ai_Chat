@@ -80,6 +80,63 @@ def parse_manifest(raw: str) -> dict[str, Any]:
         raise ValueError('plugin.json is missing "version"')
     if len(version) > 40:
         raise ValueError("Plugin version is too long")
+    kind = data.get("kind", "tool")
+    if kind not in ("tool", "ui"):
+        raise ValueError('Plugin kind must be "ui" or "tool"')
+    modes = []
+    if kind == "ui":
+        if data.get("entry"):
+            raise ValueError("UI plugins cannot specify a code entry")
+        raw_modes = data.get("modes")
+        if not isinstance(raw_modes, list) or not 1 <= len(raw_modes) <= 12:
+            raise ValueError("UI plugins must define between 1 and 12 modes")
+        seen_ids: set[str] = set()
+        for mode in raw_modes:
+            if not isinstance(mode, dict):
+                raise ValueError("Each mode must be an object")
+            mode_id, mode_name = mode.get("id"), mode.get("name")
+            if not isinstance(mode_id, str) or not re.fullmatch(ID_RE_PATTERN, mode_id) or len(mode_id) > 60 or mode_id in seen_ids:
+                raise ValueError("Each mode needs a unique lowercase id")
+            if not isinstance(mode_name, str) or not mode_name.strip() or len(mode_name) > 60:
+                raise ValueError("Each mode needs a name of at most 60 characters")
+            seen_ids.add(mode_id)
+            base = mode.get("baseMode", "chat")
+            if base not in ("chat", "agent"):
+                raise ValueError('baseMode must be "chat" or "agent"')
+            theme = mode.get("theme", {})
+            if not isinstance(theme, dict) or any(
+                key not in ("accent", "background", "surface", "text")
+                or not isinstance(value, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", value)
+                for key, value in theme.items()
+            ):
+                raise ValueError("Theme colors must be six-digit hex values")
+            welcome = mode.get("welcome", {})
+            if not isinstance(welcome, dict) or welcome.get("type", "card-list") != "card-list":
+                raise ValueError("Only card-list welcome screens are supported")
+            title = welcome.get("title", mode_name)
+            description = welcome.get("description", "")
+            items = welcome.get("items", [])
+            if not isinstance(title, str) or not title.strip() or len(title) > 120 or not isinstance(description, str) or len(description) > 500:
+                raise ValueError("Invalid welcome title or description")
+            if not isinstance(items, list) or len(items) > 50:
+                raise ValueError("Welcome items must be a list of at most 50 cards")
+            normalized_items = []
+            item_ids: set[str] = set()
+            for item in items:
+                if not isinstance(item, dict):
+                    raise ValueError("Each welcome card must be an object")
+                item_id, label = item.get("id"), item.get("label")
+                if not isinstance(item_id, str) or not re.fullmatch(ID_RE_PATTERN, item_id) or len(item_id) > 60 or item_id in item_ids:
+                    raise ValueError("Each card needs a unique lowercase id")
+                if not isinstance(label, str) or not label.strip() or len(label) > 100:
+                    raise ValueError("Each card needs a label of at most 100 characters")
+                item_ids.add(item_id)
+                text, message = item.get("description", ""), item.get("message", "")
+                if not isinstance(text, str) or len(text) > 500 or not isinstance(message, str) or len(message) > 4000:
+                    raise ValueError("Invalid card description or message")
+                normalized_items.append({"id": item_id, "label": label.strip(), "description": text, "message": message})
+            modes.append({"id": mode_id, "name": mode_name.strip(), "baseMode": base, "theme": theme,
+                          "welcome": {"type": "card-list", "title": title, "description": description, "items": normalized_items}})
     description = str(data.get("description") or "")[:500]
     # Entry must stay inside the plugin folder — no traversal
     entry = str(data.get("entry") or "index.py").strip() if data.get("entry") else "index.py"
@@ -93,7 +150,9 @@ def parse_manifest(raw: str) -> dict[str, Any]:
         "author": str(data.get("author"))[:100] if data.get("author") else None,
         "icon": str(data.get("icon"))[:20] if data.get("icon") else None,
         "minKasalixVersion": str(data.get("minKasalixVersion"))[:30] if data.get("minKasalixVersion") else None,
-        "entry": entry,
+        "kind": kind,
+        "entry": entry if kind == "tool" else None,
+        "modes": modes,
     }
 
 
@@ -160,6 +219,8 @@ async def load_plugin_entry(
     opts: dict[str, Any] | None = None,
 ) -> list[str]:
     opts = opts or {}
+    if plugin.get("manifest", {}).get("kind") == "ui":
+        return []
     dir_path = opts.get("dirOverride") or get_plugin_dir(plugin["id"])
     entry_rel = plugin.get("manifest", {}).get("entry") or "index.py"
     entry_path = os.path.join(dir_path, entry_rel)
@@ -206,6 +267,57 @@ def clear_plugin_tools(plugin: InstalledPlugin) -> None:
 async def list_plugins() -> list[InstalledPlugin]:
     registry = await read_registry()
     return registry["installed"]
+
+
+async def list_plugin_modes() -> list[dict[str, Any]]:
+    modes: list[dict[str, Any]] = []
+    for plugin in await list_plugins():
+        manifest = plugin.get("manifest") or {}
+        if not plugin.get("enabled") or manifest.get("kind") != "ui":
+            continue
+        # Validate persisted data too, so older or manually edited registries
+        # cannot inject unsafe styles or unsupported component definitions.
+        try:
+            manifest = parse_manifest(json.dumps(manifest))
+        except (TypeError, ValueError):
+            continue
+        if manifest["id"] != plugin.get("id"):
+            continue
+        for mode in manifest["modes"]:
+            modes.append({**mode, "id": f"plugin:{plugin['id']}:{mode['id']}", "pluginId": plugin["id"]})
+    return modes
+
+
+async def install_local_ui(folder: str, expected_id: str | None = None) -> InstalledPlugin:
+    """Register a local manifest without importing or copying plugin code."""
+    if not isinstance(folder, str) or not os.path.isabs(folder):
+        raise ValueError("Provide an absolute path to a plugin folder")
+    directory = Path(folder).resolve(strict=True)
+    manifest_path = directory / "plugin.json"
+    if not directory.is_dir() or not manifest_path.is_file() or manifest_path.stat().st_size > 256_000:
+        raise ValueError("Plugin folder must contain a plugin.json under 256 KB")
+    manifest = parse_manifest(manifest_path.read_text(encoding="utf-8"))
+    if manifest["kind"] != "ui":
+        raise ValueError("Only data-only UI plugins can be loaded from a local folder")
+    if expected_id is not None and manifest["id"] != expected_id:
+        raise ValueError("A plugin's id cannot change during an update")
+    check_min_version(manifest)
+    async with _lock:
+        registry = await read_registry()
+        existing = next((p for p in registry["installed"] if p["id"] == manifest["id"]), None)
+        if existing and existing.get("localPath") != str(directory):
+            raise ValueError("A different plugin with this id is already installed")
+        now = int(time.time() * 1000)
+        plugin: InstalledPlugin = {"id": manifest["id"], "manifest": manifest, "localPath": str(directory),
+                                   "enabled": existing.get("enabled", True) if existing else True,
+                                   "installedAt": existing.get("installedAt", now) if existing else now,
+                                   "updatedAt": now, "toolIds": []}
+        if existing:
+            registry["installed"][registry["installed"].index(existing)] = plugin
+        else:
+            registry["installed"].append(plugin)
+        await write_registry(registry)
+        return plugin
 
 
 async def install_plugin(input: str) -> InstalledPlugin:
@@ -296,7 +408,8 @@ async def uninstall_plugin(id: str) -> dict[str, bool]:
         clear_plugin_tools(plugin)
         registry["installed"].pop(idx)
         await write_registry(registry)
-        shutil.rmtree(get_plugin_dir(id), ignore_errors=True)
+        if not plugin.get("localPath"):
+            shutil.rmtree(get_plugin_dir(id), ignore_errors=True)
         log_info(f"[plugins] Uninstalled {plugin['manifest']['name']} ({id})")
         return {"success": True}
 
@@ -323,12 +436,13 @@ async def update_plugin(id: str) -> InstalledPlugin:
     plugin = next((p for p in registry["installed"] if p["id"] == id), None)
     if not plugin:
         raise ValueError(f'Plugin "{id}" is not installed')
-    async with _lock:
-        try:
-            source = f"{plugin['repo']}{'/' + plugin['path'] if plugin.get('path') else ''}"
-            return await install_plugin(source)
-        except Exception as err:  # noqa: BLE001
-            raise ValueError(f"Update failed: {err}") from err
+    try:
+        if plugin.get("localPath"):
+            return await install_local_ui(plugin["localPath"], id)
+        source = f"{plugin['repo']}{'/' + plugin['path'] if plugin.get('path') else ''}"
+        return await install_plugin(source)
+    except Exception as err:  # noqa: BLE001
+        raise ValueError(f"Update failed: {err}") from err
 
 
 async def load_installed_plugins() -> int:

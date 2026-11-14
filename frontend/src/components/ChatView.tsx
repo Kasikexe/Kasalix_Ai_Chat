@@ -2,9 +2,10 @@ import { useCallback, useMemo, useState } from 'react';
 import { useChat } from '../hooks/useChat';
 import { ChatWindow } from './ChatWindow';
 import { InputBar } from './InputBar';
-import type { Message } from '../types';
+import type { Message, PluginMode } from '../types';
 
 interface Props {
+ pluginMode?: PluginMode | null;
  initialMessages: Message[];
  conversationId?: string;
  model: string;
@@ -23,9 +24,9 @@ interface Props {
 
 export function ChatView({
  initialMessages, conversationId, model, thinkingEnabled = false, onMessageSent, onConversationCreated,
- searchQuery, onSearchChange, onSearchNext, onSearchPrev, onForkConversation, onConversationUpdate, onConversationStarted,
+ searchQuery, onSearchChange, onSearchNext, onSearchPrev, onForkConversation, onConversationUpdate, onConversationStarted, pluginMode,
 }: Props) {  const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, conversationId: convId, currentStage, liveDuration, liveTps } = useChat(
- model, initialMessages, conversationId, thinkingEnabled, 'chat', undefined, onConversationUpdate, false, false, undefined, undefined, undefined, undefined, onConversationStarted
+ model, initialMessages, conversationId, thinkingEnabled, 'chat', undefined, onConversationUpdate, false, false, undefined, undefined, undefined, undefined, onConversationStarted, undefined, undefined, undefined, undefined, pluginMode?.id
  );
 
  // Multi-message selection state
@@ -114,6 +115,8 @@ export function ChatView({
  </div>
  )}
  <ChatWindow
+ pluginMode={pluginMode}
+ onPluginSend={handleSend}
  messages={messages}
  isStreaming={isStreaming}
  currentStage={currentStage}
@@ -133,7 +136,7 @@ export function ChatView({
  selectable={selectMode}
  onFork={selectMode ? undefined : handleFork}
  />
- <InputBar onSend={handleSend} onStop={stopGeneration} isStreaming={isStreaming} draftKey={conversationId ?? 'new'} />
+ <InputBar onSend={handleSend} onStop={stopGeneration} isStreaming={isStreaming} draftKey={conversationId ?? pluginMode?.id ?? 'new'} />
  </>
  );
 }

@@ -427,3 +427,13 @@ button:focus-visible {
   max-width: 240px;
   line-height: 1.5;
 }
+
+/* Scoped, validated color tokens for data-only plugin modes. */
+.plugin-mode { background-color: var(--plugin-background); color: var(--plugin-text); }
+.plugin-mode .bg-gray-950 { background-color: var(--plugin-background); }
+.plugin-mode .bg-gray-900, .plugin-mode .bg-gray-800 { background-color: var(--plugin-surface); }
+.plugin-mode .text-white, .plugin-welcome { color: var(--plugin-text); }
+.plugin-muted { color: color-mix(in srgb, var(--plugin-text) 70%, transparent); }
+.plugin-card { background: var(--plugin-surface); border-color: color-mix(in srgb, var(--plugin-accent) 40%, transparent); }
+.plugin-action { background: var(--plugin-accent); color: var(--plugin-background); }
+.plugin-action:hover { filter: brightness(1.12); }

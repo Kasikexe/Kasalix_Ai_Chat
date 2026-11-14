@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useChat } from '../hooks/useChat';
 import { ChatWindow } from './ChatWindow';
+import { PluginWelcome } from './PluginWelcome';
 import { InputBar } from './InputBar';
 import { FileTree } from './FileTree';
 import { FileViewer } from './FileViewer';
@@ -31,6 +32,7 @@ const modifiedFilesCache = new Map<string, ModifiedFile[]>();
 const normPath = (p: string) => p.replace(/\\/g, '/');
 
 interface Props {
+  pluginMode?: import('../types').PluginMode | null;
   conversation: Conversation | null;
   offlineWorkspace?: string | null;
   onCreateNew: () => void;
@@ -43,7 +45,7 @@ interface Props {
   onForkConversation?: (messages: Message[]) => void;
 }
 
-export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, model, thinkingEnabled = false, onMessageSent, onConversationCreated, onConversationStarted, onForkConversation }: Props) {
+export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, model, thinkingEnabled = false, onMessageSent, onConversationCreated, onConversationStarted, onForkConversation, pluginMode }: Props) {
   const convKey = conversation?.id || 'offline';
   const [workspacePath, setWorkspacePath] = useState(offlineWorkspace || conversation?.workspacePath || '');
   const [loadedPath, setLoadedPath] = useState(offlineWorkspace || conversation?.workspacePath || '');
@@ -157,7 +159,8 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
     handleApprovalRequest,
     undefined,
     planMode,
-    toolPermission
+    toolPermission,
+    pluginMode?.id
   );
 
   // ─── Layout State ──────────────────────────────────────────
@@ -608,6 +611,15 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
 
   // Empty state — no conversation selected
   if (!conversation && !offlineWorkspace) {
+    if (pluginMode) return (
+      <ErrorBoundary>
+        <div className="flex-1 overflow-y-auto">
+          <PluginWelcome mode={pluginMode} />
+          {online && <div className="pb-8 text-center"><button type="button" onClick={onCreateNew} className="plugin-action rounded-lg px-4 py-2 text-sm font-semibold">Start session</button></div>}
+          {!online && <ServerDownInline message="Start a session to browse and edit files." onRetry={() => window.location.reload()} />}
+        </div>
+      </ErrorBoundary>
+    );
     return (
       <ErrorBoundary>
         <div className="flex-1 flex items-center justify-center p-8">
@@ -956,6 +968,8 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
               />
             ) : (
               <ChatWindow
+                pluginMode={pluginMode}
+                onPluginSend={handleSend}
                 messages={messages}                 isStreaming={isStreaming}
                  currentStage={currentStage}
                  liveDuration={liveDuration}

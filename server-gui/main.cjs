@@ -1365,6 +1365,14 @@ function setupIPC() {
     } catch { return { error: 'Failed to install plugin' }; }
   });
 
+  ipcMain.handle('plugins-install-local-ui', async (_event, folder) => {
+    try {
+      return await backendRequest('/api/plugins/install-local-ui', {
+        method: 'POST', body: { path: folder }, headers: { 'Cookie': 'settings_auth=1' },
+      });
+    } catch { return { error: 'Failed to load local UI plugin' }; }
+  });
+
   /** Uninstall a plugin (admin only) */
   ipcMain.handle('plugins-uninstall', async (_event, id) => {
     try {

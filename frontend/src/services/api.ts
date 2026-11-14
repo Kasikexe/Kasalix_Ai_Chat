@@ -1,4 +1,4 @@
-import type { Conversation, ConversationMode, Message, OllamaModel, FileEntry, MemoryData, SearchSource } from '../types';
+import type { Conversation, ConversationMode, Message, OllamaModel, FileEntry, MemoryData, SearchSource, PluginMode } from '../types';
 
 export interface ToolCallingTest {
   model: string;
@@ -341,12 +341,17 @@ export const api = {
     return data.conversation;
   },
 
-  async createConversation(model: string, title?: string, mode?: ConversationMode, workspacePath?: string): Promise<Conversation> {
+  async getPluginModes(): Promise<PluginMode[]> {
+    const data = await handleResponse<{ modes: PluginMode[] }>(await fetch(`${API_BASE}/plugins/modes`, authedFetch(`${API_BASE}/plugins/modes`)));
+    return data.modes;
+  },
+
+  async createConversation(model: string, title?: string, mode?: ConversationMode, workspacePath?: string, pluginModeId?: string): Promise<Conversation> {
     const data = await handleResponse<{ conversation: Conversation }>(
       await fetch(`${API_BASE}/conversations`, authedFetch(`${API_BASE}/conversations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, title, mode, workspacePath }),
+        body: JSON.stringify({ model, title, mode, workspacePath, pluginModeId }),
       }))
     );
     return data.conversation;
@@ -742,7 +747,8 @@ streamChat(
   planningEnabled?: boolean,
   autoApply?: boolean,
   planMode?: 'off' | 'on' | 'auto',
-  toolPermission?: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit'
+  toolPermission?: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit',
+  pluginModeId?: string
 ): Promise<void> {
   return (async () => {
     const profile = loadProfile();
@@ -779,6 +785,7 @@ streamChat(
         messages,
         conversationId,
         mode,
+        pluginModeId,
         workspacePath,
         // Auto (default): the backend decides per message whether thinking is
         // needed. 'off' disables thinking entirely.

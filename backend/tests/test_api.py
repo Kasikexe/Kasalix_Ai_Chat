@@ -69,6 +69,44 @@ def test_download_fallback_points_to_release_repository(client, monkeypatch, tmp
         assert response.headers["location"] == release_url
 
 
+def test_ui_plugin_modes_are_available_and_saved_with_conversations(client, auth, tmp_path, monkeypatch):
+    import json
+    import app.routes.chat as chat_route
+    from app.services.plugins import manager
+
+    folder = tmp_path / "plugin"
+    folder.mkdir()
+    (folder / "plugin.json").write_text(json.dumps({"id": "sample-ui", "name": "Sample", "version": "1", "kind": "ui",
+        "modes": [{"id": "sample", "name": "Sample", "baseMode": "chat", "welcome": {"title": "Hello", "items": []}}]}), encoding="utf-8")
+    monkeypatch.setattr(manager, "get_data_dir", lambda: tmp_path / "plugin-data")
+    assert client.post("/api/plugins/install-local-ui", json={"path": str(folder)}).status_code == 403
+    local_client = TestClient(app, client=("127.0.0.1", 50000))
+    installed = local_client.post("/api/plugins/install-local-ui", json={"path": str(folder)})
+    assert installed.status_code == 200, installed.text
+    assert "localPath" not in client.get("/api/plugins").json()["plugins"][0]
+    assert local_client.get("/api/plugins").json()["plugins"][0]["localPath"] == str(folder)
+    mode_id = "plugin:sample-ui:sample"
+    assert any(m["id"] == mode_id for m in client.get("/api/plugins/modes").json()["modes"])
+    token, _ = auth
+    headers = {"Authorization": f"Bearer {token}"}
+    created = client.post("/api/conversations", headers=headers, json={"model": "fake", "mode": "chat", "pluginModeId": mode_id})
+    assert created.status_code == 200 and created.json()["conversation"]["pluginModeId"] == mode_id
+    assert client.post("/api/conversations", headers=headers, json={"model": "fake", "mode": "agent", "pluginModeId": mode_id}).status_code == 400
+
+    async def fake_pipeline(opts):
+        opts["onChunk"]("Done")
+        return "Done"
+    monkeypatch.setattr(chat_route, "run_pipeline", fake_pipeline)
+    streamed = client.post("/api/chat", headers=headers, json={"model": "fake", "mode": "chat", "pluginModeId": mode_id,
+        "messages": [{"role": "user", "content": "Hello"}]})
+    events = [json.loads(line[6:]) for line in streamed.text.splitlines() if line.startswith("data: ")]
+    conversation_id = next(event["conversationId"] for event in events if event.get("type") == "conversationId")
+    assert client.get(f"/api/conversations/{conversation_id}", headers=headers).json()["conversation"]["pluginModeId"] == mode_id
+    assert client.post("/api/plugins/sample-ui/toggle", cookies={"settings_auth": "1"}, json={"enabled": False}).status_code == 200
+    assert client.get("/api/plugins/modes").json()["modes"] == []
+    assert client.post("/api/conversations", headers=headers, json={"model": "fake", "pluginModeId": mode_id}).status_code == 400
+
+
 class TestAuth:
     def test_register_login_me(self, client, auth):
         token, user_id = auth

@@ -17,6 +17,7 @@ from ..storage import (
     update_conversation,
 )
 from ..models import make_message
+from ..services.plugins.manager import list_plugin_modes
 from ..utils import is_path_inside, is_protected_path
 
 router = APIRouter()
@@ -87,12 +88,18 @@ async def create_one(request: Request) -> dict:
         model = body.get("model")
         if not model:
             return JSONResponse({"error": "model is required"}, status_code=400)
+        plugin_mode_id = body.get("pluginModeId")
+        if plugin_mode_id is not None:
+            plugin_mode = next((item for item in await list_plugin_modes() if item["id"] == plugin_mode_id), None)
+            if not plugin_mode or plugin_mode["baseMode"] != (body.get("mode") or "chat"):
+                return JSONResponse({"error": "Plugin mode is unavailable or does not match the conversation mode"}, status_code=400)
         conv = await create_conversation(
             model,
             owner_id,
             body.get("title"),
             body.get("mode"),
             body.get("workspacePath"),
+            plugin_mode_id,
         )
         return {"conversation": conv}
     except Exception as e:  # noqa: BLE001

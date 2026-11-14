@@ -20,6 +20,8 @@ class PluginManifest(TypedDict, total=False):
     icon: str
     minKasalixVersion: str
     entry: str
+    kind: str
+    modes: list[dict[str, Any]]
 
 
 class InstalledPlugin(TypedDict, total=False):
@@ -32,6 +34,7 @@ class InstalledPlugin(TypedDict, total=False):
     installedAt: int
     updatedAt: int
     toolIds: list[str]
+    localPath: str
 
 
 class PluginRegistry(TypedDict, total=False):

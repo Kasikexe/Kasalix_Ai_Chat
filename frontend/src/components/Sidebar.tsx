@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { MessageSquare, Plus, Trash2, Edit2, X, Check, Menu, Wrench, Search, FolderOpen, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
-import type { Conversation, ConversationMode } from '../types';
+import type { Conversation, ConversationMode, PluginMode } from '../types';
 import type { UserProfile } from '../types';
 import { UserBadge } from './UserBadge';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -21,6 +21,9 @@ interface SidebarProps {
  onUserSettings?: () => void;
  mode: ConversationMode;
  onModeChange: (mode: ConversationMode) => void;
+ pluginModes: PluginMode[];
+ selectedPluginModeId: string | null;
+ onPluginModeChange: (mode: PluginMode) => void;
  loading?: boolean;
 }
 
@@ -44,7 +47,7 @@ function getInitials(title: string): string {
 
 export function Sidebar({
  conversations, activeId, onSelect, onCreate, onDelete, onRename,
- isOpen, onClose, user, onSwitchUser, onUserSettings, mode, onModeChange, loading = false,
+ isOpen, onClose, user, onSwitchUser, onUserSettings, mode, onModeChange, pluginModes, selectedPluginModeId, onPluginModeChange, loading = false,
 }: SidebarProps) {
  const { toast } = useToast();
  const [editingId, setEditingId] = useState<string | null>(null);
@@ -186,7 +189,7 @@ export function Sidebar({
  <button
  onClick={() => onModeChange('chat')}
  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
- mode === 'chat'
+ mode === 'chat' && !selectedPluginModeId
  ? 'bg-[#2a3a52] text-white shadow-sm'
  : 'text-gray-400 hover:text-gray-200'
  }`}
@@ -198,7 +201,7 @@ export function Sidebar({
  onClick={() => !isWebBlocked && onModeChange('agent')}
  disabled={isWebBlocked}
  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all relative ${
- mode === 'agent'
+ mode === 'agent' && !selectedPluginModeId
  ? 'bg-purple-600 text-white shadow-sm'
  : isWebBlocked
  ? 'text-gray-600 cursor-not-allowed opacity-50'
@@ -213,6 +216,15 @@ export function Sidebar({
  </span>
  </button>
  </div>
+
+ {pluginModes.length > 0 && <div className="mx-3 mt-2 grid grid-cols-2 gap-1">
+ {pluginModes.map((pluginMode) => (
+   <button key={pluginMode.id} type="button" disabled={isWebBlocked && pluginMode.baseMode === 'agent'}
+     onClick={() => onPluginModeChange(pluginMode)}
+     className={`truncate rounded-md border px-2 py-2 text-left text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${selectedPluginModeId === pluginMode.id ? 'border-blue-400/50 bg-blue-900/40 text-white' : 'border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
+     title={pluginMode.name}>{pluginMode.name}</button>
+ ))}
+ </div>}
 
  <button
  onClick={onCreate}
@@ -239,6 +251,7 @@ export function Sidebar({
  const q = searchQuery.toLowerCase().trim();
  const filtered = conversations.filter((c) => {
  if ((c.mode || 'chat') !== mode) return false;
+ if (selectedPluginModeId ? c.pluginModeId !== selectedPluginModeId : !!c.pluginModeId && pluginModes.some((item) => item.id === c.pluginModeId)) return false;
  if (!q) return true;
  if (c.title.toLowerCase().includes(q)) return true;
  return c.messages.some((m) => m.content.toLowerCase().includes(q));

@@ -214,9 +214,10 @@ export function useChat(
   onApprovalRequest?: (q: { key: string; tool: string; args: Record<string, unknown> }) => void,
   onPlan?: (plan: string) => void,
   planMode?: 'off' | 'on' | 'auto',
-  toolPermission?: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit'
+  toolPermission?: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit',
+  pluginModeId?: string
 ) {
-  const key = initialConversationId ?? 'new';
+  const key = initialConversationId ?? (pluginModeId ? `new:${pluginModeId}` : 'new');
   ensureLiveTimer();
 
   const makeHandlers = (): StreamHandlers => ({
@@ -356,7 +357,7 @@ export function useChat(
           onConversationId: (id) => {
             const firstAssignment = !e.conversationId;
             e.conversationId = id;
-            if (e.key === 'new') migrateLiveEntry('new', id);
+            if (e.key === 'new' || e.key.startsWith('new:')) migrateLiveEntry(e.key, id);
             notify(e);
             // Only surface new conversations (regenerates/follow-ups reuse the
             // same id and are already registered).
@@ -634,7 +635,8 @@ export function useChat(
         planningEnabled,
         autoApply,
         planMode,
-        toolPermission
+        toolPermission,
+        pluginModeId
       );
       return e.conversationId;
     } catch (err) {
@@ -646,7 +648,7 @@ export function useChat(
       e.liveTps = null;
       notify(e);
     }
-  }, [model, mode, workspacePath, planningEnabled, autoApply, planMode, toolPermission]);
+  }, [model, mode, workspacePath, planningEnabled, autoApply, planMode, toolPermission, pluginModeId]);
 
   const sendMessage = useCallback(
     async (content: string): Promise<string | undefined> => {

@@ -1523,6 +1523,7 @@ async function enterPluginsView() {
 }
 
 async function loadPluginCatalog() {
+  await loadLocalUiPlugins();
   const $catalog = $('pluginsCatalog');
   if (!$catalog) return;
   const $count = $('pluginsCount');
@@ -1551,6 +1552,22 @@ async function loadPluginCatalog() {
   } catch (e) {
     $catalog.innerHTML = `<div class="plugins-empty"><p>Failed to load the plugin catalog: ${escapeHtml(e instanceof Error ? e.message : 'unknown error')}</p></div>`;
   }
+}
+
+async function loadLocalUiPlugins() {
+  const container = $('localUiPlugins');
+  if (!container) return;
+  const button = $('loadLocalUiPlugin');
+  if (button) { button.disabled = !settingsAuthed; button.title = settingsAuthed ? '' : 'Unlock admin to load a plugin'; }
+  try {
+    const result = await API.getPlugins();
+    const local = (result.plugins || []).filter((plugin) => plugin.localPath).map((plugin) => ({
+      ...plugin.manifest, id: plugin.id, installed: true, enabled: plugin.enabled,
+      installedVersion: plugin.manifest.version, source: plugin.localPath,
+    }));
+    container.innerHTML = local.map((plugin) => pluginCard(plugin, settingsAuthed)).join('');
+    bindPluginActions(local);
+  } catch { container.textContent = 'Could not load local plugins.'; }
 }
 
 function pluginCard(p, authed) {
@@ -1582,7 +1599,9 @@ function pluginCard(p, authed) {
 }
 
 async function bindPluginActions(plugins) {
-  document.querySelectorAll('#pluginsCatalog [data-act]').forEach((btn) => {
+  document.querySelectorAll('#pluginsCatalog [data-act], #localUiPlugins [data-act]').forEach((btn) => {
+    if (btn.dataset.bound === 'true') return;
+    btn.dataset.bound = 'true';
     btn.addEventListener('click', async () => {
       const act = btn.dataset.act;
       const id = btn.dataset.id;
@@ -1642,6 +1661,19 @@ function escapeHtml(s) {
 
 // Refresh button + re-render when the admin panel is unlocked.
 const pluginsRefreshBtn = $('pluginsRefreshBtn');
+const loadLocalUiPlugin = $('loadLocalUiPlugin');
+if (loadLocalUiPlugin) loadLocalUiPlugin.addEventListener('click', async () => {
+  const path = $('localUiPluginPath').value.trim();
+  if (!path) { alert('Enter the absolute path to a plugin folder.'); return; }
+  loadLocalUiPlugin.disabled = true;
+  try {
+    const result = await API.installLocalUiPlugin(path);
+    if (!result.success) { alert(result.error || 'Could not load the plugin'); return; }
+    $('pluginsStatus').textContent = 'Loaded ✓';
+    await loadLocalUiPlugins();
+  } catch (error) { alert(error instanceof Error ? error.message : 'Could not load the plugin'); }
+  finally { loadLocalUiPlugin.disabled = !settingsAuthed; }
+});
 if (pluginsRefreshBtn) {
   pluginsRefreshBtn.addEventListener('click', async () => {
     pluginsLoaded = false;

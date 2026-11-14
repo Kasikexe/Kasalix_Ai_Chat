@@ -2,11 +2,14 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import { Message } from './Message';
 import { ServerDownInline } from './ServerDownInline';
 import { StatusBanner } from './StatusBanner';
+import { PluginWelcome } from './PluginWelcome';
 import { useServerStatus } from '../hooks/useServerStatus';
-import type { Message as MessageType } from '../types';
+import type { Message as MessageType, PluginMode } from '../types';
 import { Search, X, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
 
 interface Props {
+ pluginMode?: PluginMode | null;
+ onPluginSend?: (message: string) => void;
  messages: MessageType[];
  isStreaming: boolean;
  currentStage?: string;  liveDuration?: number;
@@ -30,7 +33,7 @@ interface Props {
  onDeleteFile?: (filePath: string) => void;
 }
 
-export function ChatWindow({ messages, isStreaming, currentStage, liveDuration, liveTps, onEdit, onDelete, onRegenerate, onApplyCode, onApplyEdit, onApplyAll, onDeleteFile, searchQuery, onSearchQueryChange, searchMatches, activeSearchMatch, onSearchNext, onSearchPrev, selectedIndices, onToggleSelect, selectable, onFork }: Props) {
+export function ChatWindow({ messages, isStreaming, currentStage, liveDuration, liveTps, onEdit, onDelete, onRegenerate, onApplyCode, onApplyEdit, onApplyAll, onDeleteFile, searchQuery, onSearchQueryChange, searchMatches, activeSearchMatch, onSearchNext, onSearchPrev, selectedIndices, onToggleSelect, selectable, onFork, pluginMode, onPluginSend }: Props) {
  const { online, modelsReady, availableModels } = useServerStatus();
  const containerRef = useRef<HTMLDivElement>(null);
  const bottomRef = useRef<HTMLDivElement>(null);
@@ -158,6 +161,8 @@ export function ChatWindow({ messages, isStreaming, currentStage, liveDuration, 
  message="The AI features are unavailable while the server is disconnected. The rest of the app still works."
  onRetry={() => window.location.reload()}
  />
+ ) : pluginMode ? (
+ <PluginWelcome mode={pluginMode} onSend={onPluginSend} />
  ) : (
  <div className="h-full flex flex-col items-center justify-center px-4 text-center">
  <div className="w-16 h-16 rounded-lg bg-[#1a3a33] flex items-center justify-center mb-4">
