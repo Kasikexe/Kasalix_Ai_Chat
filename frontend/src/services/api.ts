@@ -748,7 +748,8 @@ streamChat(
   autoApply?: boolean,
   planMode?: 'off' | 'on' | 'auto',
   toolPermission?: 'auto' | 'read-only' | 'ask-each' | 'suggest' | 'auto-edit',
-  pluginModeId?: string
+  pluginModeId?: string,
+  pluginItemId?: string
 ): Promise<void> {
   return (async () => {
     const profile = loadProfile();
@@ -786,6 +787,7 @@ streamChat(
         conversationId,
         mode,
         pluginModeId,
+        pluginItemId,
         workspacePath,
         // Auto (default): the backend decides per message whether thinking is
         // needed. 'off' disables thinking entirely.

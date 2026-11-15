@@ -1,7 +1,7 @@
 import type { PluginMode } from '../types';
 
 /** Render only host-provided components; plugin data is never executed. */
-export function PluginWelcome({ mode, onSend }: { mode: PluginMode; onSend?: (message: string) => void }) {
+export function PluginWelcome({ mode, onSend }: { mode: PluginMode; onSend?: (message: string, itemId: string) => void }) {
  return (
    <div className="plugin-welcome mx-auto flex h-full w-full max-w-3xl flex-col justify-center px-5 py-8">
      <h2 className="text-2xl font-semibold">{mode.welcome.title}</h2>
@@ -12,7 +12,7 @@ export function PluginWelcome({ mode, onSend }: { mode: PluginMode; onSend?: (me
            <div key={item.id} className="plugin-card rounded-xl border p-4 text-left">
              <h3 className="font-medium">{item.label}</h3>
              {item.description && <p className="plugin-muted mt-1 text-sm leading-relaxed">{item.description}</p>}
-             {item.message && onSend && <button type="button" onClick={() => onSend(item.message)} className="plugin-action mt-3 rounded-lg px-3 py-1.5 text-xs font-semibold">Start</button>}
+             {item.message && onSend && <button type="button" onClick={() => onSend(item.message, item.id)} className="plugin-action mt-3 rounded-lg px-3 py-1.5 text-xs font-semibold">Start</button>}
            </div>
          ))}
        </div>

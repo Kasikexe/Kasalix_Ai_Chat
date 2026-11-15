@@ -268,8 +268,8 @@ export function AgentWorkspace({ conversation, offlineWorkspace, onCreateNew, mo
   const { online } = useServerStatus();
 
   // ─── Chat Handlers ─────────────────────────────────────────
-  const handleSend = async (content: string) => {
-    const newId = await sendMessage(content);
+  const handleSend = async (content: string, itemId?: string) => {
+    const newId = await sendMessage(content, itemId);
     if (newId) onConversationCreated(newId);
     onMessageSent();
   };

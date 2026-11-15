@@ -110,6 +110,9 @@ async def chat_route(request: Request) -> Any:
             return JSONResponse({"error": "model and messages are required"}, status_code=400)
 
         resume_state: dict[str, Any] | None = None
+        selected_id = body.get("pluginItemId")
+        if selected_id is not None and (not isinstance(selected_id, str) or not selected_id):
+            return JSONResponse({"error": "Invalid plugin item"}, status_code=400)
         if provided_conv_id:
             existing = await get_conversation(provided_conv_id, owner_id)
             if not existing:
@@ -117,6 +120,12 @@ async def chat_route(request: Request) -> Any:
             conv_id = provided_conv_id
             conv_mode = existing.get("mode") or "chat"
             conv_workspace_path = existing.get("workspacePath") or req_workspace_path
+            plugin_mode_id = existing.get("pluginModeId")
+            plugin_selection = existing.get("pluginSelection")
+            if selected_id and plugin_selection and selected_id != plugin_selection.get("id"):
+                return JSONResponse({"error": "This conversation already has a different selection"}, status_code=409)
+            if selected_id and not plugin_selection and existing.get("messages"):
+                return JSONResponse({"error": "Choose an item before starting the conversation"}, status_code=409)
             agent_state = existing.get("agentState")
             if existing.get("mode") == "agent" and isinstance(agent_state, dict) and agent_state.get("history"):
                 resume_state = agent_state
@@ -130,10 +139,27 @@ async def chat_route(request: Request) -> Any:
                 plugin_mode = next((item for item in await list_plugin_modes() if item["id"] == plugin_mode_id), None)
                 if not plugin_mode or plugin_mode["baseMode"] != mode:
                     return JSONResponse({"error": "Plugin mode is unavailable or does not match the conversation mode"}, status_code=400)
-            new_conv = await create_conversation(model, owner_id, None, mode, req_workspace_path, plugin_mode_id)
+            plugin_selection = None
+
+        if selected_id and not plugin_selection:
+            plugin_mode = next((item for item in await list_plugin_modes() if item["id"] == plugin_mode_id), None)
+            selected = next((item for item in plugin_mode["welcome"]["items"] if item["id"] == selected_id), None) if plugin_mode else None
+            if not selected or plugin_mode["baseMode"] != (conv_mode if provided_conv_id else mode):
+                return JSONResponse({"error": "Plugin selection is unavailable"}, status_code=400)
+            plugin_selection = {"id": selected["id"], "label": selected["label"], "instructions": selected["instructions"]}
+
+        if provided_conv_id:
+            if plugin_selection and not existing.get("pluginSelection"):
+                await update_conversation(conv_id, owner_id, {"pluginSelection": plugin_selection})
+        else:
+            new_conv = await create_conversation(model, owner_id, None, mode, req_workspace_path, plugin_mode_id, plugin_selection)
             conv_id = new_conv["id"]
             conv_mode = mode
             conv_workspace_path = new_conv.get("workspacePath") or req_workspace_path
+
+        pipeline_messages = messages
+        if plugin_selection and plugin_selection.get("instructions"):
+            pipeline_messages = [{"role": "system", "content": "Plugin mode instructions:\n" + plugin_selection["instructions"]}, *messages]
 
         journal = list((existing if provided_conv_id else new_conv).get("fileChanges") or [])
         journal_updates: list[asyncio.Task] = []
@@ -316,7 +342,7 @@ async def chat_route(request: Request) -> Any:
                     result = await run_pipeline(
                         {
                             "model": model,
-                            "messages": messages,
+                            "messages": pipeline_messages,
                             "mode": conv_mode,
                             "workspacePath": conv_workspace_path,
                             "thinkingEnabled": thinking_enabled,

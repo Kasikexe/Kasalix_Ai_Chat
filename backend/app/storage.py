@@ -128,6 +128,7 @@ async def create_conversation(
     mode: str | None = None,
     workspace_path: str | None = None,
     plugin_mode_id: str | None = None,
+    plugin_selection: dict[str, str] | None = None,
 ) -> Conversation:
     # TS parity: the route passes body.get("mode") which is None when absent.
     # In JS an explicit `undefined` argument triggers the `= 'chat'` default;
@@ -149,6 +150,8 @@ async def create_conversation(
     }
     if plugin_mode_id:
         conv["pluginModeId"] = plugin_mode_id
+    if plugin_selection:
+        conv["pluginSelection"] = plugin_selection
     _conversations[conv["id"]] = conv
     _debounced_save()
     return conv

@@ -7,7 +7,7 @@ export interface PluginMode {
   name: string;
   baseMode: ConversationMode;
   theme: { accent?: string; background?: string; surface?: string; text?: string };
-  welcome: { type: 'card-list'; title: string; description: string; items: { id: string; label: string; description: string; message: string }[] };
+  welcome: { type: 'card-list'; title: string; description: string; items: { id: string; label: string; description: string; message: string; instructions?: string }[] };
 }
 
 /** A single event in the agent's execution timeline (thinking, tool call, etc.) */

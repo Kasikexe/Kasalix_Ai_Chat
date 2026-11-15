@@ -66,6 +66,7 @@ app.whenReady().then(async () => {
     await win.webContents.executeJavaScript(`[...document.querySelectorAll('.plugin-card button')].find(b => b.textContent.trim() === 'Start').click()`);
     await waitFor(`document.body.textContent.includes('A response')`);
     assert.strictEqual(sent.pluginModeId, mode.id);
+    assert.strictEqual(sent.pluginItemId, 'first');
     assert.strictEqual(sent.mode, 'chat');
     assert.strictEqual(sent.messages.at(-1).content, 'Hello from the starter');
     await waitFor(`document.body.textContent.includes('Starter chat')`);

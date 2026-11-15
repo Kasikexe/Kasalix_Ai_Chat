@@ -9,7 +9,7 @@ import { Search, X, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
 
 interface Props {
  pluginMode?: PluginMode | null;
- onPluginSend?: (message: string) => void;
+ onPluginSend?: (message: string, itemId: string) => void;
  messages: MessageType[];
  isStreaming: boolean;
  currentStage?: string;  liveDuration?: number;

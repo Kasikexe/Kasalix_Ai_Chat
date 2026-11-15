@@ -131,10 +131,10 @@ def parse_manifest(raw: str) -> dict[str, Any]:
                 if not isinstance(label, str) or not label.strip() or len(label) > 100:
                     raise ValueError("Each card needs a label of at most 100 characters")
                 item_ids.add(item_id)
-                text, message = item.get("description", ""), item.get("message", "")
-                if not isinstance(text, str) or len(text) > 500 or not isinstance(message, str) or len(message) > 4000:
-                    raise ValueError("Invalid card description or message")
-                normalized_items.append({"id": item_id, "label": label.strip(), "description": text, "message": message})
+                text, message, instructions = item.get("description", ""), item.get("message", ""), item.get("instructions", "")
+                if not isinstance(text, str) or len(text) > 500 or not isinstance(message, str) or len(message) > 4000 or not isinstance(instructions, str) or len(instructions) > 4000:
+                    raise ValueError("Invalid card description, message, or instructions")
+                normalized_items.append({"id": item_id, "label": label.strip(), "description": text, "message": message, "instructions": instructions})
             modes.append({"id": mode_id, "name": mode_name.strip(), "baseMode": base, "theme": theme,
                           "welcome": {"type": "card-list", "title": title, "description": description, "items": normalized_items}})
     description = str(data.get("description") or "")[:500]

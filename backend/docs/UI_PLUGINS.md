@@ -31,7 +31,8 @@ local folder on the server computer for development.
             "id": "first",
             "label": "First option",
             "description": "A short description.",
-            "message": "Help me get started."
+            "message": "Help me get started.",
+            "instructions": "Respond in a warm and thoughtful style."
           }
         ]
       }
@@ -51,9 +52,12 @@ local folder on the server computer for development.
 - The welcome screen is a `card-list`, with up to 50 cards. Each card needs a
   unique `id` and `label`; `description` and `message` are optional. A card
   with a message shows a Start button that sends that text as a user message.
-  Cards without messages display information only.
-- This version customizes the interface and starter messages. It does not add
-  new backend behavior, custom JavaScript, or plugin-specific permissions.
+  Cards without messages display information only. Optional `instructions`
+  provide mode-specific guidance to the model on every turn. The selected card
+  and its instructions are saved with the conversation, so changing a plugin
+  later doesn't silently change an existing conversation.
+- This version customizes the interface, starter messages, and model guidance.
+  It does not add executable backend code, custom JavaScript, or plugin-specific permissions.
   Existing executable tool plugins have their separate, existing behavior.
 
 To load a local plugin, enter the **absolute path on the server computer** to

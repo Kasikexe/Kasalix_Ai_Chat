@@ -35,6 +35,7 @@ class Conversation(TypedDict, total=False):
     model: str
     mode: ConversationMode
     pluginModeId: str
+    pluginSelection: dict[str, str]
     workspacePath: str | None
     agentState: AgentResumeState | None
     ownerId: str

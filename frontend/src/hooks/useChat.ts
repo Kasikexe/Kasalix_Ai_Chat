@@ -254,7 +254,7 @@ export function useChat(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
-  const startStream = useCallback(async (): Promise<string | undefined> => {
+  const startStream = useCallback(async (pluginItemId?: string): Promise<string | undefined> => {
     // Guaranteed non-null: the render body above assigns it before any
     // callback can run.
     const e = entryRef.current!;
@@ -636,7 +636,8 @@ export function useChat(
         autoApply,
         planMode,
         toolPermission,
-        pluginModeId
+        pluginModeId,
+        pluginItemId
       );
       return e.conversationId;
     } catch (err) {
@@ -651,7 +652,7 @@ export function useChat(
   }, [model, mode, workspacePath, planningEnabled, autoApply, planMode, toolPermission, pluginModeId]);
 
   const sendMessage = useCallback(
-    async (content: string): Promise<string | undefined> => {
+    async (content: string, pluginItemId?: string): Promise<string | undefined> => {
       const e = entryRef.current!;
       if (!content.trim() || e.isStreaming) return;
 
@@ -674,7 +675,7 @@ export function useChat(
       // and carries across messages for a better live estimate.
       notify(e);
 
-      return startStream();
+      return startStream(pluginItemId);
     },
     [startStream]
   );

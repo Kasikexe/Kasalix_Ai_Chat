@@ -46,8 +46,8 @@ export function ChatView({
  });
  }, []);
 
- const handleSend = async (content: string) => {
- const newId = await sendMessage(content);
+ const handleSend = async (content: string, itemId?: string) => {
+ const newId = await sendMessage(content, itemId);
  if (newId) onConversationCreated(newId);
  onMessageSent();
  };

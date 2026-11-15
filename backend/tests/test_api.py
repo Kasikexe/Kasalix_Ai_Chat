@@ -77,7 +77,9 @@ def test_ui_plugin_modes_are_available_and_saved_with_conversations(client, auth
     folder = tmp_path / "plugin"
     folder.mkdir()
     (folder / "plugin.json").write_text(json.dumps({"id": "sample-ui", "name": "Sample", "version": "1", "kind": "ui",
-        "modes": [{"id": "sample", "name": "Sample", "baseMode": "chat", "welcome": {"title": "Hello", "items": []}}]}), encoding="utf-8")
+        "modes": [{"id": "sample", "name": "Sample", "baseMode": "chat", "welcome": {"title": "Hello", "items": [
+            {"id": "first", "label": "First", "message": "Hello", "instructions": "Be thoughtful and concise."},
+            {"id": "second", "label": "Second", "message": "Hello", "instructions": "Be energetic."}]}}]}), encoding="utf-8")
     monkeypatch.setattr(manager, "get_data_dir", lambda: tmp_path / "plugin-data")
     assert client.post("/api/plugins/install-local-ui", json={"path": str(folder)}).status_code == 403
     local_client = TestClient(app, client=("127.0.0.1", 50000))
@@ -93,15 +95,24 @@ def test_ui_plugin_modes_are_available_and_saved_with_conversations(client, auth
     assert created.status_code == 200 and created.json()["conversation"]["pluginModeId"] == mode_id
     assert client.post("/api/conversations", headers=headers, json={"model": "fake", "mode": "agent", "pluginModeId": mode_id}).status_code == 400
 
+    seen_messages = []
     async def fake_pipeline(opts):
+        seen_messages.append(opts["messages"])
         opts["onChunk"]("Done")
         return "Done"
     monkeypatch.setattr(chat_route, "run_pipeline", fake_pipeline)
-    streamed = client.post("/api/chat", headers=headers, json={"model": "fake", "mode": "chat", "pluginModeId": mode_id,
+    streamed = client.post("/api/chat", headers=headers, json={"model": "fake", "mode": "chat", "pluginModeId": mode_id, "pluginItemId": "first",
         "messages": [{"role": "user", "content": "Hello"}]})
     events = [json.loads(line[6:]) for line in streamed.text.splitlines() if line.startswith("data: ")]
     conversation_id = next(event["conversationId"] for event in events if event.get("type") == "conversationId")
-    assert client.get(f"/api/conversations/{conversation_id}", headers=headers).json()["conversation"]["pluginModeId"] == mode_id
+    saved = client.get(f"/api/conversations/{conversation_id}", headers=headers).json()["conversation"]
+    assert saved["pluginModeId"] == mode_id and saved["pluginSelection"]["id"] == "first"
+    assert seen_messages[-1][0]["role"] == "system" and "Be thoughtful and concise." in seen_messages[-1][0]["content"]
+    continued = client.post("/api/chat", headers=headers, json={"model": "fake", "mode": "chat", "conversationId": conversation_id,
+        "messages": [{"role": "user", "content": "What next?"}]})
+    assert continued.status_code == 200 and "Be thoughtful and concise." in seen_messages[-1][0]["content"]
+    assert client.post("/api/chat", headers=headers, json={"model": "fake", "conversationId": conversation_id, "pluginItemId": "second",
+        "messages": [{"role": "user", "content": "Switch"}]}).status_code == 409
     assert client.post("/api/plugins/sample-ui/toggle", cookies={"settings_auth": "1"}, json={"enabled": False}).status_code == 200
     assert client.get("/api/plugins/modes").json()["modes"] == []
     assert client.post("/api/conversations", headers=headers, json={"model": "fake", "pluginModeId": mode_id}).status_code == 400
