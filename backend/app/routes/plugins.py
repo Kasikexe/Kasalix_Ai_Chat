@@ -7,7 +7,6 @@ import ipaddress
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from ..deps import admin_authenticated
 from ..logger import error as log_error, warn as log_warn
 from ..services.plugins.catalog import CATALOG_REPO, fetch_plugin_catalog, is_catalog_source
 from ..services.plugins.manager import (
@@ -29,6 +28,17 @@ def _is_local(request: Request) -> bool:
         return bool(request.client and ipaddress.ip_address(request.client.host).is_loopback)
     except ValueError:
         return False
+
+
+def _management_allowed(request: Request) -> bool:
+    # Plugin management is performed by the local Server App. The backend's
+    # legacy admin check is intentionally open, and a loopback check alone
+    # would allow a website to submit cross-origin requests from a browser.
+    return _is_local(request) and not request.headers.get("origin")
+
+
+def _management_denied() -> JSONResponse:
+    return JSONResponse({"error": "Manage plugins from the Server App on the server computer"}, status_code=403)
 
 
 @router.get("/modes")
@@ -80,8 +90,8 @@ async def catalog() -> dict:
 
 @router.post("/install")
 async def install(request: Request) -> dict:
-    if not admin_authenticated(request):
-        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if not _management_allowed(request):
+        return _management_denied()
     try:
         body = await request.json()
         repo = body.get("repo") if isinstance(body.get("repo"), str) else ""
@@ -107,8 +117,8 @@ async def install(request: Request) -> dict:
 async def install_local(request: Request) -> dict:
     # Settings authentication is currently disabled, so a local filesystem
     # path must never be accepted from another computer on the network.
-    if not _is_local(request):
-        return JSONResponse({"error": "Local plugins can only be loaded from the server computer"}, status_code=403)
+    if not _management_allowed(request):
+        return _management_denied()
     try:
         body = await request.json()
         folder = body.get("path") if isinstance(body, dict) else None
@@ -120,8 +130,8 @@ async def install_local(request: Request) -> dict:
 
 @router.post("/{plugin_id}/uninstall")
 async def uninstall(plugin_id: str, request: Request) -> dict:
-    if not admin_authenticated(request):
-        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if not _management_allowed(request):
+        return _management_denied()
     try:
         return await uninstall_plugin(plugin_id)
     except Exception as e:  # noqa: BLE001
@@ -130,8 +140,8 @@ async def uninstall(plugin_id: str, request: Request) -> dict:
 
 @router.post("/{plugin_id}/toggle")
 async def toggle(plugin_id: str, request: Request) -> dict:
-    if not admin_authenticated(request):
-        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if not _management_allowed(request):
+        return _management_denied()
     try:
         body = await request.json()
         enabled = bool(body.get("enabled"))
@@ -143,8 +153,8 @@ async def toggle(plugin_id: str, request: Request) -> dict:
 
 @router.post("/{plugin_id}/update")
 async def update(plugin_id: str, request: Request) -> dict:
-    if not admin_authenticated(request):
-        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if not _management_allowed(request):
+        return _management_denied()
     try:
         plugin = await update_plugin(plugin_id)
         return {"success": True, "plugin": plugin}

@@ -113,9 +113,24 @@ def test_ui_plugin_modes_are_available_and_saved_with_conversations(client, auth
     assert continued.status_code == 200 and "Be thoughtful and concise." in seen_messages[-1][0]["content"]
     assert client.post("/api/chat", headers=headers, json={"model": "fake", "conversationId": conversation_id, "pluginItemId": "second",
         "messages": [{"role": "user", "content": "Switch"}]}).status_code == 409
-    assert client.post("/api/plugins/sample-ui/toggle", cookies={"settings_auth": "1"}, json={"enabled": False}).status_code == 200
+    assert client.post("/api/plugins/sample-ui/toggle", json={"enabled": False}).status_code == 403
+    assert local_client.post("/api/plugins/sample-ui/toggle", headers={"Origin": "https://example.invalid"}, json={"enabled": False}).status_code == 403
+    assert local_client.post("/api/plugins/sample-ui/toggle", json={"enabled": False}).status_code == 200
     assert client.get("/api/plugins/modes").json()["modes"] == []
     assert client.post("/api/conversations", headers=headers, json={"model": "fake", "pluginModeId": mode_id}).status_code == 400
+
+
+@pytest.mark.parametrize("path,body", [
+    ("/api/plugins/install", {"repo": "owner/repo"}),
+    ("/api/plugins/install-local-ui", {"path": "x"}),
+    ("/api/plugins/sample/toggle", {"enabled": True}),
+    ("/api/plugins/sample/update", {}),
+    ("/api/plugins/sample/uninstall", {}),
+])
+def test_plugin_management_rejects_remote_and_browser_origin(client, path, body):
+    assert client.post(path, json=body).status_code == 403
+    local = TestClient(app, client=("127.0.0.1", 50000))
+    assert local.post(path, headers={"Origin": "https://example.invalid"}, json=body).status_code == 403
 
 
 def test_plugin_memory_is_isolated_by_user_and_selection_and_respects_settings(client, tmp_path, monkeypatch):
