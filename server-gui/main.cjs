@@ -1405,6 +1405,15 @@ function setupIPC() {
     } catch { return { success: false, error: 'Failed to update plugin' }; }
   });
 
+  ipcMain.handle('plugins-permissions-get', async (_event, id) => {
+    return backendRequest(`/api/plugins/${encodeURIComponent(id)}/permissions`);
+  });
+  ipcMain.handle('plugins-permissions-set', async (_event, id, approved, grants) => {
+    return backendRequest(`/api/plugins/${encodeURIComponent(id)}/permissions`, {
+      method: 'POST', body: { approved, grants },
+    });
+  });
+
   // ─── Bun / Ollama Install ──────────────────────────
   /** Check whether the Bun runtime is installed */
   ipcMain.handle('check-bun', async () => {

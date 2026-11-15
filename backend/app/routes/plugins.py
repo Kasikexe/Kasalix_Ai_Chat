@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from ..deps import session_authenticated, user_id_from_request
 from ..logger import error as log_error, warn as log_warn
 from ..services.plugins.catalog import CATALOG_REPO, fetch_plugin_catalog, is_catalog_source
 from ..services.plugins.manager import (
@@ -14,11 +16,13 @@ from ..services.plugins.manager import (
     install_local_ui,
     list_plugins,
     list_plugin_modes,
+    set_backend_permissions,
     set_plugin_enabled,
     uninstall_plugin,
     update_plugin,
 )
 from ..tools import get_all_tools
+from ..services.plugins import manager, runtime, sandbox
 
 router = APIRouter()
 
@@ -79,6 +83,10 @@ async def catalog() -> dict:
                     "installed": inst is not None,
                     "installedVersion": (inst or {}).get("manifest", {}).get("version"),
                     "enabled": (inst or {}).get("enabled"),
+                    "backend": (inst or {}).get("manifest", {}).get("backend"),
+                    "backendApproved": bool(inst and inst.get("approvedFingerprint") and inst.get("approvedFingerprint") == inst.get("backendFingerprint")),
+                    "grantedPermissions": (inst or {}).get("grantedPermissions", []),
+                    "legacyBlocked": bool(inst and inst.get("manifest", {}).get("kind", "tool") == "tool"),
                 }
             )
         return {"repo": catalog_data["repo"], "plugins": plugins_out}
@@ -126,6 +134,72 @@ async def install_local(request: Request) -> dict:
         return {"success": True, "plugin": plugin}
     except (ValueError, OSError, UnicodeError) as error:
         return JSONResponse({"error": str(error)}, status_code=400)
+
+
+@router.get("/{plugin_id}/permissions")
+async def get_permissions(plugin_id: str, request: Request) -> dict:
+    if not _management_allowed(request):
+        return _management_denied()
+    plugin = next((p for p in await list_plugins() if p.get("id") == plugin_id), None)
+    if not plugin or not plugin.get("manifest", {}).get("backend"):
+        return JSONResponse({"error": "Plugin has no backend actions"}, status_code=404)
+    try:
+        source = manager.backend_source(plugin.get("localPath") or manager.get_plugin_dir(plugin_id), plugin["manifest"])
+        current = bool(source and source[1] == plugin.get("backendFingerprint"))
+    except (OSError, ValueError):
+        current = False
+    return {"permissions": plugin["manifest"]["backend"]["permissions"],
+            "granted": plugin.get("grantedPermissions") or [],
+            "approved": bool(current and plugin.get("approvedFingerprint") == plugin.get("backendFingerprint")),
+            "codeChanged": not current}
+
+
+@router.post("/{plugin_id}/permissions")
+async def change_permissions(plugin_id: str, request: Request) -> dict:
+    if not _management_allowed(request):
+        return _management_denied()
+    try:
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("approved"), bool):
+            return JSONResponse({"error": "An explicit approval decision is required"}, status_code=400)
+        plugin = await set_backend_permissions(plugin_id, body["approved"], body.get("grants", []))
+        return {"success": True, "approved": bool(plugin.get("approvedFingerprint")), "granted": plugin.get("grantedPermissions", [])}
+    except (ValueError, OSError) as error:
+        return JSONResponse({"error": str(error)}, status_code=400)
+
+
+@router.post("/{plugin_id}/actions/{action}")
+async def invoke_action(plugin_id: str, action: str, request: Request) -> dict:
+    if not session_authenticated(request):
+        return JSONResponse({"error": "Authentication required"}, status_code=401)
+    try:
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > runtime.MAX_PAYLOAD:
+                return JSONResponse({"error": "Action payload is too large"}, status_code=413)
+        payload = json.loads(raw or b"{}")
+        if not isinstance(payload, dict):
+            return JSONResponse({"error": "Action payload must be an object"}, status_code=400)
+        result = await runtime.invoke(plugin_id, action, payload, user_id_from_request(request))
+        return {"result": result}
+    except PermissionError as error:
+        return JSONResponse({"error": str(error)}, status_code=403)
+    except (ValueError, UnicodeError, RecursionError) as error:
+        return JSONResponse({"error": str(error)}, status_code=400)
+    except sandbox.SandboxError as error:
+        return JSONResponse({"error": str(error)}, status_code=503)
+
+
+@router.delete("/{plugin_id}/storage")
+async def clear_storage(plugin_id: str, request: Request) -> dict:
+    if not session_authenticated(request):
+        return JSONResponse({"error": "Authentication required"}, status_code=401)
+    try:
+        await runtime.clear_storage(plugin_id, user_id_from_request(request))
+        return {"success": True}
+    except OSError:
+        return JSONResponse({"error": "Could not clear plugin storage"}, status_code=500)
 
 
 @router.post("/{plugin_id}/uninstall")

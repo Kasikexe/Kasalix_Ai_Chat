@@ -1,18 +1,14 @@
-"""Plugin Platform — manager (mirrors backend/src/services/plugins/manager.ts).
+"""Plugin installation, metadata, and permission management.
 
-Installs plugins from GitHub into the data directory, persists the
-registry (data/plugins/installed.json), and loads each plugin's entry
-file at runtime to register its tools with the shared tool registry.
-
-SECURITY: installing a plugin downloads and executes code from the
-internet. All mutations are admin-only (settings_auth cookie), and the
-UI warns the user before installing.
+Plugin Python is never imported into the server. Optional UI-plugin backend
+actions run only through the isolated runtime after local approval. Legacy
+executable tool plugins remain installed but their code is not executed.
 """
 
 from __future__ import annotations
 
 import asyncio
-import importlib.util
+import hashlib
 import json
 import os
 import re
@@ -23,12 +19,7 @@ from typing import Any
 
 from ...config import app_version, get_data_dir
 from ...logger import error as log_error, info as log_info, warn as log_warn
-from ...tools import (
-    ToolDefinition,
-    is_tool_registered,
-    register_tool,
-    unregister_tool,
-)
+from ...tools import get_all_tools, unregister_tool
 from .github import download_raw_file, fetch_repo_tree, parse_repo_input, resolve_repo
 from .types import ID_RE_PATTERN, InstalledPlugin, PluginRegistry
 
@@ -81,12 +72,33 @@ def parse_manifest(raw: str) -> dict[str, Any]:
     if len(version) > 40:
         raise ValueError("Plugin version is too long")
     kind = data.get("kind", "tool")
-    if kind not in ("tool", "ui"):
-        raise ValueError('Plugin kind must be "ui" or "tool"')
+    if kind not in ("tool", "ui", "backend"):
+        raise ValueError('Plugin kind must be "ui", "backend", or "tool"')
     modes = []
+    backend = data.get("backend")
+    if backend is not None:
+        if kind not in ("ui", "backend") or not isinstance(backend, dict):
+            raise ValueError("Invalid backend action definition")
+        entry = backend.get("entry")
+        if not isinstance(entry, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+\.py", entry):
+            raise ValueError("Backend entry must be a Python file in the plugin folder")
+        actions = backend.get("actions")
+        permissions = backend.get("permissions", [])
+        if not isinstance(actions, list) or not 1 <= len(actions) <= 32 or any(
+            not isinstance(action, str) or not re.fullmatch(ID_RE_PATTERN, action) or len(action) > 60 for action in actions
+        ) or len(actions) != len(set(actions)):
+            raise ValueError("Backend actions must have unique lowercase ids")
+        allowed = {"storage.read", "storage.write"}
+        if not isinstance(permissions, list) or any(not isinstance(p, str) or p not in allowed for p in permissions) or len(permissions) != len(set(permissions)):
+            raise ValueError("Unknown or duplicate backend permission")
+        if "storage.write" in permissions and "storage.read" not in permissions:
+            raise ValueError("storage.write also requires storage.read")
+        backend = {"entry": entry, "actions": actions, "permissions": permissions}
+    if kind == "backend" and not backend:
+        raise ValueError("Backend plugins must declare backend actions")
+    if kind in ("ui", "backend") and data.get("entry"):
+        raise ValueError("Use backend.entry for isolated code; top-level entry is not allowed")
     if kind == "ui":
-        if data.get("entry"):
-            raise ValueError("UI plugins cannot specify a code entry")
         raw_modes = data.get("modes")
         if not isinstance(raw_modes, list) or not 1 <= len(raw_modes) <= 12:
             raise ValueError("UI plugins must define between 1 and 12 modes")
@@ -137,7 +149,17 @@ def parse_manifest(raw: str) -> dict[str, Any]:
                 text, message, instructions = item.get("description", ""), item.get("message", ""), item.get("instructions", "")
                 if not isinstance(text, str) or len(text) > 500 or not isinstance(message, str) or len(message) > 4000 or not isinstance(instructions, str) or len(instructions) > 4000:
                     raise ValueError("Invalid card description, message, or instructions")
-                normalized_items.append({"id": item_id, "label": label.strip(), "description": text, "message": message, "instructions": instructions})
+                action, payload = item.get("backendAction"), item.get("payload", {})
+                if action is not None and (not isinstance(action, str) or not backend or action not in backend["actions"] or message):
+                    raise ValueError("Card backendAction must name a declared action and cannot be combined with message")
+                try:
+                    payload_size = len(json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")) if isinstance(payload, dict) else 8193
+                except (TypeError, ValueError, RecursionError):
+                    payload_size = 8193
+                if payload_size > 8192:
+                    raise ValueError("Invalid card action payload")
+                normalized_items.append({"id": item_id, "label": label.strip(), "description": text, "message": message, "instructions": instructions,
+                                         "backendAction": action, "payload": payload})
             modes.append({"id": mode_id, "name": mode_name.strip(), "baseMode": base, "memory": memory, "theme": theme,
                           "welcome": {"type": "card-list", "title": title, "description": description, "items": normalized_items}})
     description = str(data.get("description") or "")[:500]
@@ -156,6 +178,7 @@ def parse_manifest(raw: str) -> dict[str, Any]:
         "kind": kind,
         "entry": entry if kind == "tool" else None,
         "modes": modes,
+        "backend": backend,
     }
 
 
@@ -177,91 +200,41 @@ def check_min_version(manifest: dict[str, Any]) -> None:
 
 
 # ─── Entry loading ────────────────────────────────────────
-class PluginApi:
-    def __init__(self, plugin: InstalledPlugin, enabled: bool, tool_ids: list[str]) -> None:
-        self._plugin = plugin
-        self._enabled = enabled
-        self._tool_ids = tool_ids
-
-    def register_tool(self, definition: Any, execute: Any) -> None:
-        if not self._enabled:
-            return  # disabled plugins must not register tools
-        if isinstance(definition, ToolDefinition):
-            with_plugin = ToolDefinition(
-                id=definition.id,
-                name=definition.name,
-                description=definition.description,
-                version=definition.version,
-                icon=definition.icon,
-                params=definition.params,
-                keywords=definition.keywords,
-                pluginId=self._plugin["id"],
-            )
-        else:
-            # Dict-shaped definition from a plugin
-            with_plugin = ToolDefinition(
-                id=definition.get("id", ""),
-                name=definition.get("name", definition.get("id", "")),
-                description=definition.get("description", ""),
-                version=definition.get("version", "1.0.0"),
-                icon=definition.get("icon", "🔧"),
-                params=definition.get("params", []),
-                keywords=definition.get("keywords", []),
-                pluginId=self._plugin["id"],
-            )
-        if with_plugin.id not in self._tool_ids:
-            self._tool_ids.append(with_plugin.id)
-        register_tool(with_plugin, execute)
-
-    def get_data_dir(self) -> str:
-        return str(get_data_dir())
-
-
 async def load_plugin_entry(
     plugin: InstalledPlugin,
     opts: dict[str, Any] | None = None,
 ) -> list[str]:
     opts = opts or {}
-    if plugin.get("manifest", {}).get("kind") == "ui":
-        return []
-    dir_path = opts.get("dirOverride") or get_plugin_dir(plugin["id"])
-    entry_rel = plugin.get("manifest", {}).get("entry") or "index.py"
-    entry_path = os.path.join(dir_path, entry_rel)
-    if not os.path.isfile(entry_path):
-        log_warn(f"[plugins] {plugin['id']}: entry \"{entry_rel}\" not found — no tools registered")
-        return []
-    enabled = opts.get("enabled", plugin.get("enabled", True))
-    tool_ids: list[str] = []
-    api = PluginApi(plugin, enabled, tool_ids)
+    if plugin.get("manifest", {}).get("kind") == "tool":
+        log_warn(f"[plugins] {plugin['id']}: legacy executable tools are disabled; migrate to isolated backend actions")
+    # Never import plugin Python into the server process. UI backend actions
+    # execute only when invoked through the isolated runner.
+    return []
 
+
+def backend_source(folder: str, manifest: dict[str, Any]) -> tuple[str, str] | None:
+    backend = manifest.get("backend")
+    if not backend:
+        return None
+    root = Path(folder).resolve(strict=True)
+    entry = (root / backend["entry"]).resolve(strict=True)
+    if entry.parent != root or not entry.is_file() or entry.stat().st_size > 256_000:
+        raise ValueError("Backend entry must be a Python file under 256 KB inside the plugin folder")
+    with entry.open("rb") as file:
+        raw = file.read(256_001)
+    if len(raw) > 256_000:
+        raise ValueError("Backend entry must be under 256 KB")
     try:
-        # Cache-busting: unique module name per load
-        module_name = f"kasalix_plugin_{plugin['id']}_{int(time.time() * 1000)}"
-        spec = importlib.util.spec_from_file_location(module_name, entry_path)
-        if spec is None or spec.loader is None:
-            raise ValueError(f"Could not load entry \"{entry_rel}\"")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        register_fn = getattr(module, "register", None)
-        if register_fn is None and getattr(module, "default", None) is not None:
-            default = module.default
-            register_fn = getattr(default, "register", None) or (default if callable(default) else None)
-        if not callable(register_fn):
-            raise ValueError(f'Entry "{entry_rel}" must export a register(api) function')
-        result = register_fn(api)
-        if hasattr(result, "__await__"):
-            await result
-    except Exception as err:  # noqa: BLE001
-        msg = str(err)
-        for tid in tool_ids:
-            unregister_tool(tid)
-        raise ValueError(f'Failed to load plugin "{plugin["id"]}": {msg}')
-    return tool_ids
+        source = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("Backend entry must be UTF-8") from error
+    metadata = json.dumps({"backend": backend, "source": hashlib.sha256(raw).hexdigest()}, sort_keys=True, separators=(",", ":"))
+    return source, hashlib.sha256(metadata.encode("utf-8")).hexdigest()
 
 
 def clear_plugin_tools(plugin: InstalledPlugin) -> None:
     for tid in plugin.get("toolIds") or []:
-        if is_tool_registered(tid):
+        if any(tool.id == tid and tool.pluginId == plugin["id"] for tool in get_all_tools()):
             unregister_tool(tid)
     plugin["toolIds"] = []
 
@@ -300,11 +273,13 @@ async def install_local_ui(folder: str, expected_id: str | None = None) -> Insta
     if not directory.is_dir() or not manifest_path.is_file() or manifest_path.stat().st_size > 256_000:
         raise ValueError("Plugin folder must contain a plugin.json under 256 KB")
     manifest = parse_manifest(manifest_path.read_text(encoding="utf-8"))
-    if manifest["kind"] != "ui":
-        raise ValueError("Only data-only UI plugins can be loaded from a local folder")
+    if manifest["kind"] not in ("ui", "backend"):
+        raise ValueError("Only UI or isolated backend plugins can be loaded from a local folder")
     if expected_id is not None and manifest["id"] != expected_id:
         raise ValueError("A plugin's id cannot change during an update")
     check_min_version(manifest)
+    source = backend_source(str(directory), manifest)
+    fingerprint = source[1] if source else None
     async with _lock:
         registry = await read_registry()
         existing = next((p for p in registry["installed"] if p["id"] == manifest["id"]), None)
@@ -315,6 +290,11 @@ async def install_local_ui(folder: str, expected_id: str | None = None) -> Insta
                                    "enabled": existing.get("enabled", True) if existing else True,
                                    "installedAt": existing.get("installedAt", now) if existing else now,
                                    "updatedAt": now, "toolIds": []}
+        if fingerprint:
+            plugin["backendFingerprint"] = fingerprint
+            if existing and existing.get("approvedFingerprint") == fingerprint:
+                plugin["approvedFingerprint"] = fingerprint
+                plugin["grantedPermissions"] = existing.get("grantedPermissions", [])
         if existing:
             registry["installed"][registry["installed"].index(existing)] = plugin
         else:
@@ -380,6 +360,13 @@ async def install_plugin(input: str) -> InstalledPlugin:
         }
 
         try:
+            source = backend_source(tmp_dir, manifest)
+            if source:
+                plugin["backendFingerprint"] = source[1]
+                previous = registry["installed"][existing_idx] if existing_idx >= 0 else None
+                if previous and previous.get("approvedFingerprint") == source[1]:
+                    plugin["approvedFingerprint"] = source[1]
+                    plugin["grantedPermissions"] = previous.get("grantedPermissions", [])
             plugin["toolIds"] = await load_plugin_entry(plugin, {"enabled": plugin["enabled"], "dirOverride": tmp_dir})
         except Exception:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -396,6 +383,33 @@ async def install_plugin(input: str) -> InstalledPlugin:
         log_info(
             f"[plugins] {'Updated' if existing_idx >= 0 else 'Installed'} {manifest['name']} ({manifest['id']}) — {len(plugin['toolIds'])} tool(s)"
         )
+        return plugin
+
+
+async def set_backend_permissions(id: str, approved: bool, grants: list[str]) -> InstalledPlugin:
+    async with _lock:
+        registry = await read_registry()
+        plugin = next((p for p in registry["installed"] if p["id"] == id), None)
+        if not plugin or not plugin.get("manifest", {}).get("backend"):
+            raise ValueError("Plugin has no backend actions")
+        if not approved:
+            plugin["approvedFingerprint"] = None
+            plugin["grantedPermissions"] = []
+            plugin["updatedAt"] = int(time.time() * 1000)
+            await write_registry(registry)
+            return plugin
+        declared = plugin["manifest"]["backend"]["permissions"]
+        if not isinstance(grants, list) or any(not isinstance(item, str) or item not in declared for item in grants) or len(grants) != len(set(grants)):
+            raise ValueError("Grants must be requested permissions")
+        if "storage.write" in grants and "storage.read" not in grants:
+            raise ValueError("storage.write also requires storage.read")
+        source = backend_source(plugin.get("localPath") or get_plugin_dir(id), plugin["manifest"])
+        if not source or source[1] != plugin.get("backendFingerprint"):
+            raise ValueError("Plugin code changed; reload the plugin before reviewing permissions")
+        plugin["approvedFingerprint"] = source[1]
+        plugin["grantedPermissions"] = grants
+        plugin["updatedAt"] = int(time.time() * 1000)
+        await write_registry(registry)
         return plugin
 
 

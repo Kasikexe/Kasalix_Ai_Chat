@@ -1,9 +1,8 @@
 """Plugin Platform — shared types (mirrors backend/src/services/plugins/types.ts).
 
-A plugin is a GitHub repository (or subfolder of one) that ships a
-`plugin.json` manifest and an optional entry file that registers tools
-with the backend at runtime. Plugins extend what the AI can do:
-new tools, new agent capabilities, integrations (Roblox, voice, etc.).
+A plugin is a GitHub repository, subfolder, or local folder with a
+`plugin.json` manifest. UI and backend plugins may declare isolated backend
+actions. Legacy executable tool plugins are retained but not run.
 """
 
 from __future__ import annotations
@@ -22,6 +21,7 @@ class PluginManifest(TypedDict, total=False):
     entry: str
     kind: str
     modes: list[dict[str, Any]]
+    backend: dict[str, Any] | None
 
 
 class InstalledPlugin(TypedDict, total=False):
@@ -35,6 +35,9 @@ class InstalledPlugin(TypedDict, total=False):
     updatedAt: int
     toolIds: list[str]
     localPath: str
+    backendFingerprint: str
+    approvedFingerprint: str | None
+    grantedPermissions: list[str]
 
 
 class PluginRegistry(TypedDict, total=False):

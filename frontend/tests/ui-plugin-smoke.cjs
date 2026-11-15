@@ -13,7 +13,8 @@ app.whenReady().then(async () => {
     const mode = { id: 'plugin:sample:creative', pluginId: 'sample', name: 'Creative', baseMode: 'chat', memory: 'per-item',
       theme: { accent: '#aabbcc', background: '#101020', surface: '#202030', text: '#ffffff' },
       welcome: { type: 'card-list', title: 'Choose a starter', description: 'Choose one to begin.',
-        items: [{ id: 'first', label: 'First card', description: 'A useful starter.', message: 'Hello from the starter' }] } };
+        items: [{ id: 'first', label: 'First card', description: 'A useful starter.', message: 'Hello from the starter' },
+          { id: 'action', label: 'Action card', description: 'An action.', message: '', backendAction: 'count', payload: { increment: 1 } }] } };
     let saved = null;
     let sent = null;
     let memoryCleared = false;
@@ -34,6 +35,7 @@ app.whenReady().then(async () => {
         return json({ enabled: true, categories: memoryCleared ? {} : { Details: { color: 'blue' } } });
       }
       if (pathname === '/api/plugins/modes') return json({ modes: [mode] });
+      if (pathname === '/api/plugins/sample/actions/count') return json({ result: { count: 1 } });
       if (pathname === '/api/conversations') return json({ conversations: saved ? [saved] : [] });
       if (pathname === '/api/conversations/conv-1') return json({ conversation: saved });
       if (pathname === '/api/chat' && req.method === 'POST') {
@@ -69,6 +71,8 @@ app.whenReady().then(async () => {
     await waitFor(`document.body.textContent.includes('Choose a starter') && document.body.textContent.includes('First card')`);
     assert(await win.webContents.executeJavaScript(`!!document.querySelector('.plugin-mode')`));
     assert.strictEqual(await win.webContents.executeJavaScript(`getComputedStyle(document.querySelector('.plugin-mode')).backgroundColor`), 'rgb(16, 16, 32)');
+    await win.webContents.executeJavaScript(`[...document.querySelectorAll('.plugin-card button')].find(b => b.textContent.trim() === 'Run').click()`);
+    await waitFor(`document.querySelector('.plugin-card pre')?.textContent.includes('"count": 1')`);
     await win.webContents.executeJavaScript(`[...document.querySelectorAll('.plugin-card button')].find(b => b.textContent.trim() === 'Start').click()`);
     await waitFor(`document.body.textContent.includes('A response')`);
     assert.strictEqual(sent.pluginModeId, mode.id);

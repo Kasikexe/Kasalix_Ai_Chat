@@ -346,6 +346,19 @@ export const api = {
     return data.modes;
   },
 
+  async invokePluginAction(pluginId: string, action: string, payload: Record<string, unknown>): Promise<unknown> {
+    const url = `${API_BASE}/plugins/${encodeURIComponent(pluginId)}/actions/${encodeURIComponent(action)}`;
+    const data = await handleResponse<{ result: unknown }>(await fetch(url, authedFetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    })));
+    return data.result;
+  },
+
+  async clearPluginStorage(pluginId: string): Promise<void> {
+    const url = `${API_BASE}/plugins/${encodeURIComponent(pluginId)}/storage`;
+    await handleResponse(await fetch(url, authedFetch(url, { method: 'DELETE' })));
+  },
+
   async createConversation(model: string, title?: string, mode?: ConversationMode, workspacePath?: string, pluginModeId?: string, pluginItemId?: string): Promise<Conversation> {
     const data = await handleResponse<{ conversation: Conversation }>(
       await fetch(`${API_BASE}/conversations`, authedFetch(`${API_BASE}/conversations`, {

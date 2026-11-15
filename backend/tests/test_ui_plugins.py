@@ -66,7 +66,7 @@ def test_local_ui_lifecycle_never_executes_or_deletes_plugin_folder(tmp_path, mo
 def test_local_loader_rejects_executable_plugin(tmp_path, monkeypatch):
     monkeypatch.setattr(manager, "get_data_dir", lambda: tmp_path / "data")
     (tmp_path / "plugin.json").write_text(json.dumps({"id": "sample", "name": "Sample", "version": "1"}), encoding="utf-8")
-    with pytest.raises(ValueError, match="Only data-only"):
+    with pytest.raises(ValueError, match="Only UI or isolated backend"):
         asyncio.run(manager.install_local_ui(str(tmp_path)))
 
 

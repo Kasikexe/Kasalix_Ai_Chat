@@ -99,6 +99,8 @@ contextBridge.exposeInMainWorld('serverAPI', {
   uninstallPlugin: (id) => ipcRenderer.invoke('plugins-uninstall', id),
   togglePlugin: (id, enabled) => ipcRenderer.invoke('plugins-toggle', id, enabled),
   updatePlugin: (id) => ipcRenderer.invoke('plugins-update', id),
+  getPluginPermissions: (id) => ipcRenderer.invoke('plugins-permissions-get', id),
+  setPluginPermissions: (id, approved, grants) => ipcRenderer.invoke('plugins-permissions-set', id, approved, grants),
 
   // ─── Speed Test ─────────────────────────────────
   runSpeedTests: () => ipcRenderer.invoke('speedtest-run'),

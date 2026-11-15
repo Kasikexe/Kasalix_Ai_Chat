@@ -8,7 +8,7 @@ export interface PluginMode {
   baseMode: ConversationMode;
   memory?: 'none' | 'per-item';
   theme: { accent?: string; background?: string; surface?: string; text?: string };
-  welcome: { type: 'card-list'; title: string; description: string; items: { id: string; label: string; description: string; message: string; instructions?: string }[] };
+  welcome: { type: 'card-list'; title: string; description: string; items: { id: string; label: string; description: string; message: string; instructions?: string; backendAction?: string | null; payload?: Record<string, unknown> }[] };
 }
 
 /** A single event in the agent's execution timeline (thinking, tool call, etc.) */

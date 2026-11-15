@@ -1,9 +1,10 @@
 # Data-only UI plugins
 
 UI plugins describe modes using a `plugin.json` file. Kasalix renders the
-interface with built-in components; it does not execute code from a UI plugin.
-They can be distributed through the existing curated catalog or loaded from a
-local folder on the server computer for development.
+interface with built-in components. A plugin may optionally declare isolated
+backend actions; see [PLUGIN_BACKEND.md](PLUGIN_BACKEND.md). Plugins can be
+distributed through the existing curated catalog or loaded from a local folder
+on the server computer for development.
 
 ```json
 {
@@ -42,8 +43,8 @@ local folder on the server computer for development.
 }
 ```
 
-- `kind` must be `ui`. An `entry` is not allowed, and `index.py` or other
-  code in the folder is never imported by this plugin type.
+- `kind` must be `ui`. A top-level `entry` is not allowed. A separately
+  declared backend entry runs only through Docker after local approval.
 - A plugin can define 1–12 modes. Plugin and mode IDs use lowercase letters,
   digits and hyphens; the host namespaces mode IDs by plugin ID.
 - `baseMode` is `chat` or `agent`; agent-based modes are available in the
@@ -63,12 +64,12 @@ local folder on the server computer for development.
   provide mode-specific guidance to the model on every turn. The selected card
   and its instructions are saved with the conversation, so changing a plugin
   later doesn't silently change an existing conversation.
-- This version customizes the interface, starter messages, and model guidance.
-  It does not add executable backend code, custom JavaScript, or plugin-specific permissions.
-  Existing executable tool plugins have their separate, existing behavior.
+- Optional cards may use `backendAction` and a JSON `payload` instead of a
+  starter `message`; they show the action's result when clicked. The action
+  must be declared by the plugin backend. Custom JavaScript is not supported.
 
 To load a local plugin, enter the **absolute path on the server computer** to
-its folder in **Server App → Plugins → Load local UI plugin**. Only requests
+its folder in **Server App → Plugins → Load local plugin**. Only requests
 from the server computer can use the local-folder endpoint. The folder is not
 copied or deleted. After editing `plugin.json`, use the plugin's Update button
 to reload it; the plugin ID must remain unchanged. Enable, disable, and remove
@@ -76,5 +77,5 @@ use the existing plugin controls. Return focus to the client to refresh its
 mode list. Existing chats remain saved if a plugin is disabled or removed.
 
 For catalog distribution, publish the manifest in a catalog-listed plugin
-folder. The existing GitHub installer handles UI manifests as well as tool
-plugins. UI plugins cannot register tools or run backend code.
+folder. Legacy executable tool plugins are disabled until migrated to isolated
+backend actions; existing data-only plugins continue to work.

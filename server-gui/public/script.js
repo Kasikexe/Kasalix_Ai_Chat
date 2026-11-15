@@ -1561,9 +1561,12 @@ async function loadLocalUiPlugins() {
   if (button) { button.disabled = !settingsAuthed; button.title = settingsAuthed ? '' : 'Unlock admin to load a plugin'; }
   try {
     const result = await API.getPlugins();
-    const local = (result.plugins || []).filter((plugin) => plugin.localPath).map((plugin) => ({
+    const local = (result.plugins || []).filter((plugin) => plugin.localPath || !plugin.manifest?.kind || plugin.manifest.kind === 'tool').map((plugin) => ({
       ...plugin.manifest, id: plugin.id, installed: true, enabled: plugin.enabled,
-      installedVersion: plugin.manifest.version, source: plugin.localPath,
+      installedVersion: plugin.manifest?.version, source: plugin.localPath || plugin.repo || 'Installed plugin',
+      backendApproved: !!plugin.approvedFingerprint && plugin.approvedFingerprint === plugin.backendFingerprint,
+      grantedPermissions: plugin.grantedPermissions || [],
+      legacyBlocked: !plugin.manifest?.kind || plugin.manifest.kind === 'tool',
     }));
     container.innerHTML = local.map((plugin) => pluginCard(plugin, settingsAuthed)).join('');
     bindPluginActions(local);
@@ -1573,7 +1576,7 @@ async function loadLocalUiPlugins() {
 function pluginCard(p, authed) {
   const isEnabled = p.enabled === true;
   const badge = p.installed
-    ? `<span class="plugin-badge plugin-badge-installed" title="Installed v${escapeHtml(p.installedVersion || p.version)}">${isEnabled ? S_CHECK + ' Enabled' : S_PAUSE + ' Disabled'}</span>`
+    ? `<span class="plugin-badge plugin-badge-installed" title="Installed v${escapeHtml(p.installedVersion || p.version)}">${p.legacyBlocked ? 'Blocked' : isEnabled ? S_CHECK + ' Enabled' : S_PAUSE + ' Disabled'}</span>`
     : `<span class="plugin-badge">${escapeHtml(p.version)}</span>`;
   const actions = p.installed
     ? (authed
@@ -1584,6 +1587,9 @@ function pluginCard(p, authed) {
     : (authed
         ? `<button class="btn btn-small btn-primary" data-act="install" data-id="${escapeHtml(p.id)}" data-source="${escapeHtml(p.source)}">Install</button>`
         : `<span class="plugin-installed-note">${S_LOCK} Unlock admin to install</span>`);
+  const backendInfo = p.backend ? `<p class="plugin-meta">Backend: ${p.backendApproved ? 'Approved' : 'Needs review'} · Requested: ${escapeHtml((p.backend.permissions || []).join(', ') || 'no extra permissions')} · Granted: ${escapeHtml((p.grantedPermissions || []).join(', ') || 'none')}</p>` : '';
+  const legacyInfo = p.legacyBlocked ? '<p class="plugin-meta">Legacy executable tools are disabled until migrated to isolated actions.</p>' : '';
+  const reviewButtons = p.installed && p.backend && authed ? `<button class="btn btn-small btn-ghost" data-act="permissions" data-id="${escapeHtml(p.id)}">Review permissions</button>${p.backendApproved ? `<button class="btn btn-small btn-ghost" data-act="revoke" data-id="${escapeHtml(p.id)}">Revoke</button>` : ''}` : '';
   return `<div class="plugin-card">
     <div class="plugin-icon">${p.icon ? escapeHtml(p.icon) : S_PUZZLE}</div>
     <div class="plugin-body">
@@ -1593,8 +1599,9 @@ function pluginCard(p, authed) {
       </div>
       <p class="plugin-desc">${escapeHtml(p.description || 'No description provided.')}</p>
       <p class="plugin-meta">${escapeHtml(p.author ? p.author + ' · ' : '')}${escapeHtml(p.source)}</p>
+      ${backendInfo}${legacyInfo}
     </div>
-    <div class="plugin-actions">${actions}</div>
+    <div class="plugin-actions">${actions}${reviewButtons}</div>
   </div>`;
 }
 
@@ -1620,6 +1627,22 @@ async function bindPluginActions(plugins) {
           }
           status.textContent = '';
           alert((res && res.error) || 'Install failed');
+        } else if (act === 'permissions') {
+          const info = await API.getPluginPermissions(id);
+          if (info.error) { alert(info.error); return; }
+          if (info.codeChanged) { alert('Plugin code changed. Update the plugin before reviewing it.'); return; }
+          if (!confirm('Allow this plugin to run Python in an isolated Docker container? It has no network or direct access to server files.')) return;
+          const grants = [];
+          if (info.permissions.includes('storage.read') && confirm('Allow this plugin to read its own per-user storage?')) grants.push('storage.read');
+          if (info.permissions.includes('storage.write') && grants.includes('storage.read') && confirm('Allow this plugin to change its own per-user storage?')) grants.push('storage.write');
+          res = await API.setPluginPermissions(id, true, grants);
+          if (res && res.success) status.textContent = 'Permissions saved ✓';
+          else { status.textContent = ''; alert((res && res.error) || 'Could not save permissions'); }
+        } else if (act === 'revoke') {
+          if (!confirm('Revoke permission for this plugin to run backend actions?')) return;
+          res = await API.setPluginPermissions(id, false, []);
+          if (res && res.success) status.textContent = 'Permission revoked ✓';
+          else { status.textContent = ''; alert((res && res.error) || 'Could not revoke permission'); }
         } else if (act === 'toggle') {
           const enable = btn.dataset.enabled !== 'true';
           status.textContent = enable ? 'Enabling…' : 'Disabling…';
