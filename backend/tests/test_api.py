@@ -118,6 +118,81 @@ def test_ui_plugin_modes_are_available_and_saved_with_conversations(client, auth
     assert client.post("/api/conversations", headers=headers, json={"model": "fake", "pluginModeId": mode_id}).status_code == 400
 
 
+def test_plugin_memory_is_isolated_by_user_and_selection_and_respects_settings(client, tmp_path, monkeypatch):
+    import json
+    import app.routes.chat as chat_route
+    from app import memory as memory_module
+    from app.services.plugins import manager
+
+    folder = tmp_path / "plugin"
+    folder.mkdir()
+    (folder / "plugin.json").write_text(json.dumps({"id": "memory-test", "name": "Memory Test", "version": "1", "kind": "ui",
+        "modes": [{"id": "sample", "name": "Sample", "baseMode": "chat", "memory": "per-item", "welcome": {"title": "Choose", "items": [
+            {"id": "first", "label": "First", "message": "Hello", "instructions": "Be calm."},
+            {"id": "second", "label": "Second", "message": "Hello", "instructions": "Be energetic."}]}}]}), encoding="utf-8")
+    monkeypatch.setattr(manager, "get_data_dir", lambda: tmp_path / "plugins-data")
+    monkeypatch.setattr(memory_module, "get_data_dir", lambda: tmp_path / "memory-data")
+    local = TestClient(app, client=("127.0.0.1", 50000))
+    assert local.post("/api/plugins/install-local-ui", json={"path": str(folder)}).status_code == 200
+    tokens = []
+    for name in ("pluginmemoryone", "pluginmemorytwo"):
+        response = client.post("/api/auth/register", json={"username": name, "password": "secret123"})
+        tokens.append(response.json()["token"])
+    headers = [{"Authorization": f"Bearer {token}"} for token in tokens]
+    for header in headers:
+        assert client.put("/api/memory", headers=header, json={"enabled": True}).status_code == 200
+
+    seen = []
+    async def fake_pipeline(opts):
+        seen.append(opts)
+        opts["onChunk"]("Done")
+        return "Done"
+    async def fake_extract(*_args):
+        return None
+    monkeypatch.setattr(chat_route, "run_pipeline", fake_pipeline)
+    monkeypatch.setattr(chat_route, "extract_memory_from_turn", fake_extract)
+    mode_id = "plugin:memory-test:sample"
+
+    def start(header, item):
+        response = client.post("/api/chat", headers=header, json={"model": "fake", "mode": "chat", "pluginModeId": mode_id, "pluginItemId": item,
+            "messages": [{"role": "user", "content": "Hello"}]})
+        assert response.status_code == 200, response.text
+        events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+        return next(event["conversationId"] for event in events if event.get("type") == "conversationId"), seen[-1]["memoryUserId"]
+
+    first_conv, first_scope = start(headers[0], "first")
+    fork = client.post("/api/conversations", headers=headers[0], json={"model": "fake", "mode": "chat",
+        "pluginModeId": mode_id, "pluginItemId": "first"})
+    assert fork.status_code == 200 and fork.json()["conversation"]["pluginSelection"]["memory"] == "per-item"
+    assert client.post("/api/conversations", headers=headers[0], json={"model": "fake", "pluginItemId": "first"}).status_code == 400
+    _, same_scope = start(headers[0], "first")
+    second_conv, second_scope = start(headers[0], "second")
+    other_conv, other_user_scope = start(headers[1], "first")
+    assert first_scope == same_scope
+    assert len({first_scope, second_scope, other_user_scope}) == 3
+    import asyncio
+    asyncio.run(memory_module.update_memory(first_scope, {"categories": {"Details": {"color": "blue"}}}))
+    asyncio.run(memory_module.update_memory(second_scope, {"categories": {"Details": {"color": "green"}}}))
+    asyncio.run(memory_module.update_memory(other_user_scope, {"categories": {"Details": {"color": "gold"}}}))
+    memory_module._memory_cache.pop(first_scope, None)  # Re-read persisted data from disk.
+    first = client.get("/api/memory/plugin", headers=headers[0], params={"conversationId": first_conv}).json()
+    second = client.get("/api/memory/plugin", headers=headers[0], params={"conversationId": second_conv}).json()
+    assert first["categories"]["Details"]["color"] == "blue" and second["categories"]["Details"]["color"] == "green"
+    assert client.get("/api/memory/plugin", headers=headers[1], params={"conversationId": first_conv}).status_code == 404
+    assert client.delete("/api/memory/plugin", headers=headers[1], params={"conversationId": first_conv}).status_code == 404
+    assert client.delete("/api/memory/plugin", headers=headers[0], params={"conversationId": first_conv}).status_code == 200
+    assert client.get("/api/memory/plugin", headers=headers[0], params={"conversationId": first_conv}).json()["categories"] == {}
+    assert client.get("/api/memory/plugin", headers=headers[0], params={"conversationId": second_conv}).json()["categories"]["Details"]["color"] == "green"
+    assert client.put("/api/memory", headers=headers[0], json={"enabled": False}).status_code == 200
+    continued = client.post("/api/chat", headers=headers[0], json={"model": "fake", "conversationId": first_conv,
+        "messages": [{"role": "user", "content": "Continue"}]})
+    assert continued.status_code == 200 and seen[-1]["memoryUserId"] is None
+    assert client.delete("/api/memory", headers=headers[0]).status_code == 200
+    assert client.get("/api/memory/plugin", headers=headers[0], params={"conversationId": first_conv}).json()["categories"] == {}
+    assert client.get("/api/memory/plugin", headers=headers[0], params={"conversationId": second_conv}).json()["categories"] == {}
+    assert client.get("/api/memory/plugin", headers=headers[1], params={"conversationId": other_conv}).json()["categories"]["Details"]["color"] == "gold"
+
+
 class TestAuth:
     def test_register_login_me(self, client, auth):
         token, user_id = auth

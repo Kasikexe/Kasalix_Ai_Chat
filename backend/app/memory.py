@@ -7,6 +7,7 @@ writes per user to prevent race conditions between concurrent extractions.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -30,6 +31,28 @@ def _memory_dir() -> Path:
 def _memory_file_path(user_id: str) -> Path:
     safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", user_id)
     return _memory_dir() / f"{safe}.json"
+
+
+def _plugin_memory_prefix(user_id: str) -> str:
+    return "plugin_" + hashlib.sha256(user_id.encode("utf-8")).hexdigest() + "_"
+
+
+def plugin_memory_id(user_id: str, mode_id: str, item_id: str) -> str:
+    """A stable private scope for one user's selected plugin item."""
+    scope = json.dumps([mode_id, item_id], ensure_ascii=False, separators=(",", ":"))
+    return _plugin_memory_prefix(user_id) + hashlib.sha256(scope.encode("utf-8")).hexdigest()
+
+
+async def clear_plugin_memories(user_id: str) -> None:
+    """Clear all item memories for a user when their memory is reset."""
+    prefix = _plugin_memory_prefix(user_id)
+    directory = _memory_dir()
+    if not directory.exists():
+        return
+    for file in directory.glob(prefix + "*.json"):
+        scope_id = file.stem
+        if re.fullmatch(re.escape(prefix) + r"[a-f0-9]{64}", scope_id):
+            await update_memory(scope_id, {"enabled": False, "categories": {}})
 
 
 def _get_cached(user_id: str) -> dict[str, Any] | None:

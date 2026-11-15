@@ -461,7 +461,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  onConversationStarted={handleConversationStarted}
  onForkConversation={async (forkMessages) => {
  try {
- const conv = await create(model, undefined, 'agent', activeConv?.workspacePath, selectedPluginModeId || undefined);
+ const conv = await create(model, undefined, 'agent', activeConv?.workspacePath, selectedPluginModeId || undefined, activeConv?.pluginSelection?.id);
  for (const msg of forkMessages) {
  await api.addConversationMessage(conv.id, msg.role as 'user' | 'assistant', msg.content);
  }
@@ -483,6 +483,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  ) : (
  <ChatView
  pluginMode={selectedPluginMode}
+ pluginSelection={activeConv?.pluginSelection}
  key={activeConv?.id || 'new'}
  initialMessages={activeConv?.messages || []}
  conversationId={activeConv?.id}
@@ -499,7 +500,7 @@ function ChatApp({ user, onSwitchUser, thinkingEnabled, onToggleThinking }: Chat
  }}
  onForkConversation={async (forkMessages) => {
  try {
- const conv = await create(model, undefined, 'chat', undefined, selectedPluginModeId || undefined);
+ const conv = await create(model, undefined, 'chat', undefined, selectedPluginModeId || undefined, activeConv?.pluginSelection?.id);
  // Add the forked messages to the new conversation
  for (const msg of forkMessages) {
  await api.addConversationMessage(conv.id, msg.role as 'user' | 'assistant', msg.content);

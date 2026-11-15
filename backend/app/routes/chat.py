@@ -16,7 +16,7 @@ from ..attachments import persist_data_urls, strip_image_markers
 from ..deps import user_id_from_request
 from ..extractor import extract_memory_from_turn
 from ..logger import error as log_error, info as log_info
-from ..memory import get_memory
+from ..memory import get_memory, update_memory, plugin_memory_id
 from ..model_assignments import get_resolved_model
 from ..ollama_client import StreamOptions, chat as ollama_chat
 from ..pipeline import run_pipeline
@@ -146,7 +146,7 @@ async def chat_route(request: Request) -> Any:
             selected = next((item for item in plugin_mode["welcome"]["items"] if item["id"] == selected_id), None) if plugin_mode else None
             if not selected or plugin_mode["baseMode"] != (conv_mode if provided_conv_id else mode):
                 return JSONResponse({"error": "Plugin selection is unavailable"}, status_code=400)
-            plugin_selection = {"id": selected["id"], "label": selected["label"], "instructions": selected["instructions"]}
+            plugin_selection = {"id": selected["id"], "label": selected["label"], "instructions": selected["instructions"], "memory": plugin_mode["memory"]}
 
         if provided_conv_id:
             if plugin_selection and not existing.get("pluginSelection"):
@@ -160,6 +160,17 @@ async def chat_route(request: Request) -> Any:
         pipeline_messages = messages
         if plugin_selection and plugin_selection.get("instructions"):
             pipeline_messages = [{"role": "system", "content": "Plugin mode instructions:\n" + plugin_selection["instructions"]}, *messages]
+
+        memory_user_id: str | None = owner_id
+        scoped_memory = bool(plugin_mode_id and plugin_selection and plugin_selection.get("memory") == "per-item")
+        if scoped_memory:
+            # Per-item memory is separate from normal chat and other items, and
+            # the user's existing Memory setting controls whether it is used.
+            memory_user_id = None
+            if (await get_memory(owner_id)).get("enabled"):
+                memory_user_id = plugin_memory_id(owner_id, plugin_mode_id, plugin_selection["id"])
+                if not (await get_memory(memory_user_id)).get("enabled"):
+                    await update_memory(memory_user_id, {"enabled": True})
 
         journal = list((existing if provided_conv_id else new_conv).get("fileChanges") or [])
         journal_updates: list[asyncio.Task] = []
@@ -354,6 +365,7 @@ async def chat_route(request: Request) -> Any:
                             "onNarration": on_narration,
                             "onNotice": on_notice,
                             "userId": owner_id,
+                            "memoryUserId": memory_user_id,
                             "userName": user_name,
                             "planningEnabled": planning_enabled,
                             "autoApply": auto_apply,
@@ -397,11 +409,12 @@ async def chat_route(request: Request) -> Any:
                     # Async memory extraction after response is complete
                     if state["full_response"] and last_message.get("role") == "user" and not signal.is_set():
                         try:
-                            memory = await get_memory(owner_id)
-                            if memory.get("enabled"):
+                            memory = await get_memory(memory_user_id) if memory_user_id else None
+                            if memory and memory.get("enabled") and not (scoped_memory and selected_id):
                                 user_text = strip_image_markers(last_message.get("content", ""))
                                 if user_text:
-                                    asyncio.create_task(extract_memory_from_turn(owner_id, user_text))
+                                    extraction = extract_memory_from_turn(memory_user_id, user_text, owner_id) if scoped_memory else extract_memory_from_turn(memory_user_id, user_text)
+                                    asyncio.create_task(extraction)
                         except Exception as e:  # noqa: BLE001
                             log_error("[chat] Failed to check memory:", e)
                 except asyncio.CancelledError:

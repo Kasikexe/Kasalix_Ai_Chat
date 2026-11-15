@@ -89,10 +89,19 @@ async def create_one(request: Request) -> dict:
         if not model:
             return JSONResponse({"error": "model is required"}, status_code=400)
         plugin_mode_id = body.get("pluginModeId")
+        plugin_selection = None
         if plugin_mode_id is not None:
             plugin_mode = next((item for item in await list_plugin_modes() if item["id"] == plugin_mode_id), None)
             if not plugin_mode or plugin_mode["baseMode"] != (body.get("mode") or "chat"):
                 return JSONResponse({"error": "Plugin mode is unavailable or does not match the conversation mode"}, status_code=400)
+            selected_id = body.get("pluginItemId")
+            if selected_id is not None:
+                selected = next((item for item in plugin_mode["welcome"]["items"] if item["id"] == selected_id), None)
+                if not selected:
+                    return JSONResponse({"error": "Plugin selection is unavailable"}, status_code=400)
+                plugin_selection = {"id": selected["id"], "label": selected["label"], "instructions": selected["instructions"], "memory": plugin_mode["memory"]}
+        elif body.get("pluginItemId") is not None:
+            return JSONResponse({"error": "Plugin mode is required for a selection"}, status_code=400)
         conv = await create_conversation(
             model,
             owner_id,
@@ -100,6 +109,7 @@ async def create_one(request: Request) -> dict:
             body.get("mode"),
             body.get("workspacePath"),
             plugin_mode_id,
+            plugin_selection,
         )
         return {"conversation": conv}
     except Exception as e:  # noqa: BLE001

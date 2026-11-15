@@ -10,12 +10,13 @@ app.whenReady().then(async () => {
   let win;
   try {
     const dist = path.resolve(__dirname, '../dist');
-    const mode = { id: 'plugin:sample:creative', pluginId: 'sample', name: 'Creative', baseMode: 'chat',
+    const mode = { id: 'plugin:sample:creative', pluginId: 'sample', name: 'Creative', baseMode: 'chat', memory: 'per-item',
       theme: { accent: '#aabbcc', background: '#101020', surface: '#202030', text: '#ffffff' },
       welcome: { type: 'card-list', title: 'Choose a starter', description: 'Choose one to begin.',
         items: [{ id: 'first', label: 'First card', description: 'A useful starter.', message: 'Hello from the starter' }] } };
     let saved = null;
     let sent = null;
+    let memoryCleared = false;
     server = http.createServer(async (req, res) => {
       const pathname = new URL(req.url, 'http://localhost').pathname;
       const json = (value) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
@@ -28,6 +29,10 @@ app.whenReady().then(async () => {
       if (pathname === '/api/models') return json({ models: [{ name: 'test-model', supportsThinking: true }] });
       if (pathname === '/api/settings') return json({ modelAssignments: { chat: 'test-model' } });
       if (pathname === '/api/memory') return json({ enabled: false, categories: {}, updatedAt: 0 });
+      if (pathname === '/api/memory/plugin') {
+        if (req.method === 'DELETE') { memoryCleared = true; return json({ success: true }); }
+        return json({ enabled: true, categories: memoryCleared ? {} : { Details: { color: 'blue' } } });
+      }
       if (pathname === '/api/plugins/modes') return json({ modes: [mode] });
       if (pathname === '/api/conversations') return json({ conversations: saved ? [saved] : [] });
       if (pathname === '/api/conversations/conv-1') return json({ conversation: saved });
@@ -36,6 +41,7 @@ app.whenReady().then(async () => {
         for await (const chunk of req) parts.push(chunk);
         sent = JSON.parse(Buffer.concat(parts).toString());
         saved = { id: 'conv-1', title: 'Starter chat', mode: 'chat', pluginModeId: sent.pluginModeId,
+          pluginSelection: { id: sent.pluginItemId, label: 'First card', instructions: '', memory: 'per-item' },
           model: sent.model, ownerId: 'user', messages: [{ role: 'user', content: sent.messages.at(-1).content },
             { role: 'assistant', content: 'A response' }], createdAt: Date.now(), updatedAt: Date.now() };
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -70,6 +76,13 @@ app.whenReady().then(async () => {
     assert.strictEqual(sent.mode, 'chat');
     assert.strictEqual(sent.messages.at(-1).content, 'Hello from the starter');
     await waitFor(`document.body.textContent.includes('Starter chat')`);
+    await waitFor(`[...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Memory')`);
+    await win.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Memory').click()`);
+    await waitFor(`document.body.textContent.includes('color: blue')`);
+    await win.webContents.executeJavaScript(`window.confirm = () => true; [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Clear memory').click()`);
+    await waitFor(`document.body.textContent.includes('No saved details yet.')`);
+    assert(memoryCleared);
+    await win.webContents.executeJavaScript(`document.querySelector('[aria-label="Close memory"]').click()`);
     await win.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Chat').click()`);
     await waitFor(`!document.querySelector('.plugin-mode')`);
     await win.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Creative').click()`);

@@ -890,19 +890,19 @@ async def model_installed_locally(name: str) -> bool:
     return name in installed or any(n.split(":")[0] == base for n in installed)
 
 
-async def build_memory_context(user_id: str | None = None) -> str | None:
+async def build_memory_context(user_id: str | None = None, *, plugin_scoped: bool = False) -> str | None:
     if not user_id:
         return None
     try:
         memory = await get_memory(user_id)
         if not memory.get("enabled") or not memory.get("categories"):
             return None
-        lines = ["Here is what I know about you:"]
+        lines = ["Saved context for this selected mode (which may include fictional details):" if plugin_scoped else "Here is what I know about you:"]
         for category, entries in memory.get("categories", {}).items():
             lines.append(f"\n# {category}")
             for key, value in entries.items():
                 lines.append(f"- {key}: {value}")
-        lines.append("\nUse this information naturally in our conversation. If I share updated info, update your knowledge.")
+        lines.append("\nUse relevant context naturally. Do not assume fictional details are real." if plugin_scoped else "\nUse this information naturally in our conversation. If I share updated info, update your knowledge.")
         return "\n".join(lines)
     except Exception:  # noqa: BLE001
         return None
@@ -926,6 +926,8 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
     on_stage = opts.get("onStage")
     on_chunk = opts.get("onChunk")
     user_id = opts.get("userId")
+    memory_user_id = opts.get("memoryUserId", user_id)
+    plugin_scoped_memory = memory_user_id is not None and memory_user_id != user_id
     user_name = opts.get("userName")
     planning_enabled = opts.get("planningEnabled")
     temperature = opts.get("temperature")
@@ -1093,7 +1095,7 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
     # ─── AGENT LOOP (auto-apply mode) ─────────────────────
     if mode == "agent" and opts.get("autoApply") is True and not intent["hasImage"]:
         log_info("[pipeline] Koding mode with auto-apply — running autonomous loop")
-        memory_context = await build_memory_context(user_id)
+        memory_context = await build_memory_context(memory_user_id, plugin_scoped=plugin_scoped_memory)
         agent_model = (await get_resolved_model("code"))["model"]
         # Hard-fail guard: the code assignment may name a model that isn't
         # installed (fresh install, deleted model) — the whole Koding turn
@@ -1210,7 +1212,7 @@ async def run_pipeline(opts: dict[str, Any]) -> str:
 
     file_listing, memory_context, search_plan = await asyncio.gather(
         _file_listing_task() if (needs_file_listing and workspace_path) else _noop_str(),
-        build_memory_context(user_id),
+        build_memory_context(memory_user_id, plugin_scoped=plugin_scoped_memory),
         _search_task(),
     )
     web_context = search_plan["context"]

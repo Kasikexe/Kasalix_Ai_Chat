@@ -103,6 +103,9 @@ def parse_manifest(raw: str) -> dict[str, Any]:
             base = mode.get("baseMode", "chat")
             if base not in ("chat", "agent"):
                 raise ValueError('baseMode must be "chat" or "agent"')
+            memory = mode.get("memory", "none")
+            if memory not in ("none", "per-item"):
+                raise ValueError('Mode memory must be "none" or "per-item"')
             theme = mode.get("theme", {})
             if not isinstance(theme, dict) or any(
                 key not in ("accent", "background", "surface", "text")
@@ -135,7 +138,7 @@ def parse_manifest(raw: str) -> dict[str, Any]:
                 if not isinstance(text, str) or len(text) > 500 or not isinstance(message, str) or len(message) > 4000 or not isinstance(instructions, str) or len(instructions) > 4000:
                     raise ValueError("Invalid card description, message, or instructions")
                 normalized_items.append({"id": item_id, "label": label.strip(), "description": text, "message": message, "instructions": instructions})
-            modes.append({"id": mode_id, "name": mode_name.strip(), "baseMode": base, "theme": theme,
+            modes.append({"id": mode_id, "name": mode_name.strip(), "baseMode": base, "memory": memory, "theme": theme,
                           "welcome": {"type": "card-list", "title": title, "description": description, "items": normalized_items}})
     description = str(data.get("description") or "")[:500]
     # Entry must stay inside the plugin folder — no traversal

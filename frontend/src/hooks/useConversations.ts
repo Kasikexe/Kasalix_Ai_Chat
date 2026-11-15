@@ -19,8 +19,8 @@ export function useConversations() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const create = useCallback(async (model: string, title?: string, mode?: ConversationMode, workspacePath?: string, pluginModeId?: string) => {
-    const conv = await api.createConversation(model, title, mode, workspacePath, pluginModeId);
+  const create = useCallback(async (model: string, title?: string, mode?: ConversationMode, workspacePath?: string, pluginModeId?: string, pluginItemId?: string) => {
+    const conv = await api.createConversation(model, title, mode, workspacePath, pluginModeId, pluginItemId);
     setConversations((prev) => [conv, ...prev]);
     return conv;
   }, []);

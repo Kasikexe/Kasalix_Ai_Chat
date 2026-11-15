@@ -346,12 +346,12 @@ export const api = {
     return data.modes;
   },
 
-  async createConversation(model: string, title?: string, mode?: ConversationMode, workspacePath?: string, pluginModeId?: string): Promise<Conversation> {
+  async createConversation(model: string, title?: string, mode?: ConversationMode, workspacePath?: string, pluginModeId?: string, pluginItemId?: string): Promise<Conversation> {
     const data = await handleResponse<{ conversation: Conversation }>(
       await fetch(`${API_BASE}/conversations`, authedFetch(`${API_BASE}/conversations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, title, mode, workspacePath, pluginModeId }),
+        body: JSON.stringify({ model, title, mode, workspacePath, pluginModeId, pluginItemId }),
       }))
     );
     return data.conversation;
@@ -1073,6 +1073,16 @@ streamChat(
     return handleResponse<MemoryData>(
       await fetch(`${API_BASE}/memory`, authedFetch(`${API_BASE}/memory`))
     );
+  },
+
+  async getPluginMemory(conversationId: string): Promise<{ enabled: boolean; categories: Record<string, Record<string, string>> }> {
+    const url = `${API_BASE}/memory/plugin?conversationId=${encodeURIComponent(conversationId)}`;
+    return handleResponse(await fetch(url, authedFetch(url)));
+  },
+
+  async clearPluginMemory(conversationId: string): Promise<void> {
+    const url = `${API_BASE}/memory/plugin?conversationId=${encodeURIComponent(conversationId)}`;
+    await handleResponse(await fetch(url, authedFetch(url, { method: 'DELETE' })));
   },
 
   async updateMemory(updates: Partial<MemoryData> & { categories?: Record<string, Record<string, string>> }): Promise<MemoryData> {

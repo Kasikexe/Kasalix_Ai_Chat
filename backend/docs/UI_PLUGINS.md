@@ -16,6 +16,7 @@ local folder on the server computer for development.
       "id": "example",
       "name": "Example",
       "baseMode": "chat",
+      "memory": "per-item",
       "theme": {
         "accent": "#8b5cf6",
         "background": "#11111b",
@@ -47,6 +48,12 @@ local folder on the server computer for development.
   digits and hyphens; the host namespaces mode IDs by plugin ID.
 - `baseMode` is `chat` or `agent`; agent-based modes are available in the
   desktop app and use the existing Koding workspace and permission behavior.
+- Optional `memory: "per-item"` isolates saved details for each user and
+  selected card, including across chats. Memory is only used and extracted
+  while the user's existing Memory setting is enabled. The host extracts
+  details explicitly shared by the user; it does not guarantee perfect recall.
+  Users can inspect and clear a selected card's memory in Chat, and resetting
+  the user's memory also clears all of their separate plugin memories.
 - Theme fields are optional six-digit hex colors. Choose colors that provide
   readable contrast. The host uses these as scoped UI color tokens.
 - The welcome screen is a `card-list`, with up to 50 cards. Each card needs a

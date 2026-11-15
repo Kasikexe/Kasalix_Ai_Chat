@@ -16,8 +16,10 @@ from .ollama_client import StreamOptions, stream_chat
 from .settings_store import get_cloud_settings
 
 
-async def extract_memory_from_turn(user_id: str, user_message: str) -> None:
+async def extract_memory_from_turn(user_id: str, user_message: str, owner_id: str | None = None) -> None:
     try:
+        if owner_id and not (await get_memory(owner_id)).get("enabled"):
+            return
         current = await get_memory(user_id)
         if not current.get("enabled"):
             return
@@ -55,6 +57,15 @@ Use categories like Person, Projects, Hobbies, Work, Preferences, Skills.
 Add new categories if needed. Update values when the user corrects them.
 If nothing to extract, respond with {{ "changes": {{}} }}
 ONLY output the JSON object. No other text."""
+
+        if owner_id:
+            system_prompt = f"""Extract useful lasting context from the USER's message in this specific conversation.
+Save only details the USER explicitly states: their preferences, shared context, and ongoing fictional or task details.
+Do not turn fictional details into claims about the user's real life. Do not infer details or save assistant-generated claims.
+Current memory: {memory_json}
+User message: {json.dumps(truncated, ensure_ascii=False)}
+Respond only with JSON: {{ "changes": {{ "Category": {{ "key": "value" }} }} }}.
+Use an empty changes object if there is nothing worth remembering."""
 
         resolved = await get_resolved_model("extraction")
         extractor_model = resolved["model"]
@@ -109,6 +120,8 @@ ONLY output the JSON object. No other text."""
             return
 
         log_info("[extractor] Memory changes detected:", json.dumps(changes))
+        if owner_id and not (await get_memory(owner_id)).get("enabled"):
+            return
         await merge_memory_entries(user_id, changes)
         log_info("[extractor] Memory updated successfully")
     except Exception as e:  # noqa: BLE001

@@ -2,10 +2,12 @@ import { useCallback, useMemo, useState } from 'react';
 import { useChat } from '../hooks/useChat';
 import { ChatWindow } from './ChatWindow';
 import { InputBar } from './InputBar';
+import { PluginMemory } from './PluginMemory';
 import type { Message, PluginMode } from '../types';
 
 interface Props {
  pluginMode?: PluginMode | null;
+ pluginSelection?: { id: string; label: string; memory?: 'none' | 'per-item' };
  initialMessages: Message[];
  conversationId?: string;
  model: string;
@@ -24,7 +26,7 @@ interface Props {
 
 export function ChatView({
  initialMessages, conversationId, model, thinkingEnabled = false, onMessageSent, onConversationCreated,
- searchQuery, onSearchChange, onSearchNext, onSearchPrev, onForkConversation, onConversationUpdate, onConversationStarted, pluginMode,
+ searchQuery, onSearchChange, onSearchNext, onSearchPrev, onForkConversation, onConversationUpdate, onConversationStarted, pluginMode, pluginSelection,
 }: Props) {  const { messages, isStreaming, sendMessage, regenerate, editMessage, deleteMessage, stopGeneration, conversationId: convId, currentStage, liveDuration, liveTps } = useChat(
  model, initialMessages, conversationId, thinkingEnabled, 'chat', undefined, onConversationUpdate, false, false, undefined, undefined, undefined, undefined, onConversationStarted, undefined, undefined, undefined, undefined, pluginMode?.id
  );
@@ -102,6 +104,7 @@ export function ChatView({
  {/* Select mode toggle button */}
  {!isStreaming && messages.length > 0 && (
  <div className="flex items-center justify-end px-4 pt-1 pb-0 gap-2">
+ {conversationId && pluginSelection?.memory === 'per-item' && <PluginMemory conversationId={conversationId} label={pluginSelection.label} />}
  <button
  onClick={handleToggleSelectMode}
  className={`text-xs px-2 py-1 rounded-lg transition-colors ${

@@ -96,3 +96,72 @@ def test_catalog_ui_plugin_does_not_execute_entry(tmp_path, monkeypatch):
 
     asyncio.run(run())
     assert not marker.exists()
+
+
+def test_scoped_extraction_saves_user_context_only_when_memory_is_enabled(tmp_path, monkeypatch):
+    from app import extractor, memory
+
+    monkeypatch.setattr(memory, "get_data_dir", lambda: tmp_path)
+    scope = memory.plugin_memory_id("owner", "plugin:sample:mode", "first")
+    other_scope = memory.plugin_memory_id("owner", "plugin:sample:mode", "second")
+    prompts = []
+
+    async def resolved(_role):
+        return {"model": "test", "source": "local"}
+
+    async def stream(_model, messages, on_chunk, _opts):
+        prompts.append(messages[0]["content"])
+        on_chunk('{"changes":{"Context":{"favorite":"blue"}}}')
+
+    monkeypatch.setattr(extractor, "get_resolved_model", resolved)
+    monkeypatch.setattr(extractor, "stream_chat", stream)
+
+    async def run():
+        await memory.update_memory("owner", {"enabled": True})
+        await memory.update_memory(scope, {"enabled": True})
+        await extractor.extract_memory_from_turn(scope, "My favorite is blue.", "owner")
+        assert (await memory.get_memory(scope))["categories"]["Context"]["favorite"] == "blue"
+        assert (await memory.get_memory(other_scope))["categories"] == {}
+        assert "fictional" in prompts[0] and "Do not infer" in prompts[0]
+        await memory.update_memory(scope, {"categories": {}})
+        await memory.update_memory("owner", {"enabled": False})
+        await extractor.extract_memory_from_turn(scope, "My favorite is blue.", "owner")
+        assert (await memory.get_memory(scope))["categories"] == {}
+
+    asyncio.run(run())
+
+
+def test_chat_pipeline_uses_only_the_selected_memory_scope(tmp_path, monkeypatch):
+    from app import memory, pipeline
+
+    monkeypatch.setattr(memory, "get_data_dir", lambda: tmp_path)
+    seen = []
+
+    async def settings():
+        return {"cloudMode": "local", "cloudApiKey": "", "cloudEndpoint": ""}
+    async def resolved(_role):
+        return {"model": "test", "source": "local"}
+    async def no_search(*_args, **_kwargs):
+        return {"search": False, "query": ""}
+    async def model(_model, messages, _tools, on_chunk, _options):
+        seen.append(messages)
+        on_chunk("Hello")
+        return {"content": "Hello", "toolCalls": [], "metrics": {}}
+
+    monkeypatch.setattr(pipeline, "get_cloud_settings", settings)
+    monkeypatch.setattr(pipeline, "get_resolved_model", resolved)
+    monkeypatch.setattr(pipeline, "decide_search", no_search)
+    monkeypatch.setattr(pipeline, "stream_chat_with_tools", model)
+
+    async def run():
+        scope = memory.plugin_memory_id("scope-owner", "plugin:sample:mode", "first")
+        await memory.update_memory("scope-owner", {"enabled": True, "categories": {"Private": {"value": "global-only"}}})
+        await memory.update_memory(scope, {"enabled": True, "categories": {"Context": {"value": "item-only"}}})
+        options = {"model": "test", "mode": "chat", "userId": "scope-owner", "thinkingMode": "off",
+                   "messages": [{"role": "user", "content": "Hello"}], "onChunk": lambda _chunk: None}
+        await pipeline.run_pipeline({**options, "memoryUserId": scope})
+        assert "item-only" in str(seen[-1]) and "global-only" not in str(seen[-1])
+        await pipeline.run_pipeline({**options, "memoryUserId": None})
+        assert "item-only" not in str(seen[-1]) and "global-only" not in str(seen[-1])
+
+    asyncio.run(run())

@@ -6,6 +6,7 @@ export interface PluginMode {
   pluginId: string;
   name: string;
   baseMode: ConversationMode;
+  memory?: 'none' | 'per-item';
   theme: { accent?: string; background?: string; surface?: string; text?: string };
   welcome: { type: 'card-list'; title: string; description: string; items: { id: string; label: string; description: string; message: string; instructions?: string }[] };
 }
@@ -60,6 +61,7 @@ export interface Conversation {
   model: string;
   mode: ConversationMode;
   pluginModeId?: string;
+  pluginSelection?: { id: string; label: string; instructions: string; memory?: 'none' | 'per-item' };
   workspacePath?: string;
   ownerId: string;
   createdAt: number;
