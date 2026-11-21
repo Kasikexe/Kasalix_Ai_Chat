@@ -1512,8 +1512,53 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('speedMo
 // repo. Listing + catalog are public reads; mutations require admin auth.
 let pluginsLoaded = false;
 let pluginsRenderedAuthed = null;
+let dockerSetupDismissed = false;
+let dockerStatusRequest;
+const dockerSetupBanner = $('dockerSetupBanner');
+const dockerDownloadAuto = $('dockerDownloadAuto');
+const dockerDownloadManual = $('dockerDownloadManual');
+const dockerDownloadStatus = $('dockerDownloadStatus');
+
+function refreshDockerSetup() {
+  if (dockerSetupDismissed || dockerStatusRequest) return;
+  dockerStatusRequest = API.getDockerStatus().then(({ installed, canDownload }) => {
+    dockerSetupBanner.hidden = installed || dockerSetupDismissed;
+    if (!canDownload) dockerDownloadAuto.hidden = true;
+  }).catch((error) => {
+    console.warn('Could not check Docker installation:', error);
+  }).finally(() => {
+    dockerStatusRequest = null;
+  });
+}
+
+dockerDownloadManual.addEventListener('click', () => {
+  dockerSetupDismissed = true;
+  dockerSetupBanner.hidden = true;
+});
+
+dockerDownloadAuto.addEventListener('click', async () => {
+  dockerDownloadAuto.disabled = true;
+  dockerDownloadManual.disabled = true;
+  dockerDownloadStatus.textContent = 'Downloading Docker Desktop…';
+  try {
+    const result = await API.downloadDockerInstaller();
+    if (result.success) {
+      dockerDownloadStatus.textContent = `Installer saved to ${result.path}. Open it to install Docker Desktop. Start Docker Desktop, then restart the Server App.`;
+      dockerDownloadAuto.hidden = true;
+      dockerDownloadManual.textContent = 'Dismiss';
+    } else {
+      dockerDownloadStatus.textContent = result.error;
+    }
+  } catch {
+    dockerDownloadStatus.textContent = 'Could not download the installer. Try again or choose Download manually.';
+  } finally {
+    dockerDownloadAuto.disabled = false;
+    dockerDownloadManual.disabled = false;
+  }
+});
 
 async function enterPluginsView() {
+  refreshDockerSetup();
   const $locked = $('pluginsLocked');
   if ($locked) $locked.style.display = 'none';
   if (pluginsLoaded && pluginsRenderedAuthed === settingsAuthed) return;
@@ -1699,6 +1744,7 @@ if (loadLocalUiPlugin) loadLocalUiPlugin.addEventListener('click', async () => {
 });
 if (pluginsRefreshBtn) {
   pluginsRefreshBtn.addEventListener('click', async () => {
+    refreshDockerSetup();
     pluginsLoaded = false;
     pluginsRenderedAuthed = null;
     await loadPluginCatalog();

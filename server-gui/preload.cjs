@@ -92,6 +92,8 @@ contextBridge.exposeInMainWorld('serverAPI', {
   readSessionLog: (runId) => ipcRenderer.invoke('session-logs-read', runId),
 
   // ─── Plugins ────────────────────────────────────────
+  getDockerStatus: () => ipcRenderer.invoke('plugins-docker-status'),
+  downloadDockerInstaller: () => ipcRenderer.invoke('plugins-docker-download'),
   getPlugins: () => ipcRenderer.invoke('plugins-list'),
   getPluginCatalog: () => ipcRenderer.invoke('plugins-catalog'),
   installPlugin: (repo) => ipcRenderer.invoke('plugins-install', repo),

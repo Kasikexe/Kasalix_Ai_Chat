@@ -351,6 +351,14 @@
         <button class="btn btn-small btn-ghost" id="pluginsRefreshBtn">Refresh</button>
       </div>
     </div>
+    <section class="docker-setup-banner" id="dockerSetupBanner" aria-labelledby="dockerSetupTitle" hidden>
+      <h3 id="dockerSetupTitle">Docker Desktop is required for plugins with backend actions</h3>
+      <div class="docker-setup-actions">
+        <button class="btn btn-small btn-primary" id="dockerDownloadAuto" type="button">Download automatically</button>
+        <button class="btn btn-small btn-ghost" id="dockerDownloadManual" type="button">Download manually</button>
+      </div>
+      <p id="dockerDownloadStatus" role="status"></p>
+    </section>
     <div class="apikeys-input-row" style="margin: 0 0 12px">
       <input type="text" id="localUiPluginPath" class="apikeys-input" placeholder="Absolute path to a local plugin folder" aria-label="Local plugin folder" />
       <button class="btn btn-small btn-primary" id="loadLocalUiPlugin">Load local plugin</button>

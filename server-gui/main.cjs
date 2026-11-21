@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, net: electronNet, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn, exec, execSync } = require('child_process');
 const net = require('net');
+const { pipeline } = require('node:stream/promises');
 
 // ─── Paths (resolved at runtime) ─────────────────────────────────
 // Resources resolve to: packaged → process.resourcesPath, dev → project root
@@ -684,6 +685,65 @@ function findReleaseInstaller() {
   }
 }
 
+// ─── Docker Desktop setup ────────────────────────────────────────
+function dockerDesktopInstallerUrl() {
+  if (process.platform !== 'win32') return null;
+  const machine = os.machine().toLowerCase();
+  const arch = { x86_64: 'amd64', amd64: 'amd64', arm64: 'arm64', aarch64: 'arm64' }[machine];
+  return arch && `https://desktop.docker.com/win/main/${arch}/Docker%20Desktop%20Installer.exe`;
+}
+
+async function isDockerInstalled() {
+  const isWindows = process.platform === 'win32';
+  const cli = isWindows ? 'docker.exe' : 'docker';
+  const candidates = (process.env.PATH || '').split(path.delimiter)
+    .map((dir) => dir.replace(/^"|"$/g, ''))
+    .filter((dir) => path.isAbsolute(dir))
+    .map((dir) => path.join(dir, cli));
+  if (isWindows) {
+    const machineDir = process.env.ProgramW6432 || process.env.ProgramFiles;
+    if (machineDir) candidates.push(path.join(machineDir, 'Docker', 'Docker', 'Docker Desktop.exe'));
+    if (process.env.LOCALAPPDATA) {
+      candidates.push(path.join(process.env.LOCALAPPDATA, 'Programs', 'DockerDesktop', 'Docker Desktop.exe'));
+    }
+  }
+  const files = await Promise.all(candidates.map(async (candidate) => {
+    const file = await fs.promises.stat(candidate).catch(() => null);
+    return file?.isFile();
+  }));
+  return files.some(Boolean);
+}
+
+async function downloadDockerDesktopInstaller() {
+  const url = dockerDesktopInstallerUrl();
+  if (!url) return { success: false, error: 'Automatic download is unavailable on this system.' };
+
+  const downloads = app.getPath('downloads');
+  const filename = 'Docker Desktop Installer.exe';
+  let folder;
+  let partial;
+  try {
+    await fs.promises.mkdir(downloads, { recursive: true });
+    folder = await fs.promises.mkdtemp(path.join(downloads, 'Docker Desktop-'));
+    partial = path.join(folder, 'installer.download');
+    const signal = AbortSignal.timeout(30 * 60 * 1000);
+    const response = await electronNet.fetch(url, { redirect: 'error', signal });
+    if (response.status !== 200 || !response.body) {
+      await response.body?.cancel();
+      throw new Error(`Unexpected installer download response (${response.status})`);
+    }
+    await pipeline(response.body, fs.createWriteStream(partial, { flags: 'wx' }), { signal });
+    const installer = path.join(folder, filename);
+    await fs.promises.rename(partial, installer);
+    return { success: true, path: installer };
+  } catch (error) {
+    if (partial) await fs.promises.unlink(partial).catch(() => {});
+    if (folder) await fs.promises.rmdir(folder).catch(() => {});
+    console.error('Docker Desktop installer download failed:', error);
+    return { success: false, error: 'Could not download the installer. Try again or choose Download manually.' };
+  }
+}
+
 // ─── IPC Handlers ────────────────────────────────────────────────
 function setupIPC() {
   // External links (GitHub feedback) → system browser
@@ -1339,6 +1399,19 @@ function setupIPC() {
   });
 
   // ─── Plugins ────────────────────────────────────────
+  ipcMain.handle('plugins-docker-status', async () => ({
+    installed: await isDockerInstalled(),
+    canDownload: Boolean(dockerDesktopInstallerUrl()),
+  }));
+
+  let dockerInstallerDownload;
+  ipcMain.handle('plugins-docker-download', () => {
+    dockerInstallerDownload ??= downloadDockerDesktopInstaller().finally(() => {
+      dockerInstallerDownload = null;
+    });
+    return dockerInstallerDownload;
+  });
+
   /** List installed plugins (public read) */
   ipcMain.handle('plugins-list', async () => {
     try {

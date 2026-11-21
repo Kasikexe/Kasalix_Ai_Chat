@@ -1665,6 +1665,21 @@ button:focus-visible, .btn:focus-visible, .tab:focus-visible {
 .errors-block strong { color: var(--text); }
 
 /* ═══ Plugins ═══ */
+.docker-setup-banner {
+  margin: 0 0 12px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent-dim);
+  font-size: 13px;
+}
+
+.docker-setup-banner h3 { font-size: 14px; }
+.docker-setup-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.docker-setup-actions [hidden] { display: none; }
+.docker-setup-banner p { overflow-wrap: anywhere; }
+.docker-setup-banner p:not(:empty) { margin-top: 10px; }
+
 .plugins-catalog {
   padding: 12px 16px;
   display: grid;
