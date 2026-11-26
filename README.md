@@ -30,6 +30,12 @@ This project is licensed under the Apache License 2.0. See
 - Desktop app (Electron) and mobile app (Capacitor/Android)
 - Standalone server app with generated TLS certificates
 
+## Plugins
+
+Plugins can add new modes to the client and run optional backend actions on
+your Kasalix server. Use the [plugin quick start](backend/docs/PLUGINS.md) to
+install, manage, or create a plugin.
+
 ## Tech Stack
 
 **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, react-markdown, lucide-react
