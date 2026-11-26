@@ -1683,7 +1683,7 @@ button:focus-visible, .btn:focus-visible, .tab:focus-visible {
 .plugins-catalog {
   padding: 12px 16px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr));
   gap: 10px;
   overflow-y: auto;
 }
@@ -1713,8 +1713,10 @@ button:focus-visible, .btn:focus-visible, .tab:focus-visible {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 12px;
-  display: flex;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 6px 10px;
+  align-content: start;
   transition: border-color 0.15s ease;
 }
 
@@ -1732,10 +1734,11 @@ button:focus-visible, .btn:focus-visible, .tab:focus-visible {
   border-radius: 6px;
 }
 
-.plugin-body { flex: 1; min-width: 0; }
+.plugin-body { overflow-wrap: anywhere; }
 
 .plugin-title-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   margin-bottom: 4px;
@@ -1753,6 +1756,9 @@ button:focus-visible, .btn:focus-visible, .tab:focus-visible {
 }
 
 .plugin-badge-installed {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   background: var(--green-dim);
   color: var(--green);
 }
@@ -1770,15 +1776,20 @@ button:focus-visible, .btn:focus-visible, .tab:focus-visible {
 
 .plugin-meta {
   font-size: 10px;
-  color: var(--text-muted);
-  margin-bottom: 8px;
+  color: var(--text-dim);
+  line-height: 1.4;
 }
 
+.plugin-meta + .plugin-meta { margin-top: 4px; }
+
 .plugin-actions {
+  grid-column: 2;
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
 }
+
+.plugin-actions .btn { flex: 0 0 auto; }
 
 .plugin-installed-note {
   font-size: 10px;
