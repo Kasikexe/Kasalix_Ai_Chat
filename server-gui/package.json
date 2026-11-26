@@ -37,7 +37,10 @@
       },
       {
         "from": "../certs",
-        "to": "certs"
+        "to": "certs",
+        "filter": [
+          "generate-certs.cjs"
+        ]
       },
       {
         "from": "../icon_server.png",
