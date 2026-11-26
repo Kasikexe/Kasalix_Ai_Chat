@@ -78,4 +78,4 @@ def github_releases_url() -> str:
 
 
 def app_version() -> str:
-    return os.environ.get("APP_VERSION") or "0.13.0"
+    return os.environ.get("APP_VERSION") or "0.14.0"
